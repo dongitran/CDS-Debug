@@ -70,7 +70,13 @@ export function parseApps(stdout: string): CfApp[] {
       const name = parts[0]?.trim();
       const state = parts[1]?.trim();
       if (!name || !state) return [];
-      return [{ name, state: state === 'started' ? 'started' : 'stopped' } satisfies CfApp];
+      
+      let urls: string[] = [];
+      const maybeUrls = parts[parts.length - 1];
+      if (maybeUrls?.includes('.')) {
+        urls = maybeUrls.split(',').map((u) => u.trim());
+      }
+      return [{ name, state: state === 'started' ? 'started' : 'stopped', urls } satisfies CfApp];
     });
 }
 

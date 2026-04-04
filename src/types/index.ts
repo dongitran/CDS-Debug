@@ -7,6 +7,7 @@ export type CfAppState = 'started' | 'stopped';
 export interface CfApp {
   name: string;
   state: CfAppState;
+  urls?: string[];
 }
 
 export interface OrgGroupMapping {
@@ -27,6 +28,7 @@ export interface LaunchConfiguration {
   port: number;
   localRoot: string;
   remoteRoot: string;
+  sourceMaps: boolean;
   restart: boolean;
   skipFiles: string[];
 }
@@ -49,6 +51,7 @@ export type WebviewMessage =
   | { type: 'LOAD_APPS'; payload: { org: string } }
   | { type: 'START_DEBUG'; payload: { appNames: string[]; org: string } }
   | { type: 'STOP_DEBUG'; payload: { appName: string } }
+  | { type: 'OPEN_APP_URL'; payload: { url: string } }
   | { type: 'SAVE_MAPPINGS'; payload: { mappings: OrgGroupMapping[] } }
   | { type: 'LOAD_CONFIG' };
 

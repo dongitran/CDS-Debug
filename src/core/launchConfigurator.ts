@@ -13,6 +13,7 @@ export function generateLaunchConfigurations(targets: DebugTarget[]): LaunchConf
     port: target.port,
     localRoot: target.folderPath,
     remoteRoot: '/home/vcap/app', // cspell:ignore vcap
+    sourceMaps: true,
     restart: true,
     skipFiles: SKIP_FILES,
   }));

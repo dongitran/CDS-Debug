@@ -75,6 +75,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       case 'STOP_DEBUG':
         stopProcess(raw.payload.appName);
         break;
+        
+      case 'OPEN_APP_URL':
+        vscode.env.openExternal(vscode.Uri.parse(raw.payload.url));
+        break;
     }
   }
 

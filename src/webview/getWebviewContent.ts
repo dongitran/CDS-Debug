@@ -277,6 +277,25 @@ export function getWebviewContent(): string {
       background: var(--vscode-testing-iconFailed);
       color: white;
     }
+    .active-open-btn {
+      flex-shrink: 0;
+      height: 26px;
+      padding: 0 8px;
+      margin-left: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      transition: background 0.2s;
+    }
+    .active-open-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
     .status-text-anim {
       display: inline-block;
       animation: fadeIn 0.4s;
@@ -519,6 +538,9 @@ export function getWebviewContent(): string {
       // Top Panel: Active Debug Sessions
       const renderActiveCard = (appName) => {
         const session = state.activeSessions[appName];
+        const appInfo = state.apps.find(a => a.name === appName);
+        const appUrl = (appInfo && appInfo.urls && appInfo.urls.length > 0) ? 'https://' + appInfo.urls[0] : '';
+        
         let icon = '';
         let text = '';
         
@@ -533,6 +555,15 @@ export function getWebviewContent(): string {
           text = session.message || 'Connection Error';
         }
 
+        let openBtn = '';
+        if (session.status === 'ATTACHED' && appUrl) {
+          openBtn = \`
+            <button class="active-open-btn" data-open-url="\${escape(appUrl)}" title="Open App in Browser">
+              &#8599; Open App
+            </button>
+          \`;
+        }
+
         return \`
           <div class="active-card">
             <div class="active-card-main">
@@ -542,6 +573,7 @@ export function getWebviewContent(): string {
                 <span class="status-text-anim" key="\${session.msgPhase}">\${escape(text)}</span>
               </div>
             </div>
+            \${openBtn}
             <button class="active-stop-btn" data-stop-app="\${escape(appName)}" title="Stop Debug Session">■</button>
           </div>
         \`;
@@ -715,6 +747,17 @@ export function getWebviewContent(): string {
           if (btn) {
             const appName = btn.dataset.stopApp;
             vscode.postMessage({ type: 'STOP_DEBUG', payload: { appName } });
+          }
+        });
+      });
+
+      // OPEN URL LISTENER
+      document.querySelectorAll('[data-open-url]').forEach(el => {
+        el.addEventListener('click', e => {
+          const btn = e.target.closest('[data-open-url]');
+          if (btn) {
+            const url = btn.dataset.openUrl;
+            vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url } });
           }
         });
       });
