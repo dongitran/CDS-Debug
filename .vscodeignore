@@ -3,6 +3,7 @@ test/**
 node_modules/**
 .husky/**
 .git/**
+sample/**
 dist/**/*.map
 esbuild.mjs
 eslint.config.mjs

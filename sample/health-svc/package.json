@@ -1,0 +1,19 @@
+{
+  "name": "health-svc",
+  "version": "1.0.0",
+  "description": "SAP CAP sample service with health endpoint",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@sap/cds": "^8"
+  },
+  "devDependencies": {
+    "@sap/cds-dk": "^8"
+  },
+  "scripts": {
+    "start": "cds-serve",
+    "watch": "cds watch",
+    "build": "cds build"
+  }
+}
