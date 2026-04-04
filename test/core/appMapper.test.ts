@@ -1,29 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import {
-  cfAppNameToFolderName,
+  getFolderNameCandidates,
   findFolderPath,
   buildDebugTargets,
 } from '../../src/core/appMapper';
 
-describe('cfAppNameToFolderName', () => {
-  it('replaces all hyphens with underscores', () => {
-    expect(cfAppNameToFolderName('myapp-svc-one')).toBe('myapp_svc_one');
+describe('getFolderNameCandidates', () => {
+  it('returns both exact match and underscore-replaced match for hyphenated names', () => {
+    expect(getFolderNameCandidates('myapp-svc-one')).toEqual([
+      'myapp-svc-one',
+      'myapp_svc_one',
+    ]);
   });
 
-  it('handles single segment name', () => {
-    expect(cfAppNameToFolderName('myapp')).toBe('myapp');
-  });
-
-  it('handles name with no hyphens', () => {
-    expect(cfAppNameToFolderName('myapp_svc_one')).toBe('myapp_svc_one');
-  });
-
-  it('converts db module name', () => {
-    expect(cfAppNameToFolderName('myapp-db-one')).toBe('myapp_db_one');
-  });
-
-  it('converts multi-role service name', () => {
-    expect(cfAppNameToFolderName('myapp-svc-two-admin')).toBe('myapp_svc_two_admin');
+  it('returns only exact match if no hyphens exist', () => {
+    expect(getFolderNameCandidates('myapp')).toEqual(['myapp']);
+    expect(getFolderNameCandidates('myapp_svc_one')).toEqual(['myapp_svc_one']);
   });
 });
 

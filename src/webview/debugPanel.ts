@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import type { ExtensionMessage, OrgGroupMapping, WebviewMessage } from '../types/index';
 import { cfLogin, cfOrgs, cfTargetAndApps } from '../core/cfClient';
 import { findGroupFolders, findRepoFolder } from '../core/folderScanner';
-import { buildDebugTargets } from '../core/appMapper';
+import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
 import { mergeLaunchJson } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
 import { logError, logInfo, logWarn } from '../core/logger';
@@ -184,8 +184,12 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     const resolvedPaths: string[] = [];
     for (const appName of appNames) {
-      const folderName = appName.replaceAll('-', '_');
-      const folderPath = await findRepoFolder(groupPath, folderName);
+      let folderPath: string | null = null;
+      for (const candidate of getFolderNameCandidates(appName)) {
+        folderPath = await findRepoFolder(groupPath, candidate);
+        if (folderPath !== null) break;
+      }
+      
       if (folderPath !== null) {
         resolvedPaths.push(folderPath);
         logInfo(`Mapped: ${appName} → ${folderPath}`);

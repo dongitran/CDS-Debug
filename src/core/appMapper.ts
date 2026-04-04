@@ -3,20 +3,26 @@ import type { DebugTarget } from '../types/index';
 import { DEBUG_BASE_PORT } from '../types/index';
 
 /**
- * Converts a CF app name to its expected local folder name.
- * CF uses hyphens (-), local folders use underscores (_).
- * Example: "prefix-srv-config-main" → "prefix_srv_config_main"
+ * Gets candidate local folder names for a given CF app name.
+ * CF often uses hyphens (-) while standard SAP CAP local folders use underscores (_).
+ * But custom projects might use exact names. So we try both.
  */
-export function cfAppNameToFolderName(appName: string): string {
-  return appName.replaceAll('-', '_');
+export function getFolderNameCandidates(appName: string): string[] {
+  const candidates = [appName];
+  const dashReplaced = appName.replaceAll('-', '_');
+  if (dashReplaced !== appName) {
+    candidates.push(dashReplaced);
+  }
+  return candidates;
 }
 
 /**
  * Finds the full path of a repo folder from a list of scanned paths.
- * Performs exact match on folder basename after normalizing separators.
+ * Performs match on folder basename against all candidates after normalizing separators.
  */
-export function findFolderPath(targetFolderName: string, allFolderPaths: string[]): string | null {
-  return allFolderPaths.find((p) => basename(p) === targetFolderName) ?? null;
+export function findFolderPath(appName: string, allFolderPaths: string[]): string | null {
+  const candidates = getFolderNameCandidates(appName);
+  return allFolderPaths.find((p) => candidates.includes(basename(p))) ?? null;
 }
 
 /**
@@ -34,8 +40,7 @@ export function buildDebugTargets(
   let port = startPort;
 
   for (const appName of selectedAppNames) {
-    const folderName = cfAppNameToFolderName(appName);
-    const folderPath = findFolderPath(folderName, allFolderPaths);
+    const folderPath = findFolderPath(appName, allFolderPaths);
 
     if (folderPath !== null) {
       targets.push({ appName, folderPath, port });

@@ -1,0 +1,6 @@
+---
+applications:
+  - name: health-svc
+    memory: 128M
+    command: npm start
+    instances: 1
