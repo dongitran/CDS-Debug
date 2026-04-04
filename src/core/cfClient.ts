@@ -34,10 +34,7 @@ async function runCf(args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
 }
 
 export async function cfLogin(apiEndpoint: string, email: string, password: string): Promise<void> {
-  await runCf(['login', '-a', apiEndpoint, '--skip-ssl-validation'], {
-    CF_USERNAME: email,
-    CF_PASSWORD: password,
-  });
+  await runCf(['login', '-a', apiEndpoint, '-u', email, '-p', password, '--skip-ssl-validation']);
 }
 
 export function parseOrgs(stdout: string): string[] {
