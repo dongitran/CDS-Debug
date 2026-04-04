@@ -729,6 +729,7 @@ export function getWebviewContent(): string {
         appNames.forEach(n => state.selectedApps.delete(n));
 
         vscode.postMessage({ type: 'START_DEBUG', payload: { appNames, org: state.selectedOrg } });
+        render();
       });
 
       $('btn-remap')?.addEventListener('click', () => {
@@ -770,6 +771,7 @@ export function getWebviewContent(): string {
             }, 1800);
             state.activeSessions[appName].intervalId = tId;
           });
+          render();
           break;
         }
         case 'APP_DEBUG_STATUS': {
@@ -790,6 +792,7 @@ export function getWebviewContent(): string {
               }
             }
           }
+          render();
           break;
         }
         case 'DEBUG_ERROR':

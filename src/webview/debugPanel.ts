@@ -189,6 +189,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     logInfo(`Starting debug for ${appNames.length.toString()} app(s): ${appNames.join(', ')}`);
 
+    this.post({ type: 'DEBUG_CONNECTING', payload: { appNames } });
+
     const groupPath = path.join(config.rootFolderPath, mapping.localGroupPath);
 
     const resolvedPaths: string[] = [];
