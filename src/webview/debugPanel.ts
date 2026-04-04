@@ -213,7 +213,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     for (const target of targets) {
       const folderName = path.basename(target.folderPath);
-      const cmd = `npx --yes cds watch --inspect=${target.port.toString()}`;
+      const cmd = `cds watch --inspect=${target.port.toString()}`;
       logInfo(`Terminal [${folderName}] > ${cmd}`);
       const terminal = vscode.window.createTerminal({
         name: `CDS: ${folderName}`,
