@@ -1,0 +1,65 @@
+{
+  "name": "sap-cap-debug-launcher",
+  "displayName": "SAP CAP Debug Launcher",
+  "description": "Launch and debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
+  "version": "0.0.1",
+  "publisher": "laidon",
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=20"
+  },
+  "categories": ["Debuggers", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sap-debug-launcher",
+          "title": "SAP CAP Debug",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "sap-debug-launcher": [
+        {
+          "type": "webview",
+          "id": "sapDebugLauncher.mainView",
+          "name": "Debug Launcher"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "sapDebugLauncher.resetConfig",
+        "title": "SAP CAP: Reset Debug Launcher Configuration"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test --max-warnings=0",
+    "cspell": "cspell '**/*.{ts,json,md}' --no-progress",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "cspell": "^9.0.0",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.0.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^16.0.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
