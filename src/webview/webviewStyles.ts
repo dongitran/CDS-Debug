@@ -153,6 +153,35 @@ export function getStyles(): string {
 
     .divider { height: 1px; background: var(--vscode-panel-border); margin: 12px 0; }
 
+    .cf-info-box {
+      background: var(--vscode-textBlockQuote-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      padding: 8px 10px;
+    }
+    .cf-info-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 2px 0;
+    }
+    .cf-info-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--vscode-descriptionForeground);
+      min-width: 44px;
+      flex-shrink: 0;
+    }
+    .cf-info-value {
+      font-size: 12px;
+      font-family: var(--vscode-editor-font-family);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .info-box {
       background: var(--vscode-textBlockQuote-background);
       border-left: 3px solid var(--vscode-textBlockQuote-border);

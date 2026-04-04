@@ -1,11 +1,19 @@
 import * as vscode from 'vscode';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
 import { logInfo, logWarn } from './logger';
 
+const execFileAsync = promisify(execFile);
+
+interface ProcessEntry {
+  child: ChildProcess;
+  port: number;
+}
+
 export const debugProcessEvents = new EventEmitter();
 
-const processes = new Map<string, ChildProcess>();
+const processes = new Map<string, ProcessEntry>();
 const channels = new Map<string, vscode.OutputChannel>();
 const sessionStates = new Map<string, { status: string; message?: string }>();
 const activeDebugSessions = new Map<string, vscode.DebugSession>();
@@ -33,6 +41,25 @@ function killProcessGroup(child: ChildProcess): void {
   child.kill();
 }
 
+// Forcibly kills any process still listening on a TCP port.
+// Used as a fallback when `cds debug` spawns `cf ssh` in a separate process group,
+// which means SIGTERM to the cds process group does NOT reach the SSH tunnel.
+async function killProcessOnPort(port: number): Promise<void> {
+  if (process.platform === 'win32') return;
+  try {
+    const { stdout } = await execFileAsync('lsof', ['-t', '-i', `tcp:${port.toString()}`]);
+    const pids = stdout.trim().split('\n').filter(Boolean);
+    for (const pidStr of pids) {
+      const pid = parseInt(pidStr, 10);
+      if (!isNaN(pid)) {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+      }
+    }
+  } catch {
+    // lsof not available or no remaining process on the port — nothing to do
+  }
+}
+
 export function getActiveSessions(): Record<string, { status: string; message?: string }> {
   return Object.fromEntries(sessionStates);
 }
@@ -51,10 +78,11 @@ export function initializeProcessManager(): void {
     const appName = session.name.slice(DEBUG_SESSION_PREFIX.length);
 
     // Kill tunnel process if still running (e.g. user stopped debugger from VS Code toolbar)
-    const p = processes.get(appName);
-    if (p) {
+    const entry = processes.get(appName);
+    if (entry) {
       logInfo(`Debug session ${session.name} stopped. Cleaning up SSH tunnel process...`);
-      killProcessGroup(p);
+      killProcessGroup(entry.child);
+      setTimeout(() => void killProcessOnPort(entry.port), 600);
       processes.delete(appName);
       const channel = channels.get(appName);
       if (channel) {
@@ -74,15 +102,19 @@ export function initializeProcessManager(): void {
 }
 
 export function stopProcess(appName: string): void {
-  const p = processes.get(appName);
-  if (p) {
+  const entry = processes.get(appName);
+  if (entry) {
     logInfo(`Killing process group for ${appName} explicitly.`);
-    killProcessGroup(p);
+    killProcessGroup(entry.child);
     processes.delete(appName);
     const channel = channels.get(appName);
     if (channel) {
       channel.appendLine('[Extension] Process group killed by explicit Stop request.');
     }
+    // `cds debug` may spawn `cf ssh` in a separate process group (detached), so SIGTERM
+    // to the cds process group may not reach the SSH tunnel. Kill the port directly after
+    // giving SIGTERM a moment to propagate.
+    setTimeout(() => void killProcessOnPort(entry.port), 600);
   }
   // Mark as stopped so downstream close/terminate events skip duplicate EXITED emit
   stoppedApps.add(appName);
@@ -122,7 +154,7 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
     detached: !isWindows,
   });
 
-  processes.set(appName, child);
+  processes.set(appName, { child, port });
   sessionStates.set(appName, { status: 'TUNNELING' });
   debugProcessEvents.emit('statusChanged', { appName, status: 'TUNNELING' });
 
@@ -183,8 +215,8 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
 }
 
 export function disposeAllProcesses(): void {
-  for (const p of processes.values()) {
-    killProcessGroup(p);
+  for (const entry of processes.values()) {
+    killProcessGroup(entry.child);
   }
   processes.clear();
   sessionStates.clear();

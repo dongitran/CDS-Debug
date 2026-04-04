@@ -74,6 +74,15 @@ export function getScript(nonce: string): string {
       return m ? m[1] : null;
     }
 
+    function getRegionDisplay() {
+      if (state.useCustomEndpoint) {
+        const code = endpointToRegion(state.apiEndpoint);
+        return code ? code + ' (custom)' : state.apiEndpoint;
+      }
+      const region = CF_REGIONS.find(r => r.code === state.selectedRegion);
+      return region ? state.selectedRegion + ' \u2014 ' + region.name : state.selectedRegion;
+    }
+
     function buildLiveStatus() {
       if (state.error) return 'Error: ' + state.error;
       if (state.screen === SCREENS.LOGGING_IN) return 'Logging in to Cloud Foundry...';
@@ -369,13 +378,6 @@ export function getScript(nonce: string): string {
         state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
       ).length;
 
-      const orgOptions = state.mappings.map(m => \`
-        <option value="\${escape(m.cfOrg)}" \${m.cfOrg === state.selectedOrg ? 'selected' : ''}>
-          \${escape(m.cfOrg)}
-        </option>
-      \`).join('');
-
-
       const resetBtn = state.error ? \`
         <div style="height:6px"></div>
         <button class="btn btn-secondary" id="btn-reset-login" style="color:var(--vscode-errorForeground)">
@@ -393,8 +395,17 @@ export function getScript(nonce: string): string {
 
         <div id="active-sessions-panel">\${renderActiveSessionsContent()}</div>
 
-        <div class="section-label">Cloud Foundry Org</div>
-        <select class="select" id="org-select" aria-label="Select Cloud Foundry org">\${orgOptions}</select>
+        <div class="section-label">Cloud Foundry</div>
+        <div class="cf-info-box">
+          <div class="cf-info-row">
+            <span class="cf-info-label">Region</span>
+            <span class="cf-info-value" title="\${escape(state.apiEndpoint)}">\${escape(getRegionDisplay())}</span>
+          </div>
+          <div class="cf-info-row">
+            <span class="cf-info-label">Org</span>
+            <span class="cf-info-value" title="\${escape(state.selectedOrg ?? '')}">\${escape(state.selectedOrg ?? '')}</span>
+          </div>
+        </div>
         <div style="height:8px"></div>
         <input class="input" id="search-input" placeholder="Search apps&hellip;"
           aria-label="Search apps" value="\${escape(state.searchQuery)}" />
@@ -484,15 +495,6 @@ export function getScript(nonce: string): string {
 
       $('btn-back-region')?.addEventListener('click', () => {
         state.screen = SCREENS.REGION; state.error = null; render();
-      });
-
-      $('org-select')?.addEventListener('change', e => {
-        state.selectedOrg = e.target.value;
-        state.selectedApps = new Set();
-        state.searchQuery = '';
-        state.screen = SCREENS.LOADING_APPS;
-        render();
-        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
       });
 
       $('search-input')?.addEventListener('input', e => {
