@@ -6,14 +6,13 @@ import { logInfo, logWarn } from './logger';
 
 const execFileAsync = promisify(execFile);
 
-interface ProcessEntry {
-  child: ChildProcess;
-  port: number;
-}
-
 export const debugProcessEvents = new EventEmitter();
 
-const processes = new Map<string, ProcessEntry>();
+const processes = new Map<string, ChildProcess>();
+// Tracks the local debug port for each app independently of the cds-debug child process.
+// The cds-debug process may exit after establishing the tunnel (cf ssh runs separately),
+// so this map must NOT be cleared on child close — only on explicit stop/terminate/dispose.
+const debugPorts = new Map<string, number>();
 const channels = new Map<string, vscode.OutputChannel>();
 const sessionStates = new Map<string, { status: string; message?: string }>();
 const activeDebugSessions = new Map<string, vscode.DebugSession>();
@@ -78,16 +77,22 @@ export function initializeProcessManager(): void {
     const appName = session.name.slice(DEBUG_SESSION_PREFIX.length);
 
     // Kill tunnel process if still running (e.g. user stopped debugger from VS Code toolbar)
-    const entry = processes.get(appName);
-    if (entry) {
+    const p = processes.get(appName);
+    if (p) {
       logInfo(`Debug session ${session.name} stopped. Cleaning up SSH tunnel process...`);
-      killProcessGroup(entry.child);
-      setTimeout(() => void killProcessOnPort(entry.port), 600);
+      killProcessGroup(p);
       processes.delete(appName);
       const channel = channels.get(appName);
       if (channel) {
         channel.appendLine('[Extension] Debug session terminated. Process killed.');
       }
+    }
+    // Always kill by port: cds-debug may have already exited (process map entry gone)
+    // while cf ssh tunnel still runs as a separate process.
+    const port = debugPorts.get(appName);
+    if (port !== undefined) {
+      debugPorts.delete(appName);
+      setTimeout(() => void killProcessOnPort(port), 600);
     }
 
     // Guard: stopProcess() may have already emitted EXITED
@@ -102,19 +107,23 @@ export function initializeProcessManager(): void {
 }
 
 export function stopProcess(appName: string): void {
-  const entry = processes.get(appName);
-  if (entry) {
+  const p = processes.get(appName);
+  if (p) {
     logInfo(`Killing process group for ${appName} explicitly.`);
-    killProcessGroup(entry.child);
+    killProcessGroup(p);
     processes.delete(appName);
     const channel = channels.get(appName);
     if (channel) {
       channel.appendLine('[Extension] Process group killed by explicit Stop request.');
     }
-    // `cds debug` may spawn `cf ssh` in a separate process group (detached), so SIGTERM
-    // to the cds process group may not reach the SSH tunnel. Kill the port directly after
-    // giving SIGTERM a moment to propagate.
-    setTimeout(() => void killProcessOnPort(entry.port), 600);
+  }
+  // Always kill by port regardless of whether the cds-debug process is still in the map.
+  // cds-debug may have exited early (after tunnel setup) so `processes` entry could already
+  // be gone, yet cf ssh is still listening on the port.
+  const port = debugPorts.get(appName);
+  if (port !== undefined) {
+    debugPorts.delete(appName);
+    setTimeout(() => void killProcessOnPort(port), 600);
   }
   // Mark as stopped so downstream close/terminate events skip duplicate EXITED emit
   stoppedApps.add(appName);
@@ -154,7 +163,8 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
     detached: !isWindows,
   });
 
-  processes.set(appName, { child, port });
+  processes.set(appName, child);
+  debugPorts.set(appName, port);
   sessionStates.set(appName, { status: 'TUNNELING' });
   debugProcessEvents.emit('statusChanged', { appName, status: 'TUNNELING' });
 
@@ -215,10 +225,14 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
 }
 
 export function disposeAllProcesses(): void {
-  for (const entry of processes.values()) {
-    killProcessGroup(entry.child);
+  for (const p of processes.values()) {
+    killProcessGroup(p);
   }
   processes.clear();
+  for (const port of debugPorts.values()) {
+    void killProcessOnPort(port);
+  }
+  debugPorts.clear();
   sessionStates.clear();
   activeDebugSessions.clear();
   stoppedApps.clear();

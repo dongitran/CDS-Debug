@@ -67,6 +67,11 @@
     "nbsp",
     "amp",
     "dongtran",
-    "dongitran"
+    "dongitran",
+    "pids",
+    "pidstr",
+    "sigterm",
+    "sigkill",
+    "lsof"
   ]
 }

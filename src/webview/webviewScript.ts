@@ -299,12 +299,6 @@ export function getScript(nonce: string): string {
         state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
       ).length;
 
-      const checkAll = document.getElementById('check-all-started');
-      if (checkAll) {
-        checkAll.checked = selectedCount > 0 && selectedCount === availableStarted.length;
-        checkAll.disabled = availableStarted.length === 0;
-      }
-
       const appList = document.querySelector('.app-list');
       if (appList) {
         let listHtml = renderAppSection(started, 'Started') + renderAppSection(stopped, 'Stopped');
@@ -411,14 +405,6 @@ export function getScript(nonce: string): string {
           aria-label="Search apps" value="\${escape(state.searchQuery)}" />
         <div style="height:8px"></div>
 
-        <label class="app-row" style="margin-bottom:4px">
-          <input type="checkbox" id="check-all-started"
-            aria-label="Select all start-ready services"
-            \${selectedCount > 0 && selectedCount === availableStarted.length ? 'checked' : ''}
-            \${availableStarted.length === 0 ? 'disabled' : ''} />
-          <span style="font-size:12px">Select all start-ready</span>
-        </label>
-
         <div class="app-list">
           \${renderAppSection(started, 'Started')}
           \${renderAppSection(stopped, 'Stopped')}
@@ -499,16 +485,6 @@ export function getScript(nonce: string): string {
 
       $('search-input')?.addEventListener('input', e => {
         state.searchQuery = e.target.value;
-        refreshAppListSection();
-      });
-
-      $('check-all-started')?.addEventListener('change', e => {
-        const available = state.apps.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
-        if (e.target.checked) {
-          available.forEach(a => state.selectedApps.add(a.name));
-        } else {
-          available.forEach(a => state.selectedApps.delete(a.name));
-        }
         refreshAppListSection();
       });
 

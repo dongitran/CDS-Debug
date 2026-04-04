@@ -121,6 +121,40 @@ describe('cfClient command wrappers', () => {
     );
   });
 
+  it('retries cf auth and succeeds on first retry', async () => {
+    vi.useFakeTimers();
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: '' })                           // cf api
+      .mockRejectedValueOnce({ message: 'connect timeout', stderr: '' }) // auth attempt 1 fails
+      .mockResolvedValueOnce({ stdout: '' });                          // auth attempt 2 succeeds
+
+    const loginPromise = cfLogin('https://api.cf.eu10.hana.ondemand.com', 'user@example.com', 'secret');
+    await vi.runAllTimersAsync();
+
+    await expect(loginPromise).resolves.toBeUndefined();
+    expect(execFileAsyncMock).toHaveBeenCalledTimes(3); // api + 2 auth calls
+    vi.useRealTimers();
+  });
+
+  it('throws CfCliError after all 3 cf auth retries are exhausted', async () => {
+    vi.useFakeTimers();
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: '' })                                   // cf api
+      .mockRejectedValueOnce({ message: 'persistent error', stderr: 'FAILED' }) // auth attempt 1
+      .mockRejectedValueOnce({ message: 'persistent error', stderr: 'FAILED' }) // auth attempt 2
+      .mockRejectedValueOnce({ message: 'persistent error', stderr: 'FAILED' }) // auth attempt 3
+      .mockRejectedValueOnce({ message: 'persistent error', stderr: 'FAILED' }); // auth attempt 4
+
+    const loginPromise = cfLogin('https://api.cf.eu10.hana.ondemand.com', 'user@example.com', 'secret');
+    // Pre-attach a noop catch so the rejection is never "unhandled" during timer execution
+    loginPromise.catch(() => undefined);
+    await vi.runAllTimersAsync();
+
+    await expect(loginPromise).rejects.toMatchObject({ name: 'CfCliError', message: 'persistent error' });
+    expect(execFileAsyncMock).toHaveBeenCalledTimes(5); // api + 4 auth calls (1 + 3 retries)
+    vi.useRealTimers();
+  });
+
   it('wraps CLI failures as CfCliError with trimmed stderr', async () => {
     execFileAsyncMock.mockRejectedValue({
       message: 'cf failed',

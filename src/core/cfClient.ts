@@ -33,9 +33,23 @@ async function runCf(args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   }
 }
 
+const CF_AUTH_RETRIES = 3;
+
 export async function cfLogin(apiEndpoint: string, email: string, password: string): Promise<void> {
   await runCf(['api', apiEndpoint]);
-  await runCf(['auth', email, password]);
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= CF_AUTH_RETRIES; attempt++) {
+    try {
+      await runCf(['auth', email, password]);
+      return;
+    } catch (err: unknown) {
+      lastError = err;
+      if (attempt < CF_AUTH_RETRIES) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError;
 }
 
 export function parseOrgs(stdout: string): string[] {
