@@ -9,16 +9,25 @@ const processes = new Map<string, ChildProcess>();
 const channels = new Map<string, vscode.OutputChannel>();
 const sessionStates = new Map<string, { status: string; message?: string }>();
 let sessionListener: vscode.Disposable | null = null;
+let startListener: vscode.Disposable | null = null;
 const DEBUG_SESSION_PREFIX = 'Debug: ';
+const activeVsCodeSessions = new Set<string>();
 
 export function getActiveSessions(): Record<string, { status: string; message?: string }> {
   return Object.fromEntries(sessionStates);
 }
 
 export function initializeProcessManager(): void {
+  startListener ??= vscode.debug.onDidStartDebugSession((session) => {
+    activeVsCodeSessions.add(session.name);
+  });
+
   sessionListener ??= vscode.debug.onDidTerminateDebugSession((session) => {
+    activeVsCodeSessions.delete(session.name);
+    
     if (!session.name.startsWith(DEBUG_SESSION_PREFIX)) return;
     const appName = session.name.slice(DEBUG_SESSION_PREFIX.length);
+    
     const p = processes.get(appName);
     if (p) {
       logInfo(`Debug session ${session.name} stopped. Cleaning up SSH tunnel process...`);
@@ -28,9 +37,10 @@ export function initializeProcessManager(): void {
       if (channel) {
         channel.appendLine('[Extension] Debug session terminated. Process killed.');
       }
-      sessionStates.delete(appName);
-      debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
     }
+    
+    sessionStates.delete(appName);
+    debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
   });
 }
 
@@ -44,15 +54,18 @@ export function stopProcess(appName: string): void {
     if (channel) {
       channel.appendLine(`[Extension] Process killed early by explicit Stop request.`);
     }
-    // Stop only sessions tied to this app, never unrelated debug sessions.
-    stopActiveDebugSessionForApp(appName);
-    sessionStates.delete(appName);
-    debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
   }
+  // Stop only sessions tied to this app, never unrelated debug sessions.
+  stopActiveDebugSessionForApp(appName);
+  
+  sessionStates.delete(appName);
+  debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
 }
 
 function stopActiveDebugSessionForApp(appName: string): void {
   const sessionName = `${DEBUG_SESSION_PREFIX}${appName}`;
+  // We can't access all sessions directly in older VS Code API,
+  // but if it's the active one, we stop it.
   const activeSession = vscode.debug.activeDebugSession;
   if (activeSession?.name === sessionName) {
     void vscode.debug.stopDebugging(activeSession);
@@ -118,8 +131,13 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
     const ch = channels.get(appName);
     if (ch) ch.appendLine(`\n[Extension] Process exited with code ${code?.toString() ?? 'null'}`);
     processes.delete(appName);
-    sessionStates.delete(appName);
-    debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
+    
+    // Only emit EXITED if VS Code debugging has ALSO stopped bridging the gap.
+    // Sometimes 'cds debug' exits but leaves underlying tunnel active.
+    if (!activeVsCodeSessions.has(launchConfigName)) {
+      sessionStates.delete(appName);
+      debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
+    }
   });
   
   child.on('error', (err) => {
@@ -145,5 +163,9 @@ export function disposeAllProcesses(): void {
   if (sessionListener) {
     sessionListener.dispose();
     sessionListener = null;
+  }
+  if (startListener) {
+    startListener.dispose();
+    startListener = null;
   }
 }
