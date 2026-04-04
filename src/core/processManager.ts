@@ -9,6 +9,7 @@ const processes = new Map<string, ChildProcess>();
 const channels = new Map<string, vscode.OutputChannel>();
 const sessionStates = new Map<string, { status: string; message?: string }>();
 let sessionListener: vscode.Disposable | null = null;
+const DEBUG_SESSION_PREFIX = 'Debug: ';
 
 export function getActiveSessions(): Record<string, { status: string; message?: string }> {
   return Object.fromEntries(sessionStates);
@@ -16,7 +17,8 @@ export function getActiveSessions(): Record<string, { status: string; message?: 
 
 export function initializeProcessManager(): void {
   sessionListener ??= vscode.debug.onDidTerminateDebugSession((session) => {
-    const appName = session.name.replace('Debug: ', '');
+    if (!session.name.startsWith(DEBUG_SESSION_PREFIX)) return;
+    const appName = session.name.slice(DEBUG_SESSION_PREFIX.length);
     const p = processes.get(appName);
     if (p) {
       logInfo(`Debug session ${session.name} stopped. Cleaning up SSH tunnel process...`);
@@ -42,10 +44,18 @@ export function stopProcess(appName: string): void {
     if (channel) {
       channel.appendLine(`[Extension] Process killed early by explicit Stop request.`);
     }
-    // VS Code debug session might still be running locally, let's stop it too
-    void vscode.debug.stopDebugging();
+    // Stop only sessions tied to this app, never unrelated debug sessions.
+    stopActiveDebugSessionForApp(appName);
     sessionStates.delete(appName);
     debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
+  }
+}
+
+function stopActiveDebugSessionForApp(appName: string): void {
+  const sessionName = `${DEBUG_SESSION_PREFIX}${appName}`;
+  const activeSession = vscode.debug.activeDebugSession;
+  if (activeSession?.name === sessionName) {
+    void vscode.debug.stopDebugging(activeSession);
   }
 }
 

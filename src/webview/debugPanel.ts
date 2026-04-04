@@ -90,7 +90,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
         
       case 'OPEN_APP_URL':
-        vscode.env.openExternal(vscode.Uri.parse(raw.payload.url));
+        this.handleOpenAppUrl(raw.payload.url);
         break;
 
       case 'RESET_LOGIN':
@@ -145,7 +145,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    logInfo(`Logging in to ${apiEndpoint} as ${email} …`);
+    logInfo(`Logging in to ${apiEndpoint} …`);
 
     try {
       await cfLogin(apiEndpoint, email, password);
@@ -273,6 +273,17 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       );
     }
   }
+
+  private handleOpenAppUrl(rawUrl: string): void {
+    const safeUri = toSafeHttpUri(rawUrl);
+    if (!safeUri) {
+      const msg = 'Blocked unsafe or malformed app URL.';
+      logWarn(msg);
+      this.post({ type: 'DEBUG_ERROR', payload: { message: msg } });
+      return;
+    }
+    void vscode.env.openExternal(safeUri);
+  }
 }
 
 function isWebviewMessage(value: unknown): value is WebviewMessage {
@@ -287,4 +298,16 @@ function isWebviewMessage(value: unknown): value is WebviewMessage {
 function extractErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function toSafeHttpUri(rawUrl: string): vscode.Uri | null {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    return vscode.Uri.parse(parsed.toString());
+  } catch {
+    return null;
+  }
 }

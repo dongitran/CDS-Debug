@@ -3,6 +3,7 @@
   "language": "en",
   "ignorePaths": [
     "node_modules/**",
+    "sample/demo-health-svc/node_modules/**",
     "dist/**",
     "*.lock",
     "pnpm-lock.yaml",

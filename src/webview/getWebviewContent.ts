@@ -316,6 +316,17 @@ export function getWebviewContent(): string {
       margin-bottom: 6px;
       text-align: center;
     }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
   </style>
 </head>
 <body>
@@ -380,6 +391,23 @@ export function getWebviewContent(): string {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+    }
+
+    function buildLiveStatus() {
+      if (state.error) {
+        return 'Error: ' + state.error;
+      }
+      if (state.screen === SCREENS.LOGGING_IN) {
+        return 'Logging in to Cloud Foundry...';
+      }
+      if (state.screen === SCREENS.LOADING_APPS && state.selectedOrg) {
+        return 'Loading apps for ' + state.selectedOrg + '...';
+      }
+      const activeCount = Object.keys(state.activeSessions).length;
+      if (activeCount > 0) {
+        return activeCount + ' debug session' + (activeCount === 1 ? '' : 's') + ' active.';
+      }
+      return '';
     }
 
     function render() {
@@ -558,7 +586,8 @@ export function getWebviewContent(): string {
         let openBtn = '';
         if (session.status === 'ATTACHED' && appUrl) {
           openBtn = \`
-            <button class="active-open-btn" data-open-url="\${escape(appUrl)}" title="Open App in Browser">
+            <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
+              title="Open App in Browser" aria-label="Open \${escape(appName)} in browser">
               &#8599; Open App
             </button>
           \`;
@@ -574,7 +603,8 @@ export function getWebviewContent(): string {
               </div>
             </div>
             \${openBtn}
-            <button class="active-stop-btn" data-stop-app="\${escape(appName)}" title="Stop Debug Session">■</button>
+            <button class="active-stop-btn" data-stop-app="\${escape(appName)}"
+              title="Stop Debug Session" aria-label="Stop debug for \${escape(appName)}">■</button>
           </div>
         \`;
       };
@@ -599,6 +629,7 @@ export function getWebviewContent(): string {
           return \`
           <label class="app-row \${isDisabled ? 'stopped' : ''}">
             <input type="checkbox" data-app="\${escape(app.name)}"
+              aria-label="Select \${escape(app.name)} for debug"
               \${isChecked ? 'checked' : ''}
               \${isDisabled ? 'disabled' : ''} />
             <span class="app-name" title="\${escape(app.name)}">\${escape(app.name)}</span>
@@ -615,18 +646,21 @@ export function getWebviewContent(): string {
           <span class="step-badge">4/4</span>
           <span class="step-title">Debug Launcher</span>
         </div>
+        <div class="sr-only" aria-live="polite">\${escape(buildLiveStatus())}</div>
         \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
         
         \${activeSection}
 
         <div class="section-label">Cloud Foundry Org</div>
-        <select class="select" id="org-select">\${orgOptions}</select>
+        <select class="select" id="org-select" aria-label="Select Cloud Foundry org">\${orgOptions}</select>
         <div style="height:8px"></div>
-        <input class="input" id="search-input" placeholder="Search apps&hellip;" value="\${escape(state.searchQuery)}" />
+        <input class="input" id="search-input" placeholder="Search apps&hellip;"
+          aria-label="Search apps" value="\${escape(state.searchQuery)}" />
         <div style="height:8px"></div>
         
         <label class="app-row" style="margin-bottom:4px">
           <input type="checkbox" id="check-all-started"
+            aria-label="Select all start-ready services"
             \${selectedCount > 0 && selectedCount === availableStarted.length ? 'checked' : ''} 
             \${availableStarted.length === 0 ? 'disabled' : ''} />
           <span style="font-size:12px">Select all start-ready</span>
@@ -640,7 +674,8 @@ export function getWebviewContent(): string {
         
         <div class="footer">
           <div class="footer-info">\${selectedCount} service\${selectedCount !== 1 ? 's' : ''} selected</div>
-          <button class="btn" id="btn-start-debug" \${selectedCount === 0 ? 'disabled' : ''}>
+          <button class="btn" id="btn-start-debug" aria-label="Start selected debug sessions"
+            \${selectedCount === 0 ? 'disabled' : ''}>
             &#9654; Start Debug Sessions
           </button>
           <div style="height:6px"></div>

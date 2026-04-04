@@ -46,9 +46,10 @@ export function buildDebugTargets(
     const folderPath = findFolderPath(appName, allFolderPaths);
 
     if (folderPath !== null) {
-      if (existingPorts[appName]) {
-        targets.push({ appName, folderPath, port: existingPorts[appName] });
-        usedPorts.add(existingPorts[appName]);
+      const existingPort = existingPorts[appName];
+      if (existingPort !== undefined) {
+        targets.push({ appName, folderPath, port: existingPort });
+        usedPorts.add(existingPort);
       } else {
         while (usedPorts.has(port)) {
           port++;

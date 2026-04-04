@@ -96,4 +96,30 @@ describe('mergeLaunchJson', () => {
     // total: 1 manual + 2 new
     expect(written.configurations).toHaveLength(3);
   });
+
+  it('tolerates malformed launch.json shape and still writes valid configs', async () => {
+    const malformed = {
+      version: '',
+      configurations: [
+        { type: 'node', port: 1234 },
+        'bad-entry',
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(malformed));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await mergeLaunchJson('/workspace', TARGETS);
+
+    const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
+      version: string;
+      configurations: { name?: string }[];
+    };
+
+    expect(written.version).toBe('0.2.0');
+    expect(written.configurations).toHaveLength(2);
+    expect(written.configurations[0]?.name).toBe('Debug: myapp-svc-one');
+    expect(written.configurations[1]?.name).toBe('Debug: myapp-svc-two');
+  });
 });

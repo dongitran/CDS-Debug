@@ -24,7 +24,7 @@ export async function getExistingLaunchConfigs(workspacePath: string): Promise<L
   let existing: LaunchJson = { version: LAUNCH_JSON_VERSION, configurations: [] };
   try {
     const raw = await readFile(launchJsonPath, 'utf8');
-    existing = JSON.parse(raw) as LaunchJson;
+    existing = normalizeLaunchJson(JSON.parse(raw) as unknown);
   } catch {
     // File does not exist yet — start fresh
   }
@@ -46,4 +46,28 @@ export async function mergeLaunchJson(workspacePath: string, targets: DebugTarge
 
   await mkdir(dirname(launchJsonPath), { recursive: true });
   await writeFile(launchJsonPath, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+}
+
+function normalizeLaunchJson(value: unknown): LaunchJson {
+  if (typeof value !== 'object' || value === null) {
+    return { version: LAUNCH_JSON_VERSION, configurations: [] };
+  }
+
+  const record = value as Record<string, unknown>;
+  const version = typeof record.version === 'string' && record.version.trim().length > 0
+    ? record.version
+    : LAUNCH_JSON_VERSION;
+  const configurations = normalizeConfigurations(record.configurations);
+
+  return { version, configurations };
+}
+
+function normalizeConfigurations(value: unknown): LaunchConfiguration[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.filter((item): item is LaunchConfiguration => {
+    if (typeof item !== 'object' || item === null) return false;
+    const config = item as Record<string, unknown>;
+    return typeof config.name === 'string';
+  });
 }
