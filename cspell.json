@@ -58,6 +58,14 @@
     "runtimeargs",
     "runtimeexecutable",
     "debuggable",
-    "readonly"
+    "readonly",
+    "hellip",
+    "rarr",
+    "larr",
+    "mdash",
+    "ndash",
+    "nbsp",
+    "amp",
+    "alcon"
   ]
 }

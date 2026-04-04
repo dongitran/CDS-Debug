@@ -65,6 +65,7 @@ describe('mergeLaunchJson', () => {
     const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
       configurations: unknown[];
     };
+
     expect(written.configurations).toHaveLength(2);
   });
 
@@ -84,7 +85,7 @@ describe('mergeLaunchJson', () => {
     await mergeLaunchJson('/workspace', TARGETS);
 
     const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
-      configurations: Array<{ name: string; port: number }>;
+      configurations: { name: string; port: number }[];
     };
 
     // manual config preserved

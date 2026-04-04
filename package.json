@@ -8,8 +8,13 @@
     "vscode": "^1.90.0",
     "node": ">=20"
   },
-  "categories": ["Debuggers", "Other"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Debuggers",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {

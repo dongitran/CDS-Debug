@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Dirent, Stats } from 'node:fs';
+import type { Stats } from 'node:fs';
 
 vi.mock('node:fs/promises');
 
 import { findGroupFolders, findRepoFolder } from '../../src/core/folderScanner';
 import * as fs from 'node:fs/promises';
 
-function makeDirent(name: string, isDir: boolean): Dirent {
+type ReaddirResult = Awaited<ReturnType<typeof fs.readdir>>;
+
+function makeDirent(name: string, isDir: boolean): ReaddirResult[number] {
   return {
     name,
     isDirectory: () => isDir,
@@ -18,7 +20,7 @@ function makeDirent(name: string, isDir: boolean): Dirent {
     isSymbolicLink: () => false,
     path: '/root',
     parentPath: '/root',
-  } as Dirent;
+  } as unknown as ReaddirResult[number];
 }
 
 function makeStats(): Stats {
@@ -35,7 +37,7 @@ describe('findGroupFolders', () => {
       makeDirent('client-b', true),
       makeDirent('client-a', true),
       makeDirent('README.md', false),
-    ] as Dirent[]);
+    ] as ReaddirResult);
 
     const result = await findGroupFolders('/root');
     expect(result).toEqual(['client-a', 'client-b']);
@@ -44,7 +46,7 @@ describe('findGroupFolders', () => {
   it('returns empty array when no directories exist', async () => {
     vi.mocked(fs.readdir).mockResolvedValue([
       makeDirent('README.md', false),
-    ] as Dirent[]);
+    ] as ReaddirResult);
 
     const result = await findGroupFolders('/root');
     expect(result).toEqual([]);
@@ -54,7 +56,7 @@ describe('findGroupFolders', () => {
     vi.mocked(fs.readdir).mockResolvedValue([
       makeDirent('group-a', true),
       makeDirent('group-b', true),
-    ] as Dirent[]);
+    ] as ReaddirResult);
 
     const result = await findGroupFolders('/root');
     expect(result).toEqual(['group-a', 'group-b']);
@@ -64,8 +66,8 @@ describe('findGroupFolders', () => {
 describe('findRepoFolder', () => {
   it('returns full path when folder with package.json found', async () => {
     vi.mocked(fs.readdir)
-      .mockResolvedValueOnce([makeDirent('prefix_srv_config_main', true)] as Dirent[])
-      .mockResolvedValue([] as Dirent[]);
+      .mockResolvedValueOnce([makeDirent('prefix_srv_config_main', true)] as ReaddirResult)
+      .mockResolvedValue([] as ReaddirResult);
 
     vi.mocked(fs.stat).mockResolvedValue(makeStats());
 
@@ -75,8 +77,8 @@ describe('findRepoFolder', () => {
 
   it('returns null when folder exists but has no package.json', async () => {
     vi.mocked(fs.readdir)
-      .mockResolvedValueOnce([makeDirent('prefix_srv_config_main', true)] as Dirent[])
-      .mockResolvedValue([] as Dirent[]);
+      .mockResolvedValueOnce([makeDirent('prefix_srv_config_main', true)] as ReaddirResult)
+      .mockResolvedValue([] as ReaddirResult);
 
     vi.mocked(fs.stat).mockRejectedValue(new Error('ENOENT'));
 
@@ -86,10 +88,10 @@ describe('findRepoFolder', () => {
 
   it('searches recursively into subdirectories', async () => {
     vi.mocked(fs.readdir)
-      .mockResolvedValueOnce([makeDirent('core', true)] as Dirent[])
-      .mockResolvedValueOnce([makeDirent('config', true)] as Dirent[])
-      .mockResolvedValueOnce([makeDirent('prefix_srv_config_main', true)] as Dirent[])
-      .mockResolvedValue([] as Dirent[]);
+      .mockResolvedValueOnce([makeDirent('core', true)] as ReaddirResult)
+      .mockResolvedValueOnce([makeDirent('config', true)] as ReaddirResult)
+      .mockResolvedValueOnce([makeDirent('prefix_srv_config_main', true)] as ReaddirResult)
+      .mockResolvedValue([] as ReaddirResult);
 
     vi.mocked(fs.stat).mockResolvedValue(makeStats());
 
@@ -98,7 +100,7 @@ describe('findRepoFolder', () => {
   });
 
   it('returns null when folder not found anywhere', async () => {
-    vi.mocked(fs.readdir).mockResolvedValue([makeDirent('other_folder', true)] as Dirent[]);
+    vi.mocked(fs.readdir).mockResolvedValue([makeDirent('other_folder', true)] as ReaddirResult);
     vi.mocked(fs.stat).mockRejectedValue(new Error('ENOENT'));
 
     const result = await findRepoFolder('/group', 'prefix_srv_nonexistent');

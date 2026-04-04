@@ -17,15 +17,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
-    _context: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken,
+    _resolveContext: vscode.WebviewViewResolveContext,
+    _cancellationToken: vscode.CancellationToken,
   ): void {
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [this.context.extensionUri],
     };
-    webviewView.webview.html = getWebviewContent(webviewView.webview);
+    webviewView.webview.html = getWebviewContent();
     webviewView.webview.onDidReceiveMessage(
       (raw: unknown) => void this.handleMessage(raw),
       undefined,
@@ -88,8 +88,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   private async handleLogin(region: string): Promise<void> {
     const validRegion = region === 'br10' || region === 'ap11' ? region : 'br10';
-    const email = process.env['SAP_EMAIL'] ?? '';
-    const password = process.env['SAP_PASSWORD'] ?? '';
+    const email = process.env.SAP_EMAIL ?? '';
+    const password = process.env.SAP_PASSWORD ?? '';
 
     if (!email || !password) {
       this.post({
@@ -195,7 +195,7 @@ function isWebviewMessage(value: unknown): value is WebviewMessage {
     typeof value === 'object' &&
     value !== null &&
     'type' in value &&
-    typeof (value as Record<string, unknown>)['type'] === 'string'
+    typeof (value as Record<string, unknown>).type === 'string'
   );
 }
 
