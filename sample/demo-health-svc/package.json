@@ -1,19 +1,15 @@
 {
   "name": "demo-health-svc",
   "version": "1.0.0",
-  "description": "SAP CAP sample service with health endpoint",
+  "description": "Lightweight Express service for testing CF deploy and remote debug",
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "@sap/cds": "^8"
-  },
-  "devDependencies": {
-    "@sap/cds-dk": "^8"
+    "express": "^4.19.2"
   },
   "scripts": {
-    "start": "cds-serve",
-    "watch": "cds watch",
-    "build": "cds build"
+    "start": "node server.js",
+    "debug": "node --inspect=0.0.0.0:9229 server.js"
   }
 }

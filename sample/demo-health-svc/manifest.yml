@@ -2,5 +2,7 @@
 applications:
   - name: demo-health-svc
     memory: 128M
-    command: npm start
+    command: node server.js
     instances: 1
+    buildpacks:
+      - nodejs_buildpack
