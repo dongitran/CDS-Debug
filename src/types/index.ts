@@ -48,6 +48,7 @@ export type WebviewMessage =
   | { type: 'LOGIN'; payload: { apiEndpoint: string } }
   | { type: 'LOAD_APPS'; payload: { org: string } }
   | { type: 'START_DEBUG'; payload: { appNames: string[]; org: string } }
+  | { type: 'STOP_DEBUG'; payload: { appName: string } }
   | { type: 'SAVE_MAPPINGS'; payload: { mappings: OrgGroupMapping[] } }
   | { type: 'LOAD_CONFIG' };
 
@@ -59,5 +60,7 @@ export type ExtensionMessage =
   | { type: 'APPS_LOADED'; payload: { apps: CfApp[] } }
   | { type: 'APPS_ERROR'; payload: { message: string } }
   | { type: 'DEBUG_STARTED'; payload: { count: number } }
+  | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[] } }
+  | { type: 'APP_DEBUG_STATUS'; payload: { appName: string; status: string; message?: string } }
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
   | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null } };

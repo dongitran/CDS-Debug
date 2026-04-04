@@ -8,14 +8,18 @@ import { mergeLaunchJson } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
-import { startTunnelAndAttach } from '../core/processManager';
+import { startTunnelAndAttach, stopProcess, debugProcessEvents } from '../core/processManager';
 
 export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'cdsDebug.mainView';
 
   private view?: vscode.WebviewView;
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly context: vscode.ExtensionContext) {
+    debugProcessEvents.on('statusChanged', (payload: { appName: string, status: string, message?: string }) => {
+      this.post({ type: 'APP_DEBUG_STATUS', payload });
+    });
+  }
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -66,6 +70,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       case 'START_DEBUG':
         await this.handleStartDebug(raw.payload.appNames, raw.payload.org);
+        break;
+
+      case 'STOP_DEBUG':
+        stopProcess(raw.payload.appName);
         break;
     }
   }
@@ -216,8 +224,6 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const launchConfigName = `Debug: ${target.appName}`;
       startTunnelAndAttach(target.appName, target.folderPath, target.port, launchConfigName);
     }
-
-    this.post({ type: 'DEBUG_STARTED', payload: { count: targets.length } });
 
     if (unmapped.length > 0) {
       logWarn(`${unmapped.length.toString()} app(s) not mapped: ${unmapped.join(', ')}`);

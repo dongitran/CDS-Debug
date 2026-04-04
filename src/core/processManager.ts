@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { logInfo } from './logger';
+
+export const debugProcessEvents = new EventEmitter();
 
 const processes = new Map<string, ChildProcess>();
 const channels = new Map<string, vscode.OutputChannel>();
@@ -8,26 +11,44 @@ let sessionListener: vscode.Disposable | null = null;
 
 export function initializeProcessManager(): void {
   sessionListener ??= vscode.debug.onDidTerminateDebugSession((session) => {
-    const p = processes.get(session.name);
+    const appName = session.name.replace('Debug: ', '');
+    const p = processes.get(appName);
     if (p) {
       logInfo(`Debug session ${session.name} stopped. Cleaning up SSH tunnel process...`);
       p.kill();
-      processes.delete(session.name);
-      const channel = channels.get(session.name);
+      processes.delete(appName);
+      const channel = channels.get(appName);
       if (channel) {
         channel.appendLine('[Extension] Debug session terminated. Process killed.');
       }
+      debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
     }
   });
+}
+
+export function stopProcess(appName: string): void {
+  const p = processes.get(appName);
+  if (p) {
+    logInfo(`Killing process for ${appName} explicitly.`);
+    p.kill();
+    processes.delete(appName);
+    const channel = channels.get(appName);
+    if (channel) {
+      channel.appendLine(`[Extension] Process killed early by explicit Stop request.`);
+    }
+    // VS Code debug session might still be running locally, let's stop it too
+    void vscode.debug.stopDebugging();
+    debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
+  }
 }
 
 export function startTunnelAndAttach(appName: string, folderPath: string, port: number, launchConfigName: string): void {
   initializeProcessManager();
 
-  let channel = channels.get(launchConfigName);
+  let channel = channels.get(appName);
   if (!channel) {
     channel = vscode.window.createOutputChannel(`CDS: ${appName}`);
-    channels.set(launchConfigName, channel);
+    channels.set(appName, channel);
   }
   channel.clear();
   const cmdStr = `cds debug ${appName} -f -p ${port.toString()}`;
@@ -40,13 +61,14 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
     shell: isWindows,
   });
 
-  processes.set(launchConfigName, child);
+  processes.set(appName, child);
+  debugProcessEvents.emit('statusChanged', { appName, status: 'TUNNELING' });
 
   let attached = false;
 
   const handleOutput = (data: Buffer | string): void => {
     const output = data.toString();
-    const ch = channels.get(launchConfigName);
+    const ch = channels.get(appName);
     if (ch) ch.append(output);
 
     // Trigger attach when the tunnel is ready
@@ -59,7 +81,13 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
         ? vscode.workspace.workspaceFolders[0] 
         : undefined;
       
-      void vscode.debug.startDebugging(workspaceFolder, launchConfigName);
+      void vscode.debug.startDebugging(workspaceFolder, launchConfigName).then((success) => {
+        if (success) {
+          debugProcessEvents.emit('statusChanged', { appName, status: 'ATTACHED' });
+        } else {
+          debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: 'Failed to start VS Code debugging.' });
+        }
+      });
     }
   };
 
@@ -67,14 +95,16 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
   child.stderr.on('data', handleOutput);
 
   child.on('close', (code) => {
-    const ch = channels.get(launchConfigName);
+    const ch = channels.get(appName);
     if (ch) ch.appendLine(`\n[Extension] Process exited with code ${code?.toString() ?? 'null'}`);
-    processes.delete(launchConfigName);
+    processes.delete(appName);
+    debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
   });
   
   child.on('error', (err) => {
-    const ch = channels.get(launchConfigName);
+    const ch = channels.get(appName);
     if (ch) ch.appendLine(`\n[Extension] Failed to spawn process: ${err.message}`);
+    debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: err.message });
   });
 }
 

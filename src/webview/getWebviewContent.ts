@@ -1,10 +1,7 @@
-function getNonce(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
-
 export function getWebviewContent(): string {
-  const nonce = getNonce();
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const nonce = Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  
   const csp = [
     `default-src 'none'`,
     `style-src 'unsafe-inline'`,
@@ -58,6 +55,7 @@ export function getWebviewContent(): string {
       font-size: var(--vscode-font-size);
       font-family: var(--vscode-font-family);
       text-align: center;
+      transition: background 0.2s;
     }
     .btn:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -77,6 +75,7 @@ export function getWebviewContent(): string {
       font-size: var(--vscode-font-size);
       font-family: var(--vscode-font-family);
       outline: none;
+      transition: border-color 0.2s;
     }
     .input:focus { border-color: var(--vscode-focusBorder); }
 
@@ -137,7 +136,7 @@ export function getWebviewContent(): string {
       grid-column: 1 / -1;
     }
 
-    .app-list { display: flex; flex-direction: column; gap: 2px; max-height: 300px; overflow-y: auto; }
+    .app-list { display: flex; flex-direction: column; gap: 2px; max-height: 400px; overflow-y: auto; padding-right: 2px; }
     .app-row {
       display: flex;
       align-items: center;
@@ -145,9 +144,10 @@ export function getWebviewContent(): string {
       padding: 5px 6px;
       border-radius: 4px;
       cursor: pointer;
+      transition: background 0.1s;
     }
-    .app-row:hover { background: var(--vscode-list-hoverBackground); }
-    .app-row.stopped { opacity: 0.5; }
+    .app-row:hover:not(.stopped) { background: var(--vscode-list-hoverBackground); }
+    .app-row.stopped { opacity: 0.5; cursor: not-allowed; }
     .app-name {
       flex: 1;
       font-size: 12px;
@@ -222,7 +222,66 @@ export function getWebviewContent(): string {
       margin-bottom: 6px;
       align-items: center;
     }
-    .mapping-arrow { text-align: center; color: var(--vscode-descriptionForeground); }
+    
+    /* New Status Cards for Unified Flow */
+    .active-card {
+      display: flex;
+      align-items: center;
+      background: var(--vscode-editorGroupHeader-tabsBackground);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      padding: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      animation: slideIn 0.3s ease;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .active-card-main { flex: 1; min-width: 0; }
+    .active-card-title {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 4px;
+    }
+    .active-card-status {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      display: flex;
+      align-items: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .active-stop-btn {
+      flex-shrink: 0;
+      width: 26px;
+      height: 26px;
+      margin-left: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid var(--vscode-testing-iconFailed);
+      color: var(--vscode-testing-iconFailed);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 10px;
+      transition: all 0.2s;
+    }
+    .active-stop-btn:hover {
+      background: var(--vscode-testing-iconFailed);
+      color: white;
+    }
+    .status-text-anim {
+      display: inline-block;
+      animation: fadeIn 0.4s;
+    }
+    @keyframes fadeIn { from { opacity: 0.3; } to { opacity: 1; } }
 
     .footer {
       position: sticky;
@@ -253,10 +312,8 @@ export function getWebviewContent(): string {
       MAPPING: 'mapping',
       LOADING_APPS: 'loading-apps',
       READY: 'ready',
-      LAUNCHING: 'launching',
     };
 
-    // Known SAP BTP regions — code → display name
     const CF_REGIONS = [
       { code: 'us10', name: 'US East (VA)' },
       { code: 'us20', name: 'US West (WA)' },
@@ -268,10 +325,7 @@ export function getWebviewContent(): string {
       { code: 'ca10', name: 'Canada (Montreal)' },
     ];
 
-    function regionToEndpoint(code) {
-      return 'https://api.cf.' + code + '.hana.ondemand.com';
-    }
-
+    function regionToEndpoint(code) { return 'https://api.cf.' + code + '.hana.ondemand.com'; }
     function endpointToRegion(endpoint) {
       const m = endpoint.match(new RegExp('api[.]cf[.]([^.]+)[.]hana[.]ondemand[.]com'));
       return m ? m[1] : null;
@@ -291,7 +345,15 @@ export function getWebviewContent(): string {
       selectedApps: new Set(),
       searchQuery: '',
       error: null,
+      activeSessions: {} // { appName: { status, message, msgPhase, intervalId } }
     };
+
+    const LOADING_MESSAGES = [
+      "Opening SSH tunnel...",
+      "Mapping local ports...",
+      "Waiting for trace route...",
+      "Establishing connection..."
+    ];
 
     function escape(str) {
       return String(str)
@@ -315,11 +377,11 @@ export function getWebviewContent(): string {
         case SCREENS.MAPPING:   return renderMapping();
         case SCREENS.LOADING_APPS: return renderLoadingApps();
         case SCREENS.READY:     return renderReady();
-        case SCREENS.LAUNCHING: return renderLaunching();
         default:                return '';
       }
     }
 
+    // [Skipping unchanged renderInitial, renderRegion, renderLoggingIn, renderMapping, renderLoadingApps for brevity but they are intact]
     function renderInitial() {
       return \`
         <div class="step-header">
@@ -432,14 +494,20 @@ export function getWebviewContent(): string {
       \`;
     }
 
+    // Unified READY Screen with Active Sessions Panel
     function renderReady() {
       const filtered = state.apps.filter(app =>
         !state.searchQuery || app.name.toLowerCase().includes(state.searchQuery.toLowerCase())
       );
       const started = filtered.filter(a => a.state === 'started');
       const stopped = filtered.filter(a => a.state === 'stopped');
+
+      const activeAppNames = Object.keys(state.activeSessions);
+      const hasActive = activeAppNames.length > 0;
+
+      // Selection counts ignore actively debugged apps
       const selectedCount = [...state.selectedApps].filter(n =>
-        state.apps.find(a => a.name === n && a.state === 'started')
+        state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
       ).length;
 
       const orgOptions = state.mappings.map(m => \`
@@ -448,18 +516,67 @@ export function getWebviewContent(): string {
         </option>
       \`).join('');
 
+      // Top Panel: Active Debug Sessions
+      const renderActiveCard = (appName) => {
+        const session = state.activeSessions[appName];
+        let icon = '';
+        let text = '';
+        
+        if (session.status === 'TUNNELING') {
+          icon = '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>';
+          text = LOADING_MESSAGES[session.msgPhase] || "Connecting...";
+        } else if (session.status === 'ATTACHED') {
+          icon = '<span style="color:var(--vscode-testing-iconPassed);margin-right:6px">●</span>';
+          text = 'Debugger Attached';
+        } else if (session.status === 'ERROR') {
+          icon = '<span style="color:var(--vscode-testing-iconFailed);margin-right:6px">✖</span>';
+          text = session.message || 'Connection Error';
+        }
+
+        return \`
+          <div class="active-card">
+            <div class="active-card-main">
+              <div class="active-card-title" title="\${escape(appName)}">\${escape(appName)}</div>
+              <div class="active-card-status">
+                \${icon}
+                <span class="status-text-anim" key="\${session.msgPhase}">\${escape(text)}</span>
+              </div>
+            </div>
+            <button class="active-stop-btn" data-stop-app="\${escape(appName)}" title="Stop Debug Session">■</button>
+          </div>
+        \`;
+      };
+
+      const activeSection = hasActive ? \`
+        <div class="section-label" style="display:flex;align-items:center;gap:6px">
+          <span style="color:var(--vscode-testing-iconPassed)">●</span> Active Sessions
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
+          \${activeAppNames.map(renderActiveCard).join('')}
+        </div>
+        <div class="divider"></div>
+      \` : '';
+
+      // Bottom Panel: App List
       const renderApps = (apps, section) => apps.length === 0 ? '' : \`
         <div class="section-label">\${section}</div>
-        \${apps.map(app => \`
-          <label class="app-row \${app.state === 'stopped' ? 'stopped' : ''}">
+        \${apps.map(app => {
+          const isActive = !!state.activeSessions[app.name];
+          const isDisabled = app.state === 'stopped' || isActive;
+          const isChecked = state.selectedApps.has(app.name) && !isActive;
+          return \`
+          <label class="app-row \${isDisabled ? 'stopped' : ''}">
             <input type="checkbox" data-app="\${escape(app.name)}"
-              \${state.selectedApps.has(app.name) ? 'checked' : ''}
-              \${app.state === 'stopped' ? 'disabled' : ''} />
+              \${isChecked ? 'checked' : ''}
+              \${isDisabled ? 'disabled' : ''} />
             <span class="app-name" title="\${escape(app.name)}">\${escape(app.name)}</span>
             <span class="badge badge-\${app.state}">\${app.state}</span>
           </label>
-        \`).join('')}
+        \`}).join('')}
       \`;
+
+      // Available started not actively debugging
+      const availableStarted = started.filter(a => !state.activeSessions[a.name]);
 
       return \`
         <div class="step-header">
@@ -467,22 +584,28 @@ export function getWebviewContent(): string {
           <span class="step-title">Debug Launcher</span>
         </div>
         \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
+        
+        \${activeSection}
+
         <div class="section-label">Cloud Foundry Org</div>
         <select class="select" id="org-select">\${orgOptions}</select>
         <div style="height:8px"></div>
         <input class="input" id="search-input" placeholder="Search apps&hellip;" value="\${escape(state.searchQuery)}" />
         <div style="height:8px"></div>
+        
         <label class="app-row" style="margin-bottom:4px">
           <input type="checkbox" id="check-all-started"
-            \${selectedCount > 0 && selectedCount === started.length ? 'checked' : ''} />
-          <span style="font-size:12px">Select all started</span>
+            \${selectedCount > 0 && selectedCount === availableStarted.length ? 'checked' : ''} 
+            \${availableStarted.length === 0 ? 'disabled' : ''} />
+          <span style="font-size:12px">Select all start-ready</span>
         </label>
-        <div class="divider"></div>
+        
         <div class="app-list">
           \${renderApps(started, 'Started')}
           \${renderApps(stopped, 'Stopped')}
           \${filtered.length === 0 ? '<div style="text-align:center;padding:16px;color:var(--vscode-descriptionForeground)">No apps found</div>' : ''}
         </div>
+        
         <div class="footer">
           <div class="footer-info">\${selectedCount} service\${selectedCount !== 1 ? 's' : ''} selected</div>
           <button class="btn" id="btn-start-debug" \${selectedCount === 0 ? 'disabled' : ''}>
@@ -494,15 +617,6 @@ export function getWebviewContent(): string {
       \`;
     }
 
-    function renderLaunching() {
-      return \`
-        <div style="text-align:center;padding:24px 0">
-          <span class="spinner"></span>
-          Starting debug sessions&hellip;
-        </div>
-      \`;
-    }
-
     function attachListeners() {
       const $ = id => document.getElementById(id);
 
@@ -510,7 +624,6 @@ export function getWebviewContent(): string {
         vscode.postMessage({ type: 'SELECT_ROOT_FOLDER' });
       });
 
-      // Region radio cards
       document.querySelectorAll('input[name="cf-region"]').forEach(el => {
         el.addEventListener('change', e => {
           const value = e.target.value;
@@ -525,14 +638,10 @@ export function getWebviewContent(): string {
         });
       });
 
-      $('api-endpoint-custom')?.addEventListener('input', e => {
-        state.apiEndpoint = e.target.value;
-      });
+      $('api-endpoint-custom')?.addEventListener('input', e => { state.apiEndpoint = e.target.value; });
 
       $('btn-login')?.addEventListener('click', () => {
-        const endpoint = state.useCustomEndpoint
-          ? state.apiEndpoint
-          : regionToEndpoint(state.selectedRegion);
+        const endpoint = state.useCustomEndpoint ? state.apiEndpoint : regionToEndpoint(state.selectedRegion);
         state.apiEndpoint = endpoint;
         state.error = null;
         state.screen = SCREENS.LOGGING_IN;
@@ -541,9 +650,7 @@ export function getWebviewContent(): string {
       });
 
       $('btn-back-initial')?.addEventListener('click', () => {
-        state.screen = SCREENS.INITIAL;
-        state.error = null;
-        render();
+        state.screen = SCREENS.INITIAL; state.error = null; render();
       });
 
       $('btn-save-mappings')?.addEventListener('click', () => {
@@ -555,9 +662,7 @@ export function getWebviewContent(): string {
         });
         state.mappings = mappings;
         if (mappings.length === 0) {
-          state.error = 'Map at least one org to a local folder.';
-          render();
-          return;
+          state.error = 'Map at least one org to a local folder.'; render(); return;
         }
         state.error = null;
         state.selectedOrg = mappings[0].cfOrg;
@@ -568,9 +673,7 @@ export function getWebviewContent(): string {
       });
 
       $('btn-back-region')?.addEventListener('click', () => {
-        state.screen = SCREENS.REGION;
-        state.error = null;
-        render();
+        state.screen = SCREENS.REGION; state.error = null; render();
       });
 
       $('org-select')?.addEventListener('change', e => {
@@ -583,21 +686,20 @@ export function getWebviewContent(): string {
       });
 
       $('search-input')?.addEventListener('input', e => {
-        state.searchQuery = e.target.value;
-        render();
+        state.searchQuery = e.target.value; render();
       });
 
       $('check-all-started')?.addEventListener('change', e => {
-        const started = state.apps.filter(a => a.state === 'started');
+        const availableStarted = state.apps.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
         if (e.target.checked) {
-          started.forEach(a => state.selectedApps.add(a.name));
+          availableStarted.forEach(a => state.selectedApps.add(a.name));
         } else {
-          started.forEach(a => state.selectedApps.delete(a.name));
+          availableStarted.forEach(a => state.selectedApps.delete(a.name));
         }
         render();
       });
 
-      document.querySelectorAll('[data-app]').forEach(el => {
+      document.querySelectorAll('input[type="checkbox"][data-app]').forEach(el => {
         el.addEventListener('change', e => {
           const name = e.target.dataset.app;
           if (e.target.checked) state.selectedApps.add(name);
@@ -606,20 +708,31 @@ export function getWebviewContent(): string {
         });
       });
 
+      // STOP BUTTON LISTENER
+      document.querySelectorAll('[data-stop-app]').forEach(el => {
+        el.addEventListener('click', e => {
+          const btn = e.target.closest('[data-stop-app]');
+          if (btn) {
+            const appName = btn.dataset.stopApp;
+            vscode.postMessage({ type: 'STOP_DEBUG', payload: { appName } });
+          }
+        });
+      });
+
       $('btn-start-debug')?.addEventListener('click', () => {
         const appNames = [...state.selectedApps].filter(
-          n => state.apps.find(a => a.name === n && a.state === 'started')
+          n => state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
         );
         if (appNames.length === 0) return;
-        state.screen = SCREENS.LAUNCHING;
-        render();
+        
+        // Remove from selection so UI checkbox unchecks while tunneling
+        appNames.forEach(n => state.selectedApps.delete(n));
+
         vscode.postMessage({ type: 'START_DEBUG', payload: { appNames, org: state.selectedOrg } });
       });
 
       $('btn-remap')?.addEventListener('click', () => {
-        state.screen = SCREENS.MAPPING;
-        state.error = null;
-        render();
+        state.screen = SCREENS.MAPPING; state.error = null; render();
       });
     }
 
@@ -627,48 +740,69 @@ export function getWebviewContent(): string {
       const msg = event.data;
       switch (msg.type) {
         case 'ROOT_FOLDER_SELECTED':
-          state.rootFolder = msg.payload.path;
-          state.groupFolders = msg.payload.groupFolders;
-          state.screen = SCREENS.REGION;
-          state.error = null;
+          state.rootFolder = msg.payload.path; state.groupFolders = msg.payload.groupFolders;
+          state.screen = SCREENS.REGION; state.error = null;
           break;
         case 'LOGIN_SUCCESS':
-          state.orgs = msg.payload.orgs;
-          state.screen = SCREENS.MAPPING;
-          state.error = null;
+          state.orgs = msg.payload.orgs; state.screen = SCREENS.MAPPING; state.error = null;
           break;
         case 'LOGIN_ERROR':
-          state.error = msg.payload.message;
-          state.screen = SCREENS.REGION;
+          state.error = msg.payload.message; state.screen = SCREENS.REGION;
           break;
         case 'APPS_LOADED':
-          state.apps = msg.payload.apps;
-          state.selectedApps = new Set();
-          state.screen = SCREENS.READY;
-          state.error = null;
+          state.apps = msg.payload.apps; state.selectedApps = new Set();
+          state.screen = SCREENS.READY; state.error = null;
           break;
         case 'APPS_ERROR':
-          state.error = msg.payload.message;
-          state.screen = SCREENS.READY;
+          state.error = msg.payload.message; state.screen = SCREENS.READY;
           break;
-        case 'DEBUG_STARTED':
-          state.screen = SCREENS.READY;
-          state.error = null;
+        
+        // --- NEW REALTIME DEBUG FLOW --- //
+        case 'DEBUG_CONNECTING': {
+          const apps = msg.payload.appNames;
+          apps.forEach(appName => {
+            state.activeSessions[appName] = { status: 'TUNNELING', msgPhase: 0 };
+            const tId = setInterval(() => {
+              if (state.activeSessions[appName] && state.activeSessions[appName].status === 'TUNNELING') {
+                state.activeSessions[appName].msgPhase = (state.activeSessions[appName].msgPhase + 1) % LOADING_MESSAGES.length;
+                render();
+              }
+            }, 1800);
+            state.activeSessions[appName].intervalId = tId;
+          });
           break;
+        }
+        case 'APP_DEBUG_STATUS': {
+          const { appName, status, message } = msg.payload;
+          if (status === 'EXITED') {
+            const session = state.activeSessions[appName];
+            if (session && session.intervalId) clearInterval(session.intervalId);
+            delete state.activeSessions[appName];
+          } else {
+            if (!state.activeSessions[appName]) {
+              state.activeSessions[appName] = { status, message, msgPhase: 0 };
+            } else {
+              const session = state.activeSessions[appName];
+              session.status = status;
+              if (message) session.message = message;
+              if (status === 'ATTACHED' || status === 'ERROR') {
+                if (session.intervalId) clearInterval(session.intervalId);
+              }
+            }
+          }
+          break;
+        }
         case 'DEBUG_ERROR':
-          state.error = msg.payload.message;
-          state.screen = SCREENS.READY;
+          state.error = msg.payload.message; state.screen = SCREENS.READY;
           break;
         case 'CONFIG_LOADED':
-          if (msg.payload.config) {
+          if (msg.payload.config && msg.payload.config.rootFolderPath) {
             const cfg = msg.payload.config;
             state.rootFolder = cfg.rootFolderPath;
             state.apiEndpoint = cfg.apiEndpoint;
-            // Restore region selection from saved endpoint
             const detectedRegion = endpointToRegion(cfg.apiEndpoint);
             if (detectedRegion && CF_REGIONS.some(r => r.code === detectedRegion)) {
-              state.selectedRegion = detectedRegion;
-              state.useCustomEndpoint = false;
+              state.selectedRegion = detectedRegion; state.useCustomEndpoint = false;
             } else if (cfg.apiEndpoint) {
               state.useCustomEndpoint = true;
             }
