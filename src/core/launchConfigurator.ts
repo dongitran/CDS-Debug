@@ -19,11 +19,8 @@ export function generateLaunchConfigurations(targets: DebugTarget[]): LaunchConf
   }));
 }
 
-export async function mergeLaunchJson(workspacePath: string, targets: DebugTarget[]): Promise<void> {
+export async function getExistingLaunchConfigs(workspacePath: string): Promise<LaunchJson> {
   const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
-  const newConfigs = generateLaunchConfigurations(targets);
-  const newNames = new Set(newConfigs.map((c) => c.name));
-
   let existing: LaunchJson = { version: LAUNCH_JSON_VERSION, configurations: [] };
   try {
     const raw = await readFile(launchJsonPath, 'utf8');
@@ -31,10 +28,19 @@ export async function mergeLaunchJson(workspacePath: string, targets: DebugTarge
   } catch {
     // File does not exist yet — start fresh
   }
+  return existing;
+}
+
+export async function mergeLaunchJson(workspacePath: string, targets: DebugTarget[]): Promise<void> {
+  const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
+  const newConfigs = generateLaunchConfigurations(targets);
+  const newNames = new Set(newConfigs.map((c) => c.name));
+
+  const existing = await getExistingLaunchConfigs(workspacePath);
 
   const kept = existing.configurations.filter((c) => !newNames.has(c.name));
   const merged: LaunchJson = {
-    version: LAUNCH_JSON_VERSION,
+    version: existing.version || LAUNCH_JSON_VERSION,
     configurations: [...kept, ...newConfigs],
   };
 

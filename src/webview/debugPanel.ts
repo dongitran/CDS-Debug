@@ -48,15 +48,22 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     if (!isWebviewMessage(raw)) return;
 
     switch (raw.type) {
-      case 'LOAD_CONFIG':
+      case 'LOAD_CONFIG': {
+        const config = getConfig();
+        let groupFolders: string[] = [];
+        if (config?.rootFolderPath) {
+          groupFolders = await findGroupFolders(config.rootFolderPath);
+        }
         this.post({ 
           type: 'CONFIG_LOADED', 
           payload: { 
-            config: getConfig() ?? null,
+            config: config ?? null,
+            groupFolders,
             activeSessions: getActiveSessions()
           } 
         });
         break;
+      }
 
       case 'SELECT_ROOT_FOLDER':
         await this.handleSelectRootFolder();
@@ -110,6 +117,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     await saveConfig({
       rootFolderPath: rootPath,
       apiEndpoint: existing?.apiEndpoint ?? '',
+      orgs: existing?.orgs ?? [],
       orgGroupMappings: existing?.orgGroupMappings ?? [],
     });
 
@@ -147,6 +155,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       await saveConfig({
         rootFolderPath: existing?.rootFolderPath ?? '',
         apiEndpoint,
+        orgs,
         orgGroupMappings: existing?.orgGroupMappings ?? [],
       });
       this.post({ type: 'LOGIN_SUCCESS', payload: { orgs } });
@@ -223,7 +232,24 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    const { targets, unmapped } = buildDebugTargets(appNames, resolvedPaths);
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? config.rootFolderPath;
+
+    const existingPorts: Record<string, number> = {};
+    const usedPorts = new Set<number>();
+    try {
+      const existingConfigs = await import('../core/launchConfigurator').then(m => m.getExistingLaunchConfigs(workspaceRoot));
+      for (const c of existingConfigs.configurations) {
+        if (c.port) usedPorts.add(c.port);
+        // Extract original appName from "Debug: app-name"
+        if (c.name.startsWith('Debug: ')) {
+          existingPorts[c.name.slice(7)] = c.port;
+        }
+      }
+    } catch {
+      // Ignore errors parsing launch.json
+    }
+
+    const { targets, unmapped } = buildDebugTargets(appNames, resolvedPaths, existingPorts, usedPorts);
 
     if (targets.length === 0) {
       const msg = `Could not map any app to a local folder. Unmapped: ${unmapped.join(', ')}`;
@@ -232,7 +258,6 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? config.rootFolderPath;
     await mergeLaunchJson(workspaceRoot, targets);
     logInfo(`Updated .vscode/launch.json with ${targets.length.toString()} config(s).`);
 

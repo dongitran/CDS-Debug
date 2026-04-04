@@ -89,6 +89,8 @@ describe('buildDebugTargets', () => {
     const { targets } = buildDebugTargets(
       ['myapp-svc-one', 'myapp-db-one'],
       allFolderPaths,
+      {},
+      new Set(),
       9300,
     );
 
@@ -110,5 +112,40 @@ describe('buildDebugTargets', () => {
     const { targets, unmapped } = buildDebugTargets([], allFolderPaths);
     expect(targets).toHaveLength(0);
     expect(unmapped).toHaveLength(0);
+  });
+
+  describe('stable port allocation and collision avoidance', () => {
+    it('uses existingPorts if provided', () => {
+      const { targets } = buildDebugTargets(
+        ['myapp-svc-one'],
+        allFolderPaths,
+        { 'myapp-svc-one': 9999 }
+      );
+      expect(targets[0]?.port).toBe(9999);
+    });
+
+    it('skips usedPorts during new allocation', () => {
+      const { targets } = buildDebugTargets(
+        ['myapp-svc-one', 'myapp-db-one'],
+        allFolderPaths,
+        {},
+        new Set([9229, 9231]) // 9229 and 9231 are occupied
+      );
+      // Should pick 9230 (next available after 9229)
+      expect(targets[0]?.port).toBe(9230);
+      // Should pick 9232 (skips 9231)
+      expect(targets[1]?.port).toBe(9232);
+    });
+
+    it('handles mixed existing and new allocations correctly', () => {
+      const { targets } = buildDebugTargets(
+        ['app-fixed', 'app-new'],
+        ['/root/app_fixed', '/root/app_new'],
+        { 'app-fixed': 9500 },
+        new Set([9229])
+      );
+      expect(targets.find(t => t.appName === 'app-fixed')?.port).toBe(9500);
+      expect(targets.find(t => t.appName === 'app-new')?.port).toBe(9230); // 9229 used, so 9230
+    });
   });
 });

@@ -30,7 +30,7 @@ describe('generateLaunchConfigurations', () => {
       name: 'Debug: myapp-svc-one',
       port: 9229,
       localRoot: '/group/sub-a/myapp_svc_one',
-      remoteRoot: '/group/sub-a/myapp_svc_one',
+      remoteRoot: '/home/vcap/app', // cspell:ignore vcap
       restart: true,
     });
 

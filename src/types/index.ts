@@ -41,6 +41,7 @@ export interface LaunchJson {
 export interface ExtensionConfig {
   rootFolderPath: string;
   apiEndpoint: string;
+  orgs: string[];
   orgGroupMappings: OrgGroupMapping[];
 }
 
@@ -67,4 +68,4 @@ export type ExtensionMessage =
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[] } }
   | { type: 'APP_DEBUG_STATUS'; payload: { appName: string; status: string; message?: string } }
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
-  | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }> } };
+  | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; groupFolders: string[]; activeSessions: Record<string, { status: string; message?: string }> } };

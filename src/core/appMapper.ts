@@ -27,12 +27,15 @@ export function findFolderPath(appName: string, allFolderPaths: string[]): strin
 
 /**
  * Builds DebugTarget list from selected app names.
+ * Considers existing port mappings and prevents overlapping with already used ports.
  * Apps that cannot be mapped to a local folder are included with folderPath = null
  * so the caller can decide how to handle them (skip or prompt user).
  */
 export function buildDebugTargets(
   selectedAppNames: string[],
   allFolderPaths: string[],
+  existingPorts: Record<string, number> = {},
+  usedPorts = new Set<number>(),
   startPort = DEBUG_BASE_PORT,
 ): { targets: DebugTarget[]; unmapped: string[] } {
   const targets: DebugTarget[] = [];
@@ -43,8 +46,17 @@ export function buildDebugTargets(
     const folderPath = findFolderPath(appName, allFolderPaths);
 
     if (folderPath !== null) {
-      targets.push({ appName, folderPath, port });
-      port++;
+      if (existingPorts[appName]) {
+        targets.push({ appName, folderPath, port: existingPorts[appName] });
+        usedPorts.add(existingPorts[appName]);
+      } else {
+        while (usedPorts.has(port)) {
+          port++;
+        }
+        targets.push({ appName, folderPath, port });
+        usedPorts.add(port);
+        port++;
+      }
     } else {
       unmapped.push(appName);
     }

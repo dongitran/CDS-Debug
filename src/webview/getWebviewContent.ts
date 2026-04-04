@@ -868,6 +868,8 @@ export function getWebviewContent(): string {
             } else {
               state.activeSessions = {};
             }
+            state.groupFolders = msg.payload.groupFolders || [];
+            state.orgs = cfg.orgs || [];
             state.mappings = cfg.orgGroupMappings;
             if (state.mappings.length > 0) {
               state.selectedOrg = state.mappings[0].cfOrg;
