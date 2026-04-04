@@ -7,7 +7,12 @@ export const debugProcessEvents = new EventEmitter();
 
 const processes = new Map<string, ChildProcess>();
 const channels = new Map<string, vscode.OutputChannel>();
+const sessionStates = new Map<string, { status: string; message?: string }>();
 let sessionListener: vscode.Disposable | null = null;
+
+export function getActiveSessions(): Record<string, { status: string; message?: string }> {
+  return Object.fromEntries(sessionStates);
+}
 
 export function initializeProcessManager(): void {
   sessionListener ??= vscode.debug.onDidTerminateDebugSession((session) => {
@@ -21,6 +26,7 @@ export function initializeProcessManager(): void {
       if (channel) {
         channel.appendLine('[Extension] Debug session terminated. Process killed.');
       }
+      sessionStates.delete(appName);
       debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
     }
   });
@@ -38,6 +44,7 @@ export function stopProcess(appName: string): void {
     }
     // VS Code debug session might still be running locally, let's stop it too
     void vscode.debug.stopDebugging();
+    sessionStates.delete(appName);
     debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
   }
 }
@@ -62,6 +69,7 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
   });
 
   processes.set(appName, child);
+  sessionStates.set(appName, { status: 'TUNNELING' });
   debugProcessEvents.emit('statusChanged', { appName, status: 'TUNNELING' });
 
   let attached = false;
@@ -83,8 +91,10 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
       
       void vscode.debug.startDebugging(workspaceFolder, launchConfigName).then((success) => {
         if (success) {
+          sessionStates.set(appName, { status: 'ATTACHED' });
           debugProcessEvents.emit('statusChanged', { appName, status: 'ATTACHED' });
         } else {
+          sessionStates.set(appName, { status: 'ERROR', message: 'Failed to start VS Code debugging.' });
           debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: 'Failed to start VS Code debugging.' });
         }
       });
@@ -98,12 +108,14 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
     const ch = channels.get(appName);
     if (ch) ch.appendLine(`\n[Extension] Process exited with code ${code?.toString() ?? 'null'}`);
     processes.delete(appName);
+    sessionStates.delete(appName);
     debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
   });
   
   child.on('error', (err) => {
     const ch = channels.get(appName);
     if (ch) ch.appendLine(`\n[Extension] Failed to spawn process: ${err.message}`);
+    sessionStates.set(appName, { status: 'ERROR', message: err.message });
     debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: err.message });
   });
 }
@@ -113,6 +125,7 @@ export function disposeAllProcesses(): void {
     p.kill();
   }
   processes.clear();
+  sessionStates.clear();
 
   for (const channel of channels.values()) {
     channel.dispose();

@@ -645,6 +645,12 @@ export function getWebviewContent(): string {
           </button>
           <div style="height:6px"></div>
           <button class="btn btn-secondary" id="btn-remap">&#8592; Change Mapping</button>
+          \${state.error ? \`
+            <div style="height:6px"></div>
+            <button class="btn btn-secondary" id="btn-reset-login" style="color:var(--vscode-errorForeground)">
+              &#8634; Logout / Re-login
+            </button>
+          \` : ''}
         </div>
       \`;
     }
@@ -778,6 +784,11 @@ export function getWebviewContent(): string {
       $('btn-remap')?.addEventListener('click', () => {
         state.screen = SCREENS.MAPPING; state.error = null; render();
       });
+
+      $('btn-reset-login')?.addEventListener('click', () => {
+        state.error = null; state.screen = SCREENS.REGION; render();
+        vscode.postMessage({ type: 'RESET_LOGIN' });
+      });
     }
 
     window.addEventListener('message', event => {
@@ -851,6 +862,11 @@ export function getWebviewContent(): string {
               state.selectedRegion = detectedRegion; state.useCustomEndpoint = false;
             } else if (cfg.apiEndpoint) {
               state.useCustomEndpoint = true;
+            }
+            if (msg.payload.activeSessions) {
+              state.activeSessions = msg.payload.activeSessions;
+            } else {
+              state.activeSessions = {};
             }
             state.mappings = cfg.orgGroupMappings;
             if (state.mappings.length > 0) {

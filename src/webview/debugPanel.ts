@@ -8,7 +8,7 @@ import { mergeLaunchJson } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
-import { startTunnelAndAttach, stopProcess, debugProcessEvents } from '../core/processManager';
+import { startTunnelAndAttach, stopProcess, debugProcessEvents, getActiveSessions } from '../core/processManager';
 
 export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'cdsDebug.mainView';
@@ -49,7 +49,13 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     switch (raw.type) {
       case 'LOAD_CONFIG':
-        this.post({ type: 'CONFIG_LOADED', payload: { config: getConfig() ?? null } });
+        this.post({ 
+          type: 'CONFIG_LOADED', 
+          payload: { 
+            config: getConfig() ?? null,
+            activeSessions: getActiveSessions()
+          } 
+        });
         break;
 
       case 'SELECT_ROOT_FOLDER':
@@ -78,6 +84,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         
       case 'OPEN_APP_URL':
         vscode.env.openExternal(vscode.Uri.parse(raw.payload.url));
+        break;
+
+      case 'RESET_LOGIN':
+        // Just acknowledging the reset (state is handled on frontend, but could clear config if desired)
         break;
     }
   }

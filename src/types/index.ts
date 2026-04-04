@@ -53,7 +53,8 @@ export type WebviewMessage =
   | { type: 'STOP_DEBUG'; payload: { appName: string } }
   | { type: 'OPEN_APP_URL'; payload: { url: string } }
   | { type: 'SAVE_MAPPINGS'; payload: { mappings: OrgGroupMapping[] } }
-  | { type: 'LOAD_CONFIG' };
+  | { type: 'LOAD_CONFIG' }
+  | { type: 'RESET_LOGIN' };
 
 // Messages from extension → webview
 export type ExtensionMessage =
@@ -66,4 +67,4 @@ export type ExtensionMessage =
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[] } }
   | { type: 'APP_DEBUG_STATUS'; payload: { appName: string; status: string; message?: string } }
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
-  | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null } };
+  | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }> } };
