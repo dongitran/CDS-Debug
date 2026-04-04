@@ -1,5 +1,5 @@
 {
-  "name": "health-svc",
+  "name": "demo-health-svc",
   "version": "1.0.0",
   "description": "SAP CAP sample service with health endpoint",
   "engines": {

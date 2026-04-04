@@ -1,4 +1,4 @@
-# health-svc — SAP CAP Sample Service
+# demo-health-svc — SAP CAP Sample Service
 
 Minimal SAP CAP service used to demo and test the **CDS Debug** extension.
 
