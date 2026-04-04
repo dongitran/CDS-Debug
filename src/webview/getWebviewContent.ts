@@ -105,6 +105,38 @@ export function getWebviewContent(): string {
     .radio-item input[type=radio] { cursor: pointer; }
     .radio-desc { font-size: 11px; color: var(--vscode-descriptionForeground); }
 
+    .region-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .region-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 8px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-input-border, transparent);
+      cursor: pointer;
+      text-align: center;
+      transition: border-color 0.1s, background 0.1s;
+    }
+    .region-card:hover { background: var(--vscode-list-hoverBackground); }
+    .region-card.selected {
+      border-color: var(--vscode-focusBorder);
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+    }
+    .region-card input[type=radio] { display: none; }
+    .region-code { font-size: 13px; font-weight: 700; font-family: var(--vscode-editor-font-family); }
+    .region-name { font-size: 10px; color: var(--vscode-descriptionForeground); }
+    .region-card.selected .region-name { color: inherit; opacity: 0.8; }
+    .region-card-custom {
+      grid-column: 1 / -1;
+    }
+
     .app-list { display: flex; flex-direction: column; gap: 2px; max-height: 300px; overflow-y: auto; }
     .app-row {
       display: flex;
@@ -224,11 +256,34 @@ export function getWebviewContent(): string {
       LAUNCHING: 'launching',
     };
 
+    // Known SAP BTP regions — code → display name
+    const CF_REGIONS = [
+      { code: 'us10', name: 'US East (VA)' },
+      { code: 'us20', name: 'US West (WA)' },
+      { code: 'eu10', name: 'Europe (Frankfurt)' },
+      { code: 'eu20', name: 'Europe (Amsterdam)' },
+      { code: 'ap10', name: 'Australia (Sydney)' },
+      { code: 'ap11', name: 'Singapore' },
+      { code: 'br10', name: 'Brazil (São Paulo)' },
+      { code: 'ca10', name: 'Canada (Montreal)' },
+    ];
+
+    function regionToEndpoint(code) {
+      return 'https://api.cf.' + code + '.hana.ondemand.com';
+    }
+
+    function endpointToRegion(endpoint) {
+      const m = endpoint.match(new RegExp('api[.]cf[.]([^.]+)[.]hana[.]ondemand[.]com'));
+      return m ? m[1] : null;
+    }
+
     let state = {
       screen: SCREENS.INITIAL,
       rootFolder: null,
       groupFolders: [],
       apiEndpoint: '',
+      selectedRegion: 'eu10',
+      useCustomEndpoint: false,
       orgs: [],
       mappings: [],
       selectedOrg: null,
@@ -281,21 +336,48 @@ export function getWebviewContent(): string {
     }
 
     function renderRegion() {
+      const regionCards = CF_REGIONS.map(r => \`
+        <label class="region-card \${!state.useCustomEndpoint && state.selectedRegion === r.code ? 'selected' : ''}">
+          <input type="radio" name="cf-region" value="\${escape(r.code)}"
+            \${!state.useCustomEndpoint && state.selectedRegion === r.code ? 'checked' : ''} />
+          <span class="region-code">\${escape(r.code)}</span>
+          <span class="region-name">\${escape(r.name)}</span>
+        </label>
+      \`).join('');
+
+      const customCard = \`
+        <label class="region-card region-card-custom \${state.useCustomEndpoint ? 'selected' : ''}">
+          <input type="radio" name="cf-region" value="custom"
+            \${state.useCustomEndpoint ? 'checked' : ''} />
+          <span class="region-code" style="font-size:11px">Custom endpoint</span>
+        </label>
+      \`;
+
+      const customInput = state.useCustomEndpoint ? \`
+        <input class="input" id="api-endpoint-custom"
+          placeholder="https://api.cf.<region>.hana.ondemand.com"
+          value="\${escape(state.apiEndpoint)}" />
+        <div class="radio-desc" style="margin-top:4px">Enter your full CF API URL</div>
+        <div style="height:8px"></div>
+      \` : \`
+        <div class="radio-desc" style="margin-bottom:8px">
+          Endpoint: <code>https://api.cf.\${escape(state.selectedRegion)}.hana.ondemand.com</code>
+        </div>
+      \`;
+
       return \`
         <div class="step-header">
           <span class="step-badge">2/4</span>
-          <span class="step-title">CF API Endpoint</span>
+          <span class="step-title">CF Region</span>
         </div>
         <div class="info-box">Root: <code>\${escape(state.rootFolder)}</code></div>
         \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
-        <div class="section-label">API Endpoint</div>
-        <input class="input" id="api-endpoint-input"
-          placeholder="https://api.cf.<region>.hana.ondemand.com"
-          value="\${escape(state.apiEndpoint)}" />
-        <div class="radio-desc" style="margin-top:6px">
-          e.g. us10, eu10, eu20, ap10, ap11, br10, ca10&hellip;
+        <div class="section-label">Select Region</div>
+        <div class="region-grid">
+          \${regionCards}
+          \${customCard}
         </div>
-        <div style="height:10px"></div>
+        \${customInput}
         <button class="btn" id="btn-login">Login to Cloud Foundry</button>
         <div style="height:6px"></div>
         <button class="btn btn-secondary" id="btn-back-initial">Back</button>
@@ -428,15 +510,34 @@ export function getWebviewContent(): string {
         vscode.postMessage({ type: 'SELECT_ROOT_FOLDER' });
       });
 
-      $('api-endpoint-input')?.addEventListener('input', e => {
+      // Region radio cards
+      document.querySelectorAll('input[name="cf-region"]').forEach(el => {
+        el.addEventListener('change', e => {
+          const value = e.target.value;
+          if (value === 'custom') {
+            state.useCustomEndpoint = true;
+          } else {
+            state.useCustomEndpoint = false;
+            state.selectedRegion = value;
+            state.apiEndpoint = regionToEndpoint(value);
+          }
+          render();
+        });
+      });
+
+      $('api-endpoint-custom')?.addEventListener('input', e => {
         state.apiEndpoint = e.target.value;
       });
 
       $('btn-login')?.addEventListener('click', () => {
+        const endpoint = state.useCustomEndpoint
+          ? state.apiEndpoint
+          : regionToEndpoint(state.selectedRegion);
+        state.apiEndpoint = endpoint;
         state.error = null;
         state.screen = SCREENS.LOGGING_IN;
         render();
-        vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: state.apiEndpoint } });
+        vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: endpoint } });
       });
 
       $('btn-back-initial')?.addEventListener('click', () => {
@@ -563,6 +664,14 @@ export function getWebviewContent(): string {
             const cfg = msg.payload.config;
             state.rootFolder = cfg.rootFolderPath;
             state.apiEndpoint = cfg.apiEndpoint;
+            // Restore region selection from saved endpoint
+            const detectedRegion = endpointToRegion(cfg.apiEndpoint);
+            if (detectedRegion && CF_REGIONS.some(r => r.code === detectedRegion)) {
+              state.selectedRegion = detectedRegion;
+              state.useCustomEndpoint = false;
+            } else if (cfg.apiEndpoint) {
+              state.useCustomEndpoint = true;
+            }
             state.mappings = cfg.orgGroupMappings;
             if (state.mappings.length > 0) {
               state.selectedOrg = state.mappings[0].cfOrg;

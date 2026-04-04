@@ -6,6 +6,7 @@ import { findGroupFolders, findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets } from '../core/appMapper';
 import { mergeLaunchJson } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
+import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
 
 export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
@@ -31,6 +32,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       undefined,
       this.context.subscriptions,
     );
+    logInfo('Panel loaded.');
   }
 
   private post(message: ExtensionMessage): void {
@@ -78,7 +80,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     if (!selected) return;
 
     const rootPath = selected.fsPath;
+    logInfo(`Root folder selected: ${rootPath}`);
     const groupFolders = await findGroupFolders(rootPath);
+    logInfo(`Found ${groupFolders.length.toString()} group folder(s): ${groupFolders.join(', ')}`);
     const existing = getConfig();
     await saveConfig({
       rootFolderPath: rootPath,
@@ -97,24 +101,25 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const password = process.env.SAP_PASSWORD ?? '';
 
     if (!email || !password) {
-      this.post({
-        type: 'LOGIN_ERROR',
-        payload: { message: 'SAP_EMAIL or SAP_PASSWORD environment variable is not set.' },
-      });
+      const msg = 'SAP_EMAIL or SAP_PASSWORD environment variable is not set.';
+      logError(msg);
+      this.post({ type: 'LOGIN_ERROR', payload: { message: msg } });
       return;
     }
 
     if (!apiEndpoint.startsWith('https://')) {
-      this.post({
-        type: 'LOGIN_ERROR',
-        payload: { message: 'API endpoint must start with https://' },
-      });
+      const msg = 'API endpoint must start with https://';
+      logError(msg);
+      this.post({ type: 'LOGIN_ERROR', payload: { message: msg } });
       return;
     }
+
+    logInfo(`Logging in to ${apiEndpoint} as ${email} …`);
 
     try {
       await cfLogin(apiEndpoint, email, password);
       const orgs = await cfOrgs();
+      logInfo(`Login successful. Found ${orgs.length.toString()} org(s): ${orgs.join(', ')}`);
       const existing = getConfig();
       await saveConfig({
         rootFolderPath: existing?.rootFolderPath ?? '',
@@ -123,16 +128,16 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       });
       this.post({ type: 'LOGIN_SUCCESS', payload: { orgs } });
     } catch (err: unknown) {
-      this.post({
-        type: 'LOGIN_ERROR',
-        payload: { message: extractErrorMessage(err) },
-      });
+      const msg = extractErrorMessage(err);
+      logError(`Login failed: ${msg}`);
+      this.post({ type: 'LOGIN_ERROR', payload: { message: msg } });
     }
   }
 
   private async handleSaveMappings(mappings: OrgGroupMapping[]): Promise<void> {
     const existing = getConfig();
     if (!existing) return;
+    logInfo(`Saving ${mappings.length.toString()} org mapping(s).`);
     await saveConfig({ ...existing, orgGroupMappings: mappings });
   }
 
@@ -142,15 +147,22 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     const mapping = config.orgGroupMappings.find((m) => m.cfOrg === org);
     if (!mapping) {
-      this.post({ type: 'APPS_ERROR', payload: { message: `No local folder mapped for org: ${org}` } });
+      const msg = `No local folder mapped for org: ${org}`;
+      logWarn(msg);
+      this.post({ type: 'APPS_ERROR', payload: { message: msg } });
       return;
     }
 
+    logInfo(`Loading apps for org: ${org} …`);
     try {
       const apps = await cfTargetAndApps(org);
+      const started = apps.filter((a) => a.state === 'started').length;
+      logInfo(`Apps loaded: ${apps.length.toString()} total, ${started.toString()} started.`);
       this.post({ type: 'APPS_LOADED', payload: { apps } });
     } catch (err: unknown) {
-      this.post({ type: 'APPS_ERROR', payload: { message: extractErrorMessage(err) } });
+      const msg = extractErrorMessage(err);
+      logError(`Failed to load apps for ${org}: ${msg}`);
+      this.post({ type: 'APPS_ERROR', payload: { message: msg } });
     }
   }
 
@@ -160,48 +172,57 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     const mapping = config.orgGroupMappings.find((m) => m.cfOrg === org);
     if (!mapping) {
-      this.post({ type: 'DEBUG_ERROR', payload: { message: `No mapping found for org: ${org}` } });
+      const msg = `No mapping found for org: ${org}`;
+      logError(msg);
+      this.post({ type: 'DEBUG_ERROR', payload: { message: msg } });
       return;
     }
 
+    logInfo(`Starting debug for ${appNames.length.toString()} app(s): ${appNames.join(', ')}`);
+
     const groupPath = path.join(config.rootFolderPath, mapping.localGroupPath);
 
-    // Resolve each app name to its local source folder
     const resolvedPaths: string[] = [];
     for (const appName of appNames) {
       const folderName = appName.replaceAll('-', '_');
       const folderPath = await findRepoFolder(groupPath, folderName);
-      if (folderPath !== null) resolvedPaths.push(folderPath);
+      if (folderPath !== null) {
+        resolvedPaths.push(folderPath);
+        logInfo(`Mapped: ${appName} → ${folderPath}`);
+      } else {
+        logWarn(`Could not find local folder for: ${appName}`);
+      }
     }
 
     const { targets, unmapped } = buildDebugTargets(appNames, resolvedPaths);
 
     if (targets.length === 0) {
-      this.post({
-        type: 'DEBUG_ERROR',
-        payload: { message: `Could not map any app to a local folder. Unmapped: ${unmapped.join(', ')}` },
-      });
+      const msg = `Could not map any app to a local folder. Unmapped: ${unmapped.join(', ')}`;
+      logError(msg);
+      this.post({ type: 'DEBUG_ERROR', payload: { message: msg } });
       return;
     }
 
-    // Write / merge launch.json
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? config.rootFolderPath;
     await mergeLaunchJson(workspaceRoot, targets);
+    logInfo(`Updated .vscode/launch.json with ${targets.length.toString()} config(s).`);
 
-    // Start each service in an integrated terminal + attach debugger
     for (const target of targets) {
       const folderName = path.basename(target.folderPath);
+      const cmd = `npx --yes cds watch --inspect=${target.port.toString()}`;
+      logInfo(`Terminal [${folderName}] > ${cmd}`);
       const terminal = vscode.window.createTerminal({
         name: `CDS: ${folderName}`,
         cwd: target.folderPath,
       });
-      terminal.sendText(`npx --yes cds watch --inspect=${target.port.toString()}`);
+      terminal.sendText(cmd);
       terminal.show(false);
     }
 
     this.post({ type: 'DEBUG_STARTED', payload: { count: targets.length } });
 
     if (unmapped.length > 0) {
+      logWarn(`${unmapped.length.toString()} app(s) not mapped: ${unmapped.join(', ')}`);
       void vscode.window.showWarningMessage(
         `${unmapped.length.toString()} app(s) could not be mapped to a local folder: ${unmapped.join(', ')}`,
       );
