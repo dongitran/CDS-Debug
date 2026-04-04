@@ -279,6 +279,43 @@ export function getScript(nonce: string): string {
       panel.innerHTML = renderActiveSessionsContent();
     }
 
+    function refreshAppListSection() {
+      const filtered = state.apps.filter(app =>
+        !state.searchQuery || app.name.toLowerCase().includes(state.searchQuery.toLowerCase())
+      );
+      const started = filtered.filter(a => a.state === 'started');
+      const stopped = filtered.filter(a => a.state === 'stopped');
+      const availableStarted = started.filter(a => !state.activeSessions[a.name]);
+      const selectedCount = [...state.selectedApps].filter(n =>
+        state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
+      ).length;
+
+      const checkAll = document.getElementById('check-all-started');
+      if (checkAll) {
+        checkAll.checked = selectedCount > 0 && selectedCount === availableStarted.length;
+        checkAll.disabled = availableStarted.length === 0;
+      }
+
+      const appList = document.querySelector('.app-list');
+      if (appList) {
+        let listHtml = renderAppSection(started, 'Started') + renderAppSection(stopped, 'Stopped');
+        if (filtered.length === 0) {
+          listHtml = '<div style="text-align:center;padding:16px;color:var(--vscode-descriptionForeground)">No apps found</div>';
+        }
+        appList.innerHTML = listHtml;
+      }
+
+      const footerInfo = document.querySelector('.footer-info');
+      if (footerInfo) {
+        footerInfo.textContent = selectedCount + ' service' + (selectedCount !== 1 ? 's' : '') + ' selected';
+      }
+      const startBtn = document.getElementById('btn-start-debug');
+      if (startBtn) {
+        if (selectedCount === 0) startBtn.setAttribute('disabled', '');
+        else startBtn.removeAttribute('disabled');
+      }
+    }
+
     function updateActiveCardStatusOnly(appName) {
       const session = state.activeSessions[appName];
       if (!session || session.status !== 'TUNNELING') return;
@@ -459,7 +496,8 @@ export function getScript(nonce: string): string {
       });
 
       $('search-input')?.addEventListener('input', e => {
-        state.searchQuery = e.target.value; render();
+        state.searchQuery = e.target.value;
+        refreshAppListSection();
       });
 
       $('check-all-started')?.addEventListener('change', e => {
@@ -469,17 +507,21 @@ export function getScript(nonce: string): string {
         } else {
           available.forEach(a => state.selectedApps.delete(a.name));
         }
-        render();
+        refreshAppListSection();
       });
 
-      document.querySelectorAll('input[type="checkbox"][data-app]').forEach(el => {
-        el.addEventListener('change', e => {
-          const name = e.target.dataset.app;
-          if (e.target.checked) state.selectedApps.add(name);
+      // Event delegation on .app-list so listeners survive innerHTML replacement by refreshAppListSection()
+      const appListEl = document.querySelector('.app-list');
+      if (appListEl) {
+        appListEl.addEventListener('change', e => {
+          const cb = e.target.closest('input[type="checkbox"][data-app]');
+          if (!cb) return;
+          const name = cb.dataset.app;
+          if (cb.checked) state.selectedApps.add(name);
           else state.selectedApps.delete(name);
-          render();
+          refreshAppListSection();
         });
-      });
+      }
 
       const activePanel = document.getElementById('active-sessions-panel');
       if (activePanel) {
