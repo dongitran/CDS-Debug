@@ -8,6 +8,7 @@ import { mergeLaunchJson } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
+import { startTunnelAndAttach } from '../core/processManager';
 
 export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'cdsDebug.mainView';
@@ -212,16 +213,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     logInfo(`Updated .vscode/launch.json with ${targets.length.toString()} config(s).`);
 
     for (const target of targets) {
-      const folderName = path.basename(target.folderPath);
-      // For remote Cloud Foundry app debugging
-      const cmd = `cds debug ${target.appName} -f -p ${target.port.toString()}`;
-      logInfo(`Terminal [${target.appName}] > ${cmd}`);
-      const terminal = vscode.window.createTerminal({
-        name: `CDS: ${folderName}`,
-        cwd: target.folderPath,
-      });
-      terminal.sendText(cmd);
-      terminal.show(false);
+      const launchConfigName = `Debug: ${target.appName}`;
+      startTunnelAndAttach(target.appName, target.folderPath, target.port, launchConfigName);
     }
 
     this.post({ type: 'DEBUG_STARTED', payload: { count: targets.length } });

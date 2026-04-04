@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { initConfigStore, clearConfig } from './storage/configStore';
 import { DebugLauncherViewProvider } from './webview/debugPanel';
 import { disposeLogger } from './core/logger';
+import { disposeAllProcesses } from './core/processManager';
 
 export function activate(context: vscode.ExtensionContext): void {
   initConfigStore(context);
@@ -25,5 +26,6 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
+  disposeAllProcesses();
   disposeLogger();
 }
