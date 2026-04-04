@@ -109,13 +109,6 @@ Hit **F5** in VS Code to attach to any of the launched configs.
 
 ---
 
-## 🗂️ App → Folder Mapping
-
-CF app names use hyphens, local repo folders use underscores — the extension converts automatically.  
-Apps that cannot be resolved are reported as a warning; your other selections still launch normally.
-
----
-
 ## 📄 Launch Configuration Format
 
 Each service gets an attach entry in `.vscode/launch.json`:
