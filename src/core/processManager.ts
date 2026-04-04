@@ -1,17 +1,37 @@
 import * as vscode from 'vscode';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { logInfo } from './logger';
+import { logInfo, logWarn } from './logger';
 
 export const debugProcessEvents = new EventEmitter();
 
 const processes = new Map<string, ChildProcess>();
 const channels = new Map<string, vscode.OutputChannel>();
 const sessionStates = new Map<string, { status: string; message?: string }>();
+const activeDebugSessions = new Map<string, vscode.DebugSession>();
+// Tracks whether stopProcess() has already emitted EXITED for an app,
+// preventing duplicate emits from child.on('close') or onDidTerminateDebugSession.
+const stoppedApps = new Set<string>();
 let sessionListener: vscode.Disposable | null = null;
 let startListener: vscode.Disposable | null = null;
 const DEBUG_SESSION_PREFIX = 'Debug: ';
 const activeVsCodeSessions = new Set<string>();
+
+// Kills a child process and its entire process group on Unix (SIGTERM → process group),
+// ensuring sub-processes like `cf ssh` are also terminated.
+function killProcessGroup(child: ChildProcess): void {
+  const isWindows = process.platform === 'win32';
+  if (!isWindows && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 'SIGTERM');
+      return;
+    } catch (err: unknown) {
+      // pid may already be gone; fall through to direct kill
+      logWarn(`Process group kill failed, falling back: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  child.kill();
+}
 
 export function getActiveSessions(): Record<string, { status: string; message?: string }> {
   return Object.fromEntries(sessionStates);
@@ -20,25 +40,34 @@ export function getActiveSessions(): Record<string, { status: string; message?: 
 export function initializeProcessManager(): void {
   startListener ??= vscode.debug.onDidStartDebugSession((session) => {
     activeVsCodeSessions.add(session.name);
+    activeDebugSessions.set(session.name, session);
   });
 
   sessionListener ??= vscode.debug.onDidTerminateDebugSession((session) => {
     activeVsCodeSessions.delete(session.name);
-    
+    activeDebugSessions.delete(session.name);
+
     if (!session.name.startsWith(DEBUG_SESSION_PREFIX)) return;
     const appName = session.name.slice(DEBUG_SESSION_PREFIX.length);
-    
+
+    // Kill tunnel process if still running (e.g. user stopped debugger from VS Code toolbar)
     const p = processes.get(appName);
     if (p) {
       logInfo(`Debug session ${session.name} stopped. Cleaning up SSH tunnel process...`);
-      p.kill();
+      killProcessGroup(p);
       processes.delete(appName);
       const channel = channels.get(appName);
       if (channel) {
         channel.appendLine('[Extension] Debug session terminated. Process killed.');
       }
     }
-    
+
+    // Guard: stopProcess() may have already emitted EXITED
+    if (stoppedApps.has(appName)) {
+      stoppedApps.delete(appName);
+      return;
+    }
+
     sessionStates.delete(appName);
     debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
   });
@@ -47,28 +76,27 @@ export function initializeProcessManager(): void {
 export function stopProcess(appName: string): void {
   const p = processes.get(appName);
   if (p) {
-    logInfo(`Killing process for ${appName} explicitly.`);
-    p.kill();
+    logInfo(`Killing process group for ${appName} explicitly.`);
+    killProcessGroup(p);
     processes.delete(appName);
     const channel = channels.get(appName);
     if (channel) {
-      channel.appendLine(`[Extension] Process killed early by explicit Stop request.`);
+      channel.appendLine('[Extension] Process group killed by explicit Stop request.');
     }
   }
+  // Mark as stopped so downstream close/terminate events skip duplicate EXITED emit
+  stoppedApps.add(appName);
   // Stop only sessions tied to this app, never unrelated debug sessions.
   stopActiveDebugSessionForApp(appName);
-  
   sessionStates.delete(appName);
   debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
 }
 
 function stopActiveDebugSessionForApp(appName: string): void {
   const sessionName = `${DEBUG_SESSION_PREFIX}${appName}`;
-  // We can't access all sessions directly in older VS Code API,
-  // but if it's the active one, we stop it.
-  const activeSession = vscode.debug.activeDebugSession;
-  if (activeSession?.name === sessionName) {
-    void vscode.debug.stopDebugging(activeSession);
+  const session = activeDebugSessions.get(sessionName);
+  if (session) {
+    void vscode.debug.stopDebugging(session);
   }
 }
 
@@ -89,6 +117,9 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
   const child = spawn(isWindows ? 'cds.cmd' : 'cds', ['debug', appName, '-f', '-p', port.toString()], {
     cwd: folderPath,
     shell: isWindows,
+    // On Unix, detached creates a new process group so killProcessGroup(-pid)
+    // terminates cds debug AND any child processes it spawned (e.g. cf ssh).
+    detached: !isWindows,
   });
 
   processes.set(appName, child);
@@ -131,9 +162,12 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
     const ch = channels.get(appName);
     if (ch) ch.appendLine(`\n[Extension] Process exited with code ${code?.toString() ?? 'null'}`);
     processes.delete(appName);
-    
-    // Only emit EXITED if VS Code debugging has ALSO stopped bridging the gap.
-    // Sometimes 'cds debug' exits but leaves underlying tunnel active.
+
+    // stopProcess() already emitted EXITED — nothing more to do
+    if (stoppedApps.has(appName)) return;
+
+    // Only emit EXITED if VS Code debugging has also stopped.
+    // Sometimes 'cds debug' exits but leaves the underlying tunnel active.
     if (!activeVsCodeSessions.has(launchConfigName)) {
       sessionStates.delete(appName);
       debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
@@ -150,10 +184,12 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
 
 export function disposeAllProcesses(): void {
   for (const p of processes.values()) {
-    p.kill();
+    killProcessGroup(p);
   }
   processes.clear();
   sessionStates.clear();
+  activeDebugSessions.clear();
+  stoppedApps.clear();
 
   for (const channel of channels.values()) {
     channel.dispose();

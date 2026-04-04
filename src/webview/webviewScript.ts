@@ -244,7 +244,7 @@ export function getScript(nonce: string): string {
       \` : '';
 
       return \`
-        <div class="active-card">
+        <div class="active-card" data-app-name="\${escape(appName)}">
           <div class="active-card-main">
             <div class="active-card-title" title="\${escape(appName)}">\${escape(appName)}</div>
             <div class="active-card-status">
@@ -257,6 +257,43 @@ export function getScript(nonce: string): string {
             title="Stop Debug Session" aria-label="Stop debug for \${escape(appName)}">■</button>
         </div>
       \`;
+    }
+
+    function renderActiveSessionsContent() {
+      const activeAppNames = Object.keys(state.activeSessions);
+      if (activeAppNames.length === 0) return '';
+      return \`
+        <div class="section-label" style="display:flex;align-items:center;gap:6px">
+          <span style="color:var(--vscode-testing-iconPassed)">●</span> Active Sessions
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
+          \${activeAppNames.map(renderActiveCard).join('')}
+        </div>
+        <div class="divider"></div>
+      \`;
+    }
+
+    function refreshActiveSessionsPanel() {
+      const panel = document.getElementById('active-sessions-panel');
+      if (!panel) return;
+      panel.innerHTML = renderActiveSessionsContent();
+    }
+
+    function updateActiveCardStatusOnly(appName) {
+      const session = state.activeSessions[appName];
+      if (!session || session.status !== 'TUNNELING') return;
+      const cards = document.querySelectorAll('[data-app-name]');
+      let card = null;
+      for (let i = 0; i < cards.length; i++) {
+        if (cards[i].dataset.appName === appName) { card = cards[i]; break; }
+      }
+      if (!card) return;
+      const statusEl = card.querySelector('.active-card-status');
+      if (!statusEl) return;
+      const text = LOADING_MESSAGES[session.msgPhase] || "Connecting...";
+      statusEl.innerHTML =
+        '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>' +
+        '<span class="status-text-anim">' + escape(text) + '</span>';
     }
 
     function renderAppRow(app) {
@@ -290,7 +327,6 @@ export function getScript(nonce: string): string {
       const started = filtered.filter(a => a.state === 'started');
       const stopped = filtered.filter(a => a.state === 'stopped');
 
-      const activeAppNames = Object.keys(state.activeSessions);
       const availableStarted = started.filter(a => !state.activeSessions[a.name]);
       const selectedCount = [...state.selectedApps].filter(n =>
         state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
@@ -302,15 +338,6 @@ export function getScript(nonce: string): string {
         </option>
       \`).join('');
 
-      const activeSection = activeAppNames.length > 0 ? \`
-        <div class="section-label" style="display:flex;align-items:center;gap:6px">
-          <span style="color:var(--vscode-testing-iconPassed)">●</span> Active Sessions
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
-          \${activeAppNames.map(renderActiveCard).join('')}
-        </div>
-        <div class="divider"></div>
-      \` : '';
 
       const resetBtn = state.error ? \`
         <div style="height:6px"></div>
@@ -327,7 +354,7 @@ export function getScript(nonce: string): string {
         <div class="sr-only" aria-live="polite">\${escape(buildLiveStatus())}</div>
         \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
 
-        \${activeSection}
+        <div id="active-sessions-panel">\${renderActiveSessionsContent()}</div>
 
         <div class="section-label">Cloud Foundry Org</div>
         <select class="select" id="org-select" aria-label="Select Cloud Foundry org">\${orgOptions}</select>
@@ -454,19 +481,20 @@ export function getScript(nonce: string): string {
         });
       });
 
-      document.querySelectorAll('[data-stop-app]').forEach(el => {
-        el.addEventListener('click', e => {
-          const btn = e.target.closest('[data-stop-app]');
-          if (btn) vscode.postMessage({ type: 'STOP_DEBUG', payload: { appName: btn.dataset.stopApp } });
+      const activePanel = document.getElementById('active-sessions-panel');
+      if (activePanel) {
+        activePanel.addEventListener('click', e => {
+          const stopBtn = e.target.closest('[data-stop-app]');
+          if (stopBtn) {
+            vscode.postMessage({ type: 'STOP_DEBUG', payload: { appName: stopBtn.dataset.stopApp } });
+            return;
+          }
+          const openBtn = e.target.closest('[data-open-url]');
+          if (openBtn) {
+            vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: openBtn.dataset.openUrl } });
+          }
         });
-      });
-
-      document.querySelectorAll('[data-open-url]').forEach(el => {
-        el.addEventListener('click', e => {
-          const btn = e.target.closest('[data-open-url]');
-          if (btn) vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: btn.dataset.openUrl } });
-        });
-      });
+      }
 
       $('btn-start-debug')?.addEventListener('click', () => {
         const appNames = [...state.selectedApps].filter(
@@ -526,12 +554,11 @@ export function getScript(nonce: string): string {
               if (state.activeSessions[appName]?.status === 'TUNNELING') {
                 state.activeSessions[appName].msgPhase =
                   (state.activeSessions[appName].msgPhase + 1) % LOADING_MESSAGES.length;
-                render();
+                updateActiveCardStatusOnly(appName);
               }
             }, 1800);
             state.activeSessions[appName].intervalId = tId;
           });
-          render();
           break;
         }
         case 'APP_DEBUG_STATUS': {
@@ -540,20 +567,21 @@ export function getScript(nonce: string): string {
             const session = state.activeSessions[appName];
             if (session?.intervalId) clearInterval(session.intervalId);
             delete state.activeSessions[appName];
+            render();
+            return;
+          }
+          if (!state.activeSessions[appName]) {
+            state.activeSessions[appName] = { status, message, msgPhase: 0 };
           } else {
-            if (!state.activeSessions[appName]) {
-              state.activeSessions[appName] = { status, message, msgPhase: 0 };
-            } else {
-              const session = state.activeSessions[appName];
-              session.status = status;
-              if (message) session.message = message;
-              if (status === 'ATTACHED' || status === 'ERROR') {
-                if (session.intervalId) clearInterval(session.intervalId);
-              }
+            const session = state.activeSessions[appName];
+            session.status = status;
+            if (message) session.message = message;
+            if (status === 'ATTACHED' || status === 'ERROR') {
+              if (session.intervalId) clearInterval(session.intervalId);
             }
           }
-          render();
-          break;
+          refreshActiveSessionsPanel();
+          return;
         }
         case 'DEBUG_ERROR':
           state.error = msg.payload.message;
