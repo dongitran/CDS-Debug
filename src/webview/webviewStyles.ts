@@ -229,12 +229,42 @@ export function getStyles(): string {
     }
     .step-title { font-size: 13px; font-weight: 600; }
 
-    .mapping-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-bottom: 6px;
+    .org-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 240px;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+    .org-item {
+      display: flex;
       align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-input-border, transparent);
+      cursor: pointer;
+      transition: border-color 0.1s, background 0.1s;
+    }
+    .org-item:hover { background: var(--vscode-list-hoverBackground); }
+    .org-item.selected {
+      border-color: var(--vscode-focusBorder);
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+    }
+    .org-item input[type=radio] { display: none; }
+    .org-item-name {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .org-list-empty {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      padding: 8px 4px;
     }
 
     .active-card {

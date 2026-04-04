@@ -13,7 +13,8 @@ export function getScript(nonce: string): string {
       INITIAL: 'initial',
       REGION: 'region',
       LOGGING_IN: 'logging-in',
-      MAPPING: 'mapping',
+      SELECT_ORG: 'select-org',
+      SELECT_FOLDER: 'select-folder',
       LOADING_APPS: 'loading-apps',
       READY: 'ready',
     };
@@ -48,6 +49,7 @@ export function getScript(nonce: string): string {
       orgs: [],
       mappings: [],
       selectedOrg: null,
+      selectedFolder: null,
       apps: [],
       selectedApps: new Set(),
       searchQuery: '',
@@ -108,7 +110,8 @@ export function getScript(nonce: string): string {
         case SCREENS.INITIAL:      return renderInitial();
         case SCREENS.REGION:       return renderRegion();
         case SCREENS.LOGGING_IN:   return renderLoggingIn();
-        case SCREENS.MAPPING:      return renderMapping();
+        case SCREENS.SELECT_ORG:   return renderSelectOrg();
+        case SCREENS.SELECT_FOLDER: return renderSelectFolder();
         case SCREENS.LOADING_APPS: return renderLoadingApps();
         case SCREENS.READY:        return renderReady();
         default:                   return '';
@@ -189,32 +192,57 @@ export function getScript(nonce: string): string {
       \`;
     }
 
-    function renderMapping() {
-      const rows = state.orgs.map((org, i) => \`
-        <div class="mapping-row">
-          <div style="font-size:12px;font-family:var(--vscode-editor-font-family);overflow:hidden;text-overflow:ellipsis"
-               title="\${escape(org)}">\${escape(org)}</div>
-          <select class="select" data-org="\${escape(org)}" id="map-\${i}">
-            <option value="">-- skip --</option>
-            \${state.groupFolders.map(f => \`<option value="\${escape(f)}" \${
-              state.mappings.find(m => m.cfOrg === org)?.localGroupPath === f ? 'selected' : ''
-            }>\${escape(f)}</option>\`).join('')}
-          </select>
-        </div>
+    function renderSelectOrg() {
+      const items = state.orgs.map(org => \`
+        <label class="org-item \${org === state.selectedOrg ? 'selected' : ''}">
+          <input type="radio" name="cf-org" value="\${escape(org)}"
+            \${org === state.selectedOrg ? 'checked' : ''} />
+          <span class="org-item-name" title="\${escape(org)}">\${escape(org)}</span>
+        </label>
       \`).join('');
 
       return \`
         <div class="step-header">
           <span class="step-badge">3/4</span>
-          <span class="step-title">Map Orgs to Folders</span>
+          <span class="step-title">Select CF Org</span>
         </div>
-        <div class="info-box">Match each CF org to its local group folder.</div>
-        <div class="section-label">CF Org &rarr; Local Folder</div>
-        \${rows}
+        <div class="info-box">Choose the Cloud Foundry org you want to debug.</div>
+        \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
+        <div class="section-label">CF Org</div>
+        <div class="org-list">
+          \${items || \`<div class="org-list-empty">No orgs found.</div>\`}
+        </div>
         <div style="height:10px"></div>
-        <button class="btn" id="btn-save-mappings">Save &amp; Continue</button>
+        <button class="btn" id="btn-next-org" \${!state.selectedOrg ? 'disabled' : ''}>Next &rarr;</button>
         <div style="height:6px"></div>
         <button class="btn btn-secondary" id="btn-back-region">Back</button>
+      \`;
+    }
+
+    function renderSelectFolder() {
+      const items = state.groupFolders.map(f => \`
+        <label class="org-item \${f === state.selectedFolder ? 'selected' : ''}">
+          <input type="radio" name="cf-folder" value="\${escape(f)}"
+            \${f === state.selectedFolder ? 'checked' : ''} />
+          <span class="org-item-name" title="\${escape(f)}">\${escape(f)}</span>
+        </label>
+      \`).join('');
+
+      return \`
+        <div class="step-header">
+          <span class="step-badge">3/4</span>
+          <span class="step-title">Select Local Folder</span>
+        </div>
+        <div class="info-box">Org: <code>\${escape(state.selectedOrg ?? '')}</code></div>
+        \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
+        <div class="section-label">Local Group Folder</div>
+        <div class="org-list">
+          \${items || \`<div class="org-list-empty">No folders found.</div>\`}
+        </div>
+        <div style="height:10px"></div>
+        <button class="btn" id="btn-save-mapping" \${!state.selectedFolder ? 'disabled' : ''}>Save &amp; Continue</button>
+        <div style="height:6px"></div>
+        <button class="btn btn-secondary" id="btn-back-select-org">Back</button>
       \`;
     }
 
@@ -294,7 +322,6 @@ export function getScript(nonce: string): string {
       );
       const started = filtered.filter(a => a.state === 'started');
       const stopped = filtered.filter(a => a.state === 'stopped');
-      const availableStarted = started.filter(a => !state.activeSessions[a.name]);
       const selectedCount = [...state.selectedApps].filter(n =>
         state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
       ).length;
@@ -367,7 +394,6 @@ export function getScript(nonce: string): string {
       const started = filtered.filter(a => a.state === 'started');
       const stopped = filtered.filter(a => a.state === 'stopped');
 
-      const availableStarted = started.filter(a => !state.activeSessions[a.name]);
       const selectedCount = [...state.selectedApps].filter(n =>
         state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
       ).length;
@@ -462,17 +488,31 @@ export function getScript(nonce: string): string {
         state.screen = SCREENS.INITIAL; state.error = null; render();
       });
 
-      $('btn-save-mappings')?.addEventListener('click', () => {
-        const mappings = [];
-        document.querySelectorAll('[data-org]').forEach(el => {
-          if (el.value) mappings.push({ cfOrg: el.dataset.org, localGroupPath: el.value });
+      document.querySelectorAll('input[name="cf-org"]').forEach(el => {
+        el.addEventListener('change', e => {
+          state.selectedOrg = e.target.value;
+          render();
         });
-        state.mappings = mappings;
-        if (mappings.length === 0) {
-          state.error = 'Map at least one org to a local folder.'; render(); return;
-        }
+      });
+
+      $('btn-next-org')?.addEventListener('click', () => {
         state.error = null;
-        state.selectedOrg = mappings[0].cfOrg;
+        state.screen = SCREENS.SELECT_FOLDER;
+        render();
+      });
+
+      document.querySelectorAll('input[name="cf-folder"]').forEach(el => {
+        el.addEventListener('change', e => {
+          state.selectedFolder = e.target.value;
+          render();
+        });
+      });
+
+      $('btn-save-mapping')?.addEventListener('click', () => {
+        if (!state.selectedOrg || !state.selectedFolder) return;
+        const mappings = [{ cfOrg: state.selectedOrg, localGroupPath: state.selectedFolder }];
+        state.mappings = mappings;
+        state.error = null;
         state.screen = SCREENS.LOADING_APPS;
         render();
         vscode.postMessage({ type: 'SAVE_MAPPINGS', payload: { mappings } });
@@ -481,6 +521,10 @@ export function getScript(nonce: string): string {
 
       $('btn-back-region')?.addEventListener('click', () => {
         state.screen = SCREENS.REGION; state.error = null; render();
+      });
+
+      $('btn-back-select-org')?.addEventListener('click', () => {
+        state.screen = SCREENS.SELECT_ORG; state.error = null; render();
       });
 
       $('search-input')?.addEventListener('input', e => {
@@ -528,7 +572,7 @@ export function getScript(nonce: string): string {
       });
 
       $('btn-remap')?.addEventListener('click', () => {
-        state.screen = SCREENS.MAPPING; state.error = null; render();
+        state.screen = SCREENS.SELECT_ORG; state.error = null; render();
       });
 
       $('btn-reset-login')?.addEventListener('click', () => {
@@ -550,7 +594,7 @@ export function getScript(nonce: string): string {
           break;
         case 'LOGIN_SUCCESS':
           state.orgs = msg.payload.orgs;
-          state.screen = SCREENS.MAPPING;
+          state.screen = SCREENS.SELECT_ORG;
           state.error = null;
           break;
         case 'LOGIN_ERROR':
@@ -625,6 +669,7 @@ export function getScript(nonce: string): string {
             state.mappings = cfg.orgGroupMappings;
             if (state.mappings.length > 0) {
               state.selectedOrg = state.mappings[0].cfOrg;
+              state.selectedFolder = state.mappings[0].localGroupPath;
               state.screen = SCREENS.LOADING_APPS;
               render();
               vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
