@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { CfApp, CfRegion } from '../types/index';
-import { CF_DEFAULT_SPACE, CF_REGION_ENDPOINTS } from '../types/index';
+import type { CfApp } from '../types/index';
+import { CF_DEFAULT_SPACE } from '../types/index';
 
 const execFileAsync = promisify(execFile);
 
@@ -33,8 +33,7 @@ async function runCf(args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   }
 }
 
-export async function cfLogin(region: CfRegion, email: string, password: string): Promise<void> {
-  const apiEndpoint = CF_REGION_ENDPOINTS[region];
+export async function cfLogin(apiEndpoint: string, email: string, password: string): Promise<void> {
   await runCf(['login', '-a', apiEndpoint, '--skip-ssl-validation'], {
     CF_USERNAME: email,
     CF_PASSWORD: password,

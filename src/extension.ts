@@ -13,10 +13,10 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('sapDebugLauncher.resetConfig', () => {
+    vscode.commands.registerCommand('cdsDebug.resetConfig', () => {
       void clearConfig().then(() => {
         void vscode.window.showInformationMessage(
-          'SAP Debug Launcher: configuration reset. Reload the panel to start over.',
+          'CDS Debug: configuration reset. Reload the panel to start over.',
         );
       });
     }),

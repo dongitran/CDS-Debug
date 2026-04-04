@@ -9,7 +9,7 @@ import { getConfig, saveConfig } from '../storage/configStore';
 import { getWebviewContent } from './getWebviewContent';
 
 export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
-  public static readonly viewId = 'sapDebugLauncher.mainView';
+  public static readonly viewId = 'cdsDebug.mainView';
 
   private view?: vscode.WebviewView;
 
@@ -50,7 +50,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'LOGIN':
-        await this.handleLogin(raw.payload.region);
+        await this.handleLogin(raw.payload.apiEndpoint);
         break;
 
       case 'SAVE_MAPPINGS':
@@ -79,6 +79,12 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     const rootPath = selected.fsPath;
     const groupFolders = await findGroupFolders(rootPath);
+    const existing = getConfig();
+    await saveConfig({
+      rootFolderPath: rootPath,
+      apiEndpoint: existing?.apiEndpoint ?? '',
+      orgGroupMappings: existing?.orgGroupMappings ?? [],
+    });
 
     this.post({
       type: 'ROOT_FOLDER_SELECTED',
@@ -86,8 +92,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private async handleLogin(region: string): Promise<void> {
-    const validRegion = region === 'br10' || region === 'ap11' ? region : 'br10';
+  private async handleLogin(apiEndpoint: string): Promise<void> {
     const email = process.env.SAP_EMAIL ?? '';
     const password = process.env.SAP_PASSWORD ?? '';
 
@@ -99,9 +104,23 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    if (!apiEndpoint.startsWith('https://')) {
+      this.post({
+        type: 'LOGIN_ERROR',
+        payload: { message: 'API endpoint must start with https://' },
+      });
+      return;
+    }
+
     try {
-      await cfLogin(validRegion, email, password);
+      await cfLogin(apiEndpoint, email, password);
       const orgs = await cfOrgs();
+      const existing = getConfig();
+      await saveConfig({
+        rootFolderPath: existing?.rootFolderPath ?? '',
+        apiEndpoint,
+        orgGroupMappings: existing?.orgGroupMappings ?? [],
+      });
       this.post({ type: 'LOGIN_SUCCESS', payload: { orgs } });
     } catch (err: unknown) {
       this.post({

@@ -228,7 +228,7 @@ export function getWebviewContent(): string {
       screen: SCREENS.INITIAL,
       rootFolder: null,
       groupFolders: [],
-      region: 'br10',
+      apiEndpoint: '',
       orgs: [],
       mappings: [],
       selectedOrg: null,
@@ -284,25 +284,16 @@ export function getWebviewContent(): string {
       return \`
         <div class="step-header">
           <span class="step-badge">2/4</span>
-          <span class="step-title">Select CF Region</span>
+          <span class="step-title">CF API Endpoint</span>
         </div>
         <div class="info-box">Root: <code>\${escape(state.rootFolder)}</code></div>
         \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
-        <div class="radio-group">
-          <label class="radio-item">
-            <input type="radio" name="region" value="br10" \${state.region === 'br10' ? 'checked' : ''} />
-            <div>
-              <div>BR10 &mdash; Brazil (São Paulo)</div>
-              <div class="radio-desc">api.cf.br10.hana.ondemand.com</div>
-            </div>
-          </label>
-          <label class="radio-item">
-            <input type="radio" name="region" value="ap11" \${state.region === 'ap11' ? 'checked' : ''} />
-            <div>
-              <div>AP11 &mdash; Singapore</div>
-              <div class="radio-desc">api.cf.ap11.hana.ondemand.com</div>
-            </div>
-          </label>
+        <div class="section-label">API Endpoint</div>
+        <input class="input" id="api-endpoint-input"
+          placeholder="https://api.cf.<region>.hana.ondemand.com"
+          value="\${escape(state.apiEndpoint)}" />
+        <div class="radio-desc" style="margin-top:6px">
+          e.g. us10, eu10, eu20, ap10, ap11, br10, ca10&hellip;
         </div>
         <div style="height:10px"></div>
         <button class="btn" id="btn-login">Login to Cloud Foundry</button>
@@ -315,8 +306,9 @@ export function getWebviewContent(): string {
       return \`
         <div style="text-align:center;padding:24px 0">
           <span class="spinner"></span>
-          Logging in to CF \${escape(state.region.toUpperCase())}&hellip;
+          Logging in&hellip;
         </div>
+        <div class="radio-desc" style="text-align:center;margin-top:4px">\${escape(state.apiEndpoint)}</div>
       \`;
     }
 
@@ -436,15 +428,15 @@ export function getWebviewContent(): string {
         vscode.postMessage({ type: 'SELECT_ROOT_FOLDER' });
       });
 
-      document.querySelectorAll('input[name=region]').forEach(el => {
-        el.addEventListener('change', e => { state.region = e.target.value; });
+      $('api-endpoint-input')?.addEventListener('input', e => {
+        state.apiEndpoint = e.target.value;
       });
 
       $('btn-login')?.addEventListener('click', () => {
         state.error = null;
         state.screen = SCREENS.LOGGING_IN;
         render();
-        vscode.postMessage({ type: 'LOGIN', payload: { region: state.region } });
+        vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: state.apiEndpoint } });
       });
 
       $('btn-back-initial')?.addEventListener('click', () => {
@@ -570,7 +562,7 @@ export function getWebviewContent(): string {
           if (msg.payload.config) {
             const cfg = msg.payload.config;
             state.rootFolder = cfg.rootFolderPath;
-            state.region = cfg.region;
+            state.apiEndpoint = cfg.apiEndpoint;
             state.mappings = cfg.orgGroupMappings;
             if (state.mappings.length > 0) {
               state.selectedOrg = state.mappings[0].cfOrg;

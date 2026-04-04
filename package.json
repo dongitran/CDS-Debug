@@ -1,9 +1,14 @@
 {
-  "name": "sap-cap-debug-launcher",
-  "displayName": "SAP CAP Debug Launcher",
-  "description": "Launch and debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
+  "name": "cds-debug",
+  "displayName": "CDS Debug",
+  "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
   "version": "0.0.1",
-  "publisher": "laidon",
+  "publisher": "dongtran",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dongitran/cds-debug"
+  },
+  "license": "MIT",
   "engines": {
     "vscode": "^1.90.0",
     "node": ">=20"
@@ -20,31 +25,33 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "sap-debug-launcher",
-          "title": "SAP CAP Debug",
+          "id": "cds-debug",
+          "title": "CDS Debug",
           "icon": "resources/icon.svg"
         }
       ]
     },
     "views": {
-      "sap-debug-launcher": [
+      "cds-debug": [
         {
           "type": "webview",
-          "id": "sapDebugLauncher.mainView",
+          "id": "cdsDebug.mainView",
           "name": "Debug Launcher"
         }
       ]
     },
     "commands": [
       {
-        "command": "sapDebugLauncher.resetConfig",
-        "title": "SAP CAP: Reset Debug Launcher Configuration"
+        "command": "cdsDebug.resetConfig",
+        "title": "CDS Debug: Reset Configuration"
       }
     ]
   },
   "scripts": {
+    "vscode:prepublish": "node esbuild.mjs",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
+    "package": "vsce package --no-dependencies",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src test --max-warnings=0",
     "cspell": "cspell '**/*.{ts,json,md}' --no-progress",
@@ -54,6 +61,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@vscode/vsce": "^3.0.0",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.90.0",
     "@vitest/coverage-v8": "^3.0.0",

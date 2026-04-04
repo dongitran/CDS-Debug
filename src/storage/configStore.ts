@@ -1,7 +1,7 @@
 import type * as vscode from 'vscode';
 import type { ExtensionConfig } from '../types/index';
 
-const CONFIG_KEY = 'sap-debug-launcher.config';
+const CONFIG_KEY = 'cds-debug.config';
 
 let _context: vscode.ExtensionContext | undefined;
 

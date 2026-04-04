@@ -9,7 +9,6 @@
     "**/*.md"
   ],
   "words": [
-    "laidon",
     "sap",
     "btp",
     "cds",
@@ -66,6 +65,7 @@
     "ndash",
     "nbsp",
     "amp",
-    "alcon"
+    "dongtran",
+    "dongitran"
   ]
 }

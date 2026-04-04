@@ -7,8 +7,8 @@ import type { DebugTarget } from '../../src/types/index';
 import * as fs from 'node:fs/promises';
 
 const TARGETS: DebugTarget[] = [
-  { appName: 'prefix-srv-config-main', folderPath: '/group/core/config/prefix_srv_config_main', port: 9229 },
-  { appName: 'prefix-srv-process-approver', folderPath: '/group/core/process/prefix_srv_process_approver', port: 9230 },
+  { appName: 'myapp-svc-one', folderPath: '/group/sub-a/myapp_svc_one', port: 9229 },
+  { appName: 'myapp-svc-two', folderPath: '/group/sub-b/myapp_svc_two', port: 9230 },
 ];
 
 beforeEach(() => {
@@ -27,17 +27,17 @@ describe('generateLaunchConfigurations', () => {
     expect(configs[0]).toMatchObject({
       type: 'node',
       request: 'attach',
-      name: 'Debug: prefix-srv-config-main',
+      name: 'Debug: myapp-svc-one',
       port: 9229,
-      localRoot: '/group/core/config/prefix_srv_config_main',
-      remoteRoot: '/group/core/config/prefix_srv_config_main',
+      localRoot: '/group/sub-a/myapp_svc_one',
+      remoteRoot: '/group/sub-a/myapp_svc_one',
       restart: true,
     });
 
     expect(configs[1]).toMatchObject({
-      name: 'Debug: prefix-srv-process-approver',
+      name: 'Debug: myapp-svc-two',
       port: 9230,
-      localRoot: '/group/core/process/prefix_srv_process_approver',
+      localRoot: '/group/sub-b/myapp_svc_two',
     });
   });
 
@@ -73,7 +73,7 @@ describe('mergeLaunchJson', () => {
     const existing = {
       version: '0.2.0',
       configurations: [
-        { name: 'Debug: prefix-srv-config-main', type: 'node', port: 9999 },
+        { name: 'Debug: myapp-svc-one', type: 'node', port: 9999 },
         { name: 'My manual config', type: 'node', port: 8080 },
       ],
     };
@@ -91,7 +91,7 @@ describe('mergeLaunchJson', () => {
     // manual config preserved
     expect(written.configurations.find((c) => c.name === 'My manual config')).toBeDefined();
     // existing entry replaced with new port
-    const updated = written.configurations.find((c) => c.name === 'Debug: prefix-srv-config-main');
+    const updated = written.configurations.find((c) => c.name === 'Debug: myapp-svc-one');
     expect(updated?.port).toBe(9229);
     // total: 1 manual + 2 new
     expect(written.configurations).toHaveLength(3);

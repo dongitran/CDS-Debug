@@ -66,44 +66,44 @@ describe('findGroupFolders', () => {
 describe('findRepoFolder', () => {
   it('returns full path when folder with package.json found', async () => {
     vi.mocked(fs.readdir)
-      .mockResolvedValueOnce([makeDirent('prefix_srv_config_main', true)] as ReaddirResult)
+      .mockResolvedValueOnce([makeDirent('myapp_svc_one', true)] as ReaddirResult)
       .mockResolvedValue([] as ReaddirResult);
 
     vi.mocked(fs.stat).mockResolvedValue(makeStats());
 
-    const result = await findRepoFolder('/group', 'prefix_srv_config_main');
-    expect(result).toBe('/group/prefix_srv_config_main');
+    const result = await findRepoFolder('/group', 'myapp_svc_one');
+    expect(result).toBe('/group/myapp_svc_one');
   });
 
   it('returns null when folder exists but has no package.json', async () => {
     vi.mocked(fs.readdir)
-      .mockResolvedValueOnce([makeDirent('prefix_srv_config_main', true)] as ReaddirResult)
+      .mockResolvedValueOnce([makeDirent('myapp_svc_one', true)] as ReaddirResult)
       .mockResolvedValue([] as ReaddirResult);
 
     vi.mocked(fs.stat).mockRejectedValue(new Error('ENOENT'));
 
-    const result = await findRepoFolder('/group', 'prefix_srv_config_main');
+    const result = await findRepoFolder('/group', 'myapp_svc_one');
     expect(result).toBeNull();
   });
 
   it('searches recursively into subdirectories', async () => {
     vi.mocked(fs.readdir)
-      .mockResolvedValueOnce([makeDirent('core', true)] as ReaddirResult)
-      .mockResolvedValueOnce([makeDirent('config', true)] as ReaddirResult)
-      .mockResolvedValueOnce([makeDirent('prefix_srv_config_main', true)] as ReaddirResult)
+      .mockResolvedValueOnce([makeDirent('sub-a', true)] as ReaddirResult)
+      .mockResolvedValueOnce([makeDirent('sub-b', true)] as ReaddirResult)
+      .mockResolvedValueOnce([makeDirent('myapp_svc_one', true)] as ReaddirResult)
       .mockResolvedValue([] as ReaddirResult);
 
     vi.mocked(fs.stat).mockResolvedValue(makeStats());
 
-    const result = await findRepoFolder('/group', 'prefix_srv_config_main');
-    expect(result).toBe('/group/core/config/prefix_srv_config_main');
+    const result = await findRepoFolder('/group', 'myapp_svc_one');
+    expect(result).toBe('/group/sub-a/sub-b/myapp_svc_one');
   });
 
   it('returns null when folder not found anywhere', async () => {
     vi.mocked(fs.readdir).mockResolvedValue([makeDirent('other_folder', true)] as ReaddirResult);
     vi.mocked(fs.stat).mockRejectedValue(new Error('ENOENT'));
 
-    const result = await findRepoFolder('/group', 'prefix_srv_nonexistent');
+    const result = await findRepoFolder('/group', 'myapp_svc_unknown');
     expect(result).toBeNull();
   });
 });

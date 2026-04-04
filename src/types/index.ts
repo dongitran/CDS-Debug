@@ -1,10 +1,3 @@
-export type CfRegion = 'br10' | 'ap11';
-
-export const CF_REGION_ENDPOINTS: Record<CfRegion, string> = {
-  br10: 'https://api.cf.br10.hana.ondemand.com',
-  ap11: 'https://api.cf.ap11.hana.ondemand.com',
-} as const;
-
 export const CF_DEFAULT_SPACE = 'app';
 
 export const DEBUG_BASE_PORT = 9229;
@@ -45,14 +38,14 @@ export interface LaunchJson {
 
 export interface ExtensionConfig {
   rootFolderPath: string;
-  region: CfRegion;
+  apiEndpoint: string;
   orgGroupMappings: OrgGroupMapping[];
 }
 
 // Messages from webview → extension
 export type WebviewMessage =
   | { type: 'SELECT_ROOT_FOLDER' }
-  | { type: 'LOGIN'; payload: { region: CfRegion } }
+  | { type: 'LOGIN'; payload: { apiEndpoint: string } }
   | { type: 'LOAD_APPS'; payload: { org: string } }
   | { type: 'START_DEBUG'; payload: { appNames: string[]; org: string } }
   | { type: 'SAVE_MAPPINGS'; payload: { mappings: OrgGroupMapping[] } }

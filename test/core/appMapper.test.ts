@@ -7,77 +7,77 @@ import {
 
 describe('cfAppNameToFolderName', () => {
   it('replaces all hyphens with underscores', () => {
-    expect(cfAppNameToFolderName('prefix-srv-config-main')).toBe('prefix_srv_config_main');
+    expect(cfAppNameToFolderName('myapp-svc-one')).toBe('myapp_svc_one');
   });
 
   it('handles single segment name', () => {
-    expect(cfAppNameToFolderName('prefix')).toBe('prefix');
+    expect(cfAppNameToFolderName('myapp')).toBe('myapp');
   });
 
   it('handles name with no hyphens', () => {
-    expect(cfAppNameToFolderName('prefix_srv_config')).toBe('prefix_srv_config');
+    expect(cfAppNameToFolderName('myapp_svc_one')).toBe('myapp_svc_one');
   });
 
   it('converts db module name', () => {
-    expect(cfAppNameToFolderName('prefix-db-config')).toBe('prefix_db_config');
+    expect(cfAppNameToFolderName('myapp-db-one')).toBe('myapp_db_one');
   });
 
   it('converts multi-role service name', () => {
-    expect(cfAppNameToFolderName('prefix-srv-process-approver')).toBe('prefix_srv_process_approver');
+    expect(cfAppNameToFolderName('myapp-svc-two-admin')).toBe('myapp_svc_two_admin');
   });
 });
 
 describe('findFolderPath', () => {
   const paths = [
-    '/root/group/core/config/prefix_srv_config_main',
-    '/root/group/core/config/prefix_db_config',
-    '/root/group/core/process/prefix_srv_process_approver',
-    '/root/group/helper/prefix_helper_common',
+    '/root/group/sub-a/myapp_svc_one',
+    '/root/group/sub-a/myapp_db_one',
+    '/root/group/sub-b/myapp_svc_two',
+    '/root/group/sub-c/myapp_helper_one',
   ];
 
   it('returns the full path when exact basename match found', () => {
-    expect(findFolderPath('prefix_srv_config_main', paths)).toBe(
-      '/root/group/core/config/prefix_srv_config_main',
+    expect(findFolderPath('myapp_svc_one', paths)).toBe(
+      '/root/group/sub-a/myapp_svc_one',
     );
   });
 
   it('returns null when no match found', () => {
-    expect(findFolderPath('prefix_srv_data_quality', paths)).toBeNull();
+    expect(findFolderPath('myapp_svc_unknown', paths)).toBeNull();
   });
 
   it('returns null for empty folder list', () => {
-    expect(findFolderPath('prefix_srv_config_main', [])).toBeNull();
+    expect(findFolderPath('myapp_svc_one', [])).toBeNull();
   });
 
   it('matches deeply nested folder by basename', () => {
-    expect(findFolderPath('prefix_helper_common', paths)).toBe(
-      '/root/group/helper/prefix_helper_common',
+    expect(findFolderPath('myapp_helper_one', paths)).toBe(
+      '/root/group/sub-c/myapp_helper_one',
     );
   });
 });
 
 describe('buildDebugTargets', () => {
   const allFolderPaths = [
-    '/root/group/core/config/prefix_srv_config_main',
-    '/root/group/core/config/prefix_db_config',
-    '/root/group/core/process/prefix_srv_process_approver',
+    '/root/group/sub-a/myapp_svc_one',
+    '/root/group/sub-a/myapp_db_one',
+    '/root/group/sub-b/myapp_svc_two',
   ];
 
   it('maps app names to debug targets with assigned ports', () => {
     const { targets, unmapped } = buildDebugTargets(
-      ['prefix-srv-config-main', 'prefix-db-config'],
+      ['myapp-svc-one', 'myapp-db-one'],
       allFolderPaths,
     );
 
     expect(targets).toHaveLength(2);
     expect(targets[0]).toMatchObject({
-      appName: 'prefix-srv-config-main',
-      folderPath: '/root/group/core/config/prefix_srv_config_main',
+      appName: 'myapp-svc-one',
+      folderPath: '/root/group/sub-a/myapp_svc_one',
       port: 9229,
     });
     expect(targets[1]).toMatchObject({
-      appName: 'prefix-db-config',
-      folderPath: '/root/group/core/config/prefix_db_config',
+      appName: 'myapp-db-one',
+      folderPath: '/root/group/sub-a/myapp_db_one',
       port: 9230,
     });
     expect(unmapped).toHaveLength(0);
@@ -85,17 +85,17 @@ describe('buildDebugTargets', () => {
 
   it('adds unmapped apps to unmapped list', () => {
     const { targets, unmapped } = buildDebugTargets(
-      ['prefix-srv-config-main', 'prefix-srv-dqm'],
+      ['myapp-svc-one', 'myapp-svc-unmapped'],
       allFolderPaths,
     );
 
     expect(targets).toHaveLength(1);
-    expect(unmapped).toEqual(['prefix-srv-dqm']);
+    expect(unmapped).toEqual(['myapp-svc-unmapped']);
   });
 
   it('increments ports starting from custom base port', () => {
     const { targets } = buildDebugTargets(
-      ['prefix-srv-config-main', 'prefix-db-config'],
+      ['myapp-svc-one', 'myapp-db-one'],
       allFolderPaths,
       9300,
     );
@@ -106,12 +106,12 @@ describe('buildDebugTargets', () => {
 
   it('returns empty targets and all unmapped when no paths match', () => {
     const { targets, unmapped } = buildDebugTargets(
-      ['prefix-srv-unknown'],
+      ['myapp-svc-unknown'],
       allFolderPaths,
     );
 
     expect(targets).toHaveLength(0);
-    expect(unmapped).toEqual(['prefix-srv-unknown']);
+    expect(unmapped).toEqual(['myapp-svc-unknown']);
   });
 
   it('handles empty app names list', () => {

@@ -7,13 +7,13 @@ describe('parseOrgs', () => {
       'Getting orgs as user@example.com...',
       '',
       'name',
-      'alcon-poc-client',
-      'dole-dev-client',
-      'single-dev-client',
+      'client-a-dev',
+      'client-b-dev',
+      'client-c-poc',
       '',
     ].join('\n');
 
-    expect(parseOrgs(stdout)).toEqual(['alcon-poc-client', 'dole-dev-client', 'single-dev-client']);
+    expect(parseOrgs(stdout)).toEqual(['client-a-dev', 'client-b-dev', 'client-c-poc']);
   });
 
   it('returns empty array when no name header found', () => {
@@ -25,8 +25,8 @@ describe('parseOrgs', () => {
   });
 
   it('filters out blank lines after header', () => {
-    const stdout = 'name\nfoo\n\nbar\n\n';
-    expect(parseOrgs(stdout)).toEqual(['foo', 'bar']);
+    const stdout = 'name\norg-one\n\norg-two\n\n';
+    expect(parseOrgs(stdout)).toEqual(['org-one', 'org-two']);
   });
 
   it('trims whitespace from org names', () => {
@@ -37,13 +37,13 @@ describe('parseOrgs', () => {
 
 describe('parseApps', () => {
   const sampleOutput = [
-    'Getting apps in org foo / space app as user@example.com...',
+    'Getting apps in org test-org / space app as user@example.com...',
     '',
-    'name                               requested state   processes   routes',
-    'prefix-db-config                   started           web:0/0     ',
-    'prefix-srv-config-main             started           web:1/1     foo-srv-config-main.cfapps.br10.hana.ondemand.com',
-    'prefix-srv-config-admin            stopped           web:0/1     foo-srv-config-admin.cfapps.br10.hana.ondemand.com',
-    'prefix-db-process                  started           web:0/0     ',
+    'name                    requested state   processes   routes',
+    'myapp-db-one            started           web:0/0     ',
+    'myapp-svc-one           started           web:1/1     myapp-svc-one.cfapps.br10.hana.ondemand.com',
+    'myapp-svc-two           stopped           web:0/1     myapp-svc-two.cfapps.br10.hana.ondemand.com',
+    'myapp-db-two            started           web:0/0     ',
     '',
   ].join('\n');
 
@@ -51,16 +51,16 @@ describe('parseApps', () => {
     const apps = parseApps(sampleOutput);
     const started = apps.filter((a) => a.state === 'started');
     expect(started.map((a) => a.name)).toEqual([
-      'prefix-db-config',
-      'prefix-srv-config-main',
-      'prefix-db-process',
+      'myapp-db-one',
+      'myapp-svc-one',
+      'myapp-db-two',
     ]);
   });
 
   it('parses stopped apps correctly', () => {
     const apps = parseApps(sampleOutput);
     const stopped = apps.filter((a) => a.state === 'stopped');
-    expect(stopped.map((a) => a.name)).toEqual(['prefix-srv-config-admin']);
+    expect(stopped.map((a) => a.name)).toEqual(['myapp-svc-two']);
   });
 
   it('returns all apps with correct count', () => {

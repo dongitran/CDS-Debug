@@ -1,0 +1,15 @@
+src/**
+test/**
+node_modules/**
+.husky/**
+.git/**
+dist/**/*.map
+esbuild.mjs
+eslint.config.mjs
+lint-staged.config.mjs
+vitest.config.ts
+tsconfig.json
+cspell.json
+pnpm-lock.yaml
+.gitignore
+.vscodeignore
