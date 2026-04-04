@@ -213,8 +213,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     for (const target of targets) {
       const folderName = path.basename(target.folderPath);
-      const cmd = `cds watch --inspect=${target.port.toString()}`;
-      logInfo(`Terminal [${folderName}] > ${cmd}`);
+      // For remote Cloud Foundry app debugging
+      const cmd = `cds debug ${target.appName} -f -p ${target.port.toString()}`;
+      logInfo(`Terminal [${target.appName}] > ${cmd}`);
       const terminal = vscode.window.createTerminal({
         name: `CDS: ${folderName}`,
         cwd: target.folderPath,
