@@ -174,7 +174,13 @@ export function getScript(nonce: string): string {
       document.querySelectorAll('input[name="cf-org"]').forEach(el => {
         el.addEventListener('change', e => {
           state.selectedOrg = e.target.value;
-          render();
+          // Patch classes in-place — calling render() resets scroll position
+          document.querySelectorAll('label.org-item').forEach(label => {
+            const inp = label.querySelector('input[name="cf-org"]');
+            if (inp) label.classList.toggle('selected', inp.value === state.selectedOrg);
+          });
+          const nextBtn = document.getElementById('btn-next-org');
+          if (nextBtn) nextBtn.removeAttribute('disabled');
         });
       });
 
@@ -187,7 +193,13 @@ export function getScript(nonce: string): string {
       document.querySelectorAll('input[name="cf-folder"]').forEach(el => {
         el.addEventListener('change', e => {
           state.selectedFolder = e.target.value;
-          render();
+          // Patch classes in-place — calling render() resets scroll position
+          document.querySelectorAll('label.org-item').forEach(label => {
+            const inp = label.querySelector('input[name="cf-folder"]');
+            if (inp) label.classList.toggle('selected', inp.value === state.selectedFolder);
+          });
+          const saveBtn = document.getElementById('btn-save-mapping');
+          if (saveBtn) saveBtn.removeAttribute('disabled');
         });
       });
 
