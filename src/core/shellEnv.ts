@@ -21,27 +21,38 @@ let _cachedShellEnv: NodeJS.ProcessEnv | null = null;
  * `$SHELL -l` which sources init files. We replicate that here for the
  * Extension Host itself.
  *
- * Windows is excluded: on Windows, env vars set via System Properties are
- * inherited by all GUI processes including VS Code, so this fallback is
- * unnecessary.
+ * TWO KEY FLAGS:
+ *   -l  login shell  → sources ~/.zprofile, ~/.bash_profile
+ *   -i  interactive  → sources ~/.zshrc, ~/.bashrc
+ * Most users put env vars in ~/.zshrc, so BOTH flags are required.
+ *
+ * env option intentionally omitted so the child inherits the parent's
+ * environment (which includes HOME, USER, SHELL set by launchd). Without
+ * HOME the shell cannot locate dotfiles at all.
+ *
+ * Windows is excluded: env vars set via System Properties are inherited by
+ * all GUI processes including VS Code, so this fallback is unnecessary.
  */
 async function readLoginShellEnv(): Promise<NodeJS.ProcessEnv> {
   if (process.platform === 'win32') return {};
   if (_cachedShellEnv !== null) return _cachedShellEnv;
 
-  const shell = process.env.SHELL ?? '/bin/sh';
-  logInfo(`[ShellEnv] process.env missing credentials — spawning login shell: ${shell} -l -c env`);
+  const shell = process.env.SHELL ?? '/bin/zsh';
+
+  // fish uses different flags; all other POSIX shells accept -l -i -c.
+  const isFish = shell.endsWith('fish');
+  const args = isFish ? ['-l', '-c', 'env'] : ['-l', '-i', '-c', 'env'];
+
+  logInfo(`[ShellEnv] Spawning login shell to read env: ${shell} ${args.slice(0, -1).join(' ')} env`);
 
   try {
-    const { stdout } = await execFileAsync(shell, ['-l', '-c', 'env'], {
-      timeout: 8_000,
-      // Provide a minimal PATH so the shell can find basic utils during init.
-      env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' },
-    });
+    // Do NOT pass a custom env — inherit the parent env so the child shell
+    // has HOME/USER/SHELL and can locate ~/.zshrc, ~/.zprofile, etc.
+    const { stdout } = await execFileAsync(shell, args, { timeout: 10_000 });
 
     const parsed: NodeJS.ProcessEnv = {};
     for (const line of stdout.split('\n')) {
-      // Use first '=' only so values containing '=' are preserved intact.
+      // Split on first '=' only so values containing '=' are preserved.
       const idx = line.indexOf('=');
       if (idx > 0) {
         parsed[line.slice(0, idx)] = line.slice(idx + 1);
@@ -60,8 +71,8 @@ async function readLoginShellEnv(): Promise<NodeJS.ProcessEnv> {
 /**
  * Returns SAP credentials with a two-step fallback:
  *   1. process.env — works when VS Code is launched from a terminal.
- *   2. Login-shell env — covers the common case of launching VS Code from
- *      the macOS Dock or Spotlight (Extension Host has no shell dotfiles).
+ *   2. Login-shell env — covers launching VS Code from the macOS Dock or
+ *      Spotlight where the Extension Host has no shell dotfiles.
  */
 export async function getCredentials(): Promise<{ email: string; password: string }> {
   const e1 = process.env.SAP_EMAIL;
@@ -82,7 +93,7 @@ export async function getCredentials(): Promise<{ email: string; password: strin
   return { email: '', password: '' };
 }
 
-/** Clears the login-shell env cache (e.g. after user updates dotfiles). */
+/** Clears the login-shell env cache (e.g. after the user updates dotfiles). */
 export function clearShellEnvCache(): void {
   _cachedShellEnv = null;
 }
