@@ -1,16 +1,15 @@
-name: Publish Extension
+name: CI
 
 on:
   push:
     branches:
       - master
-    paths:
-      - 'src/**'
-      - 'package.json'
-      - '.github/workflows/publish.yml'
+  pull_request:
+    branches:
+      - master
 
 jobs:
-  publish:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -28,7 +27,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Publish to VS Code Marketplace
-        run: npx @vscode/vsce publish --no-dependencies
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Test
+        run: pnpm run test

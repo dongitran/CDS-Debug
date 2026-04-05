@@ -1,16 +1,24 @@
-name: Publish Extension
+name: Security Audit
 
 on:
   push:
     branches:
       - master
     paths:
-      - 'src/**'
       - 'package.json'
-      - '.github/workflows/publish.yml'
+      - 'pnpm-lock.yaml'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+  schedule:
+    # Run every Monday at 08:00 UTC to catch newly disclosed CVEs
+    - cron: '0 8 * * 1'
 
 jobs:
-  publish:
+  audit:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -28,7 +36,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Publish to VS Code Marketplace
-        run: npx @vscode/vsce publish --no-dependencies
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      - name: Run security audit
+        # --audit-level=high only fails on high/critical severity
+        run: pnpm audit --audit-level=high
