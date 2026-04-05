@@ -3,7 +3,6 @@
 > Debug multiple SAP CAP services simultaneously — directly from VS Code.
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/dongtran.cds-debug?label=VS%20Marketplace&logo=visual-studio-code&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=dongtran.cds-debug)
-[![Rating](https://img.shields.io/visual-studio-marketplace/r/dongtran.cds-debug)](https://marketplace.visualstudio.com/items?itemName=dongtran.cds-debug)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![VS Code](https://img.shields.io/badge/vscode-%5E1.90.0-007ACC?logo=visual-studio-code)](https://code.visualstudio.com)
 
