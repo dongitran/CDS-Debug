@@ -17,6 +17,10 @@ describe('getFolderNameCandidates', () => {
     expect(getFolderNameCandidates('myapp')).toEqual(['myapp']);
     expect(getFolderNameCandidates('myapp_svc_one')).toEqual(['myapp_svc_one']);
   });
+
+  it('handles single-hyphen names', () => {
+    expect(getFolderNameCandidates('a-b')).toEqual(['a-b', 'a_b']);
+  });
 });
 
 describe('findFolderPath', () => {
@@ -33,6 +37,14 @@ describe('findFolderPath', () => {
     );
   });
 
+  it('matches underscore folder when CF app name uses hyphens', () => {
+    // CF app is named 'myapp-svc-one', local folder is 'myapp_svc_one'
+    // This exercises the getFolderNameCandidates integration inside findFolderPath
+    expect(findFolderPath('myapp-svc-one', paths)).toBe(
+      '/root/group/sub-a/myapp_svc_one',
+    );
+  });
+
   it('returns null when no match found', () => {
     expect(findFolderPath('myapp_svc_unknown', paths)).toBeNull();
   });
@@ -45,6 +57,14 @@ describe('findFolderPath', () => {
     expect(findFolderPath('myapp_helper_one', paths)).toBe(
       '/root/group/sub-c/myapp_helper_one',
     );
+  });
+
+  it('returns first match when multiple folders share the same basename', () => {
+    const duplicatePaths = [
+      '/group/a/myapp_svc_one',
+      '/group/b/myapp_svc_one',
+    ];
+    expect(findFolderPath('myapp_svc_one', duplicatePaths)).toBe('/group/a/myapp_svc_one');
   });
 });
 
@@ -119,7 +139,7 @@ describe('buildDebugTargets', () => {
       const { targets } = buildDebugTargets(
         ['myapp-svc-one'],
         allFolderPaths,
-        { 'myapp-svc-one': 9999 }
+        { 'myapp-svc-one': 9999 },
       );
       expect(targets[0]?.port).toBe(9999);
     });
@@ -129,7 +149,7 @@ describe('buildDebugTargets', () => {
         ['myapp-svc-one', 'myapp-db-one'],
         allFolderPaths,
         {},
-        new Set([9229, 9231]) // 9229 and 9231 are occupied
+        new Set([9229, 9231]), // 9229 and 9231 are occupied
       );
       // Should pick 9230 (next available after 9229)
       expect(targets[0]?.port).toBe(9230);
@@ -142,10 +162,25 @@ describe('buildDebugTargets', () => {
         ['app-fixed', 'app-new'],
         ['/root/app_fixed', '/root/app_new'],
         { 'app-fixed': 9500 },
-        new Set([9229])
+        new Set([9229]),
       );
-      expect(targets.find(t => t.appName === 'app-fixed')?.port).toBe(9500);
-      expect(targets.find(t => t.appName === 'app-new')?.port).toBe(9230); // 9229 used, so 9230
+      expect(targets.find((t) => t.appName === 'app-fixed')?.port).toBe(9500);
+      expect(targets.find((t) => t.appName === 'app-new')?.port).toBe(9230); // 9229 used, so 9230
+    });
+
+    it('marks existingPort as used so other apps do not collide with it', () => {
+      // app-fixed gets port 9230 from existingPorts.
+      // app-new must NOT also get 9230 — it should get 9231.
+      const { targets } = buildDebugTargets(
+        ['app-fixed', 'app-new'],
+        ['/root/app_fixed', '/root/app_new'],
+        { 'app-fixed': 9230 },
+        new Set(),
+        9229,
+      );
+      expect(targets.find((t) => t.appName === 'app-fixed')?.port).toBe(9230);
+      // 9229 is the start, 9230 is taken by app-fixed's existingPort → skip to 9231
+      expect(targets.find((t) => t.appName === 'app-new')?.port).toBe(9229);
     });
   });
 });

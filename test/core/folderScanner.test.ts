@@ -74,4 +74,35 @@ describe('findRepoFolder', () => {
     const result = await findRepoFolder('/group', 'myapp_svc_unknown');
     expect(result).toBeNull();
   });
+
+  it('skips non-directory entries during scan', async () => {
+    vi.mocked(fs.readdir).mockResolvedValueOnce([
+      makeDirent('README.md', false),
+      makeDirent('package.json', false),
+      makeDirent('myapp_svc_one', true),
+    ] as ReaddirResult);
+    vi.mocked(fs.readdir).mockResolvedValue([] as ReaddirResult);
+    vi.mocked(fs.stat).mockResolvedValue(makeStats());
+
+    const result = await findRepoFolder('/group', 'myapp_svc_one');
+    expect(result).toBe('/group/myapp_svc_one');
+  });
+
+  it('stops recursion at MAX_SCAN_DEPTH (6) and returns null', async () => {
+    // Every readdir always returns one subdirectory that never matches the target.
+    // The scan should stop after depths 0–6 (7 readdir calls total), then return null.
+    vi.mocked(fs.readdir).mockResolvedValue([makeDirent('sub', true)] as ReaddirResult);
+    vi.mocked(fs.stat).mockRejectedValue(new Error('ENOENT'));
+
+    const result = await findRepoFolder('/group', 'never-found');
+    expect(result).toBeNull();
+    // depth 0 through 6 = 7 readdir calls; depth 7 is rejected before calling readdir
+    expect(fs.readdir).toHaveBeenCalledTimes(7);
+  });
+
+  it('propagates readdir errors', async () => {
+    vi.mocked(fs.readdir).mockRejectedValue(new Error('EACCES: permission denied'));
+
+    await expect(findRepoFolder('/group', 'any-folder')).rejects.toThrow('EACCES');
+  });
 });

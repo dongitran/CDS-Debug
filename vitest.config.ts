@@ -8,8 +8,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
-      include: ['src/core/**/*.ts'],
-      exclude: ['src/core/logger.ts', 'src/core/processManager.ts', 'src/webview/**', 'src/extension.ts', 'src/types/**', 'src/storage/**'],
+      include: ['src/core/**/*.ts', 'src/storage/**/*.ts'],
+      exclude: ['src/core/logger.ts', 'src/core/processManager.ts', 'src/core/cacheSync.ts', 'src/webview/**', 'src/extension.ts', 'src/types/**'],
       thresholds: {
         branches: 80,
         functions: 80,

@@ -68,6 +68,35 @@ describe('parseApps', () => {
     expect(apps).toHaveLength(4);
   });
 
+  it('parses urls for apps that have routes', () => {
+    const apps = parseApps(sampleOutput);
+    const svcOne = apps.find((a) => a.name === 'myapp-svc-one');
+    expect(svcOne?.urls).toEqual(['myapp-svc-one.cfapps.br10.hana.ondemand.com']);
+
+    const svcTwo = apps.find((a) => a.name === 'myapp-svc-two');
+    expect(svcTwo?.urls).toEqual(['myapp-svc-two.cfapps.br10.hana.ondemand.com']);
+  });
+
+  it('returns empty urls for apps with no routes', () => {
+    const apps = parseApps(sampleOutput);
+    const dbOne = apps.find((a) => a.name === 'myapp-db-one');
+    expect(dbOne?.urls).toEqual([]);
+    const dbTwo = apps.find((a) => a.name === 'myapp-db-two');
+    expect(dbTwo?.urls).toEqual([]);
+  });
+
+  it('parses multiple comma-separated routes into urls array', () => {
+    const output = [
+      'name  requested state  processes  routes',
+      'multi-route-app  started  web:1/1  app.cfapps.eu10.hana.ondemand.com,app2.cfapps.eu10.hana.ondemand.com',
+    ].join('\n');
+    const apps = parseApps(output);
+    expect(apps[0]?.urls).toEqual([
+      'app.cfapps.eu10.hana.ondemand.com',
+      'app2.cfapps.eu10.hana.ondemand.com',
+    ]);
+  });
+
   it('returns empty array when no header found', () => {
     expect(parseApps('unexpected output format')).toEqual([]);
   });
@@ -79,6 +108,11 @@ describe('parseApps', () => {
   it('handles app with no routes column', () => {
     const output = 'name  requested state  processes\nmy-app  started  web:1/1\n';
     const apps = parseApps(output);
-    expect(apps[0]).toMatchObject({ name: 'my-app', state: 'started' });
+    expect(apps[0]).toMatchObject({ name: 'my-app', state: 'started', urls: [] });
+  });
+
+  it('returns empty array when lines after header are blank', () => {
+    const output = 'name  requested state  processes  routes\n\n\n';
+    expect(parseApps(output)).toEqual([]);
   });
 });
