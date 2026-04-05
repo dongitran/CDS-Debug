@@ -1,5 +1,7 @@
 export const CF_DEFAULT_SPACE = 'app';
 
+export const CACHE_TTL_MS = 4 * 60 * 60 * 1000;
+
 export const DEBUG_BASE_PORT = 9229;
 
 export type CfAppState = 'started' | 'stopped';
@@ -45,6 +47,30 @@ export interface ExtensionConfig {
   orgGroupMappings: OrgGroupMapping[];
 }
 
+export interface CfOrgCache {
+  apps: CfApp[];
+  cachedAt: number;
+}
+
+export interface CfRegionCache {
+  apiEndpoint: string;
+  orgs: string[];
+  appsByOrg: Record<string, CfOrgCache>;
+  lastSyncedAt: number;
+}
+
+export interface SyncProgress {
+  isRunning: boolean;
+  startedAt?: number;
+  lastCompletedAt?: number;
+  // Explicitly allow undefined so spread resets like `{ ...p, currentOrg: undefined }`
+  // are valid under exactOptionalPropertyTypes: true.
+  currentRegion?: string | undefined;
+  currentOrg?: string | undefined;
+  done: number;
+  total: number;
+}
+
 // Messages from webview → extension
 export type WebviewMessage =
   | { type: 'SELECT_ROOT_FOLDER' }
@@ -55,7 +81,9 @@ export type WebviewMessage =
   | { type: 'OPEN_APP_URL'; payload: { url: string } }
   | { type: 'SAVE_MAPPINGS'; payload: { mappings: OrgGroupMapping[] } }
   | { type: 'LOAD_CONFIG' }
-  | { type: 'RESET_LOGIN' };
+  | { type: 'RESET_LOGIN' }
+  | { type: 'TRIGGER_SYNC' }
+  | { type: 'GET_SYNC_STATUS' };
 
 // Messages from extension → webview
 export type ExtensionMessage =
@@ -68,4 +96,5 @@ export type ExtensionMessage =
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[] } }
   | { type: 'APP_DEBUG_STATUS'; payload: { appName: string; status: string; message?: string } }
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
-  | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; groupFolders: string[]; activeSessions: Record<string, { status: string; message?: string }> } };
+  | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; groupFolders: string[]; activeSessions: Record<string, { status: string; message?: string }> } }
+  | { type: 'SYNC_STATUS'; payload: SyncProgress };

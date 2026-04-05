@@ -17,12 +17,14 @@ export class CfCliError extends Error {
   }
 }
 
-async function runCf(args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+// cfHome: when provided, sets CF_HOME so this invocation uses an isolated config
+// directory instead of the default ~/.cf — used by the background cache sync to
+// avoid clobbering the user's interactive CF session.
+async function runCf(args: string[], cfHome?: string): Promise<string> {
   try {
-    const { stdout } = await execFileAsync('cf', args, {
-      env: { ...process.env, ...env },
-      maxBuffer: MAX_BUFFER,
-    });
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (cfHome) env.CF_HOME = cfHome;
+    const { stdout } = await execFileAsync('cf', args, { env, maxBuffer: MAX_BUFFER });
     return stdout;
   } catch (err: unknown) {
     const error = err as NodeJS.ErrnoException & { stderr?: string };
@@ -35,12 +37,17 @@ async function runCf(args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
 
 const CF_AUTH_RETRIES = 3;
 
-export async function cfLogin(apiEndpoint: string, email: string, password: string): Promise<void> {
-  await runCf(['api', apiEndpoint]);
+export async function cfLogin(
+  apiEndpoint: string,
+  email: string,
+  password: string,
+  cfHome?: string,
+): Promise<void> {
+  await runCf(['api', apiEndpoint], cfHome);
   let lastError: unknown;
   for (let attempt = 0; attempt <= CF_AUTH_RETRIES; attempt++) {
     try {
-      await runCf(['auth', email, password]);
+      await runCf(['auth', email, password], cfHome);
       return;
     } catch (err: unknown) {
       lastError = err;
@@ -62,13 +69,13 @@ export function parseOrgs(stdout: string): string[] {
     .filter((line) => line.length > 0);
 }
 
-export async function cfOrgs(): Promise<string[]> {
-  const stdout = await runCf(['orgs']);
+export async function cfOrgs(cfHome?: string): Promise<string[]> {
+  const stdout = await runCf(['orgs'], cfHome);
   return parseOrgs(stdout);
 }
 
-export async function cfTarget(org: string, space = CF_DEFAULT_SPACE): Promise<void> {
-  await runCf(['target', '-o', org, '-s', space]);
+export async function cfTarget(org: string, space = CF_DEFAULT_SPACE, cfHome?: string): Promise<void> {
+  await runCf(['target', '-o', org, '-s', space], cfHome);
 }
 
 export function parseApps(stdout: string): CfApp[] {
@@ -84,7 +91,7 @@ export function parseApps(stdout: string): CfApp[] {
       const name = parts[0]?.trim();
       const state = parts[1]?.trim();
       if (!name || !state) return [];
-      
+
       let urls: string[] = [];
       const maybeUrls = parts[parts.length - 1];
       if (maybeUrls?.includes('.')) {
@@ -94,12 +101,12 @@ export function parseApps(stdout: string): CfApp[] {
     });
 }
 
-export async function cfApps(): Promise<CfApp[]> {
-  const stdout = await runCf(['apps']);
+export async function cfApps(cfHome?: string): Promise<CfApp[]> {
+  const stdout = await runCf(['apps'], cfHome);
   return parseApps(stdout);
 }
 
-export async function cfTargetAndApps(org: string): Promise<CfApp[]> {
-  await cfTarget(org);
-  return cfApps();
+export async function cfTargetAndApps(org: string, cfHome?: string): Promise<CfApp[]> {
+  await cfTarget(org, undefined, cfHome);
+  return cfApps(cfHome);
 }

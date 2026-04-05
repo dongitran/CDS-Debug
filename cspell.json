@@ -72,6 +72,10 @@
     "pidstr",
     "sigterm",
     "sigkill",
-    "lsof"
+    "lsof",
+    "syncing",
+    "tmpdir",
+    "cachesync",
+    "cachestore"
   ]
 }

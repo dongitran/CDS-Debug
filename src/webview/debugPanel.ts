@@ -1,11 +1,14 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import type { ExtensionMessage, OrgGroupMapping, WebviewMessage } from '../types/index';
+import type { ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
+import { CACHE_TTL_MS } from '../types/index';
 import { cfLogin, cfOrgs, cfTargetAndApps } from '../core/cfClient';
 import { findGroupFolders, findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
 import { mergeLaunchJson } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
+import { getCachedApps } from '../storage/cacheStore';
+import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress } from '../core/cacheSync';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
 import { startTunnelAndAttach, stopProcess, debugProcessEvents, getActiveSessions } from '../core/processManager';
@@ -18,6 +21,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   constructor(private readonly context: vscode.ExtensionContext) {
     debugProcessEvents.on('statusChanged', (payload: { appName: string, status: string, message?: string }) => {
       this.post({ type: 'APP_DEBUG_STATUS', payload });
+    });
+    cacheSyncEvents.on('progress', (payload: SyncProgress) => {
+      this.post({ type: 'SYNC_STATUS', payload });
     });
   }
 
@@ -94,7 +100,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'RESET_LOGIN':
-        // Just acknowledging the reset (state is handled on frontend, but could clear config if desired)
+        // State reset handled on frontend; no server-side action needed.
+        break;
+
+      case 'GET_SYNC_STATUS':
+        this.post({ type: 'SYNC_STATUS', payload: getCurrentSyncProgress() });
+        break;
+
+      case 'TRIGGER_SYNC':
+        runCacheSync();
         break;
     }
   }
@@ -183,6 +197,17 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       logWarn(msg);
       this.post({ type: 'APPS_ERROR', payload: { message: msg } });
       return;
+    }
+
+    // Serve from background cache when available and fresh (< 4h old).
+    const cached = getCachedApps(config.apiEndpoint, org);
+    if (cached) {
+      const ageMs = Date.now() - cached.cachedAt;
+      if (ageMs < CACHE_TTL_MS) {
+        logInfo(`Apps served from cache for org: ${org} (${Math.floor(ageMs / 60_000).toString()}m old).`);
+        this.post({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
+        return;
+      }
     }
 
     logInfo(`Loading apps for org: ${org} …`);

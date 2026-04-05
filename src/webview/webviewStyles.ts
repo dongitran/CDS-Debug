@@ -228,6 +228,32 @@ export function getStyles(): string {
       border-radius: 99px;
     }
     .step-title { font-size: 13px; font-weight: 600; }
+    .gear-btn {
+      margin-left: auto;
+      background: transparent;
+      border: none;
+      color: var(--vscode-descriptionForeground);
+      font-size: 15px;
+      line-height: 1;
+      padding: 0 2px;
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+    .gear-btn:hover { color: var(--vscode-foreground); }
+
+    .sync-status-row {
+      display: flex;
+      align-items: center;
+      font-size: 12px;
+      padding: 6px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-input-border, transparent);
+    }
+    .sync-status-row.running {
+      border-color: var(--vscode-focusBorder);
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+    }
 
     .org-list {
       display: flex;

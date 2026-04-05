@@ -1,11 +1,15 @@
 import * as vscode from 'vscode';
 import { initConfigStore, clearConfig } from './storage/configStore';
+import { initCacheStore } from './storage/cacheStore';
+import { initCacheSync, disposeCacheSync } from './core/cacheSync';
 import { DebugLauncherViewProvider } from './webview/debugPanel';
 import { disposeLogger } from './core/logger';
 import { disposeAllProcesses } from './core/processManager';
 
 export function activate(context: vscode.ExtensionContext): void {
   initConfigStore(context);
+  initCacheStore(context);
+  initCacheSync();
 
   const provider = new DebugLauncherViewProvider(context);
   context.subscriptions.push(
@@ -26,6 +30,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
+  disposeCacheSync();
   disposeAllProcesses();
   disposeLogger();
 }
