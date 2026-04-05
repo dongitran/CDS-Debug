@@ -76,6 +76,10 @@
     "syncing",
     "tmpdir",
     "cachesync",
-    "cachestore"
+    "cachestore",
+    "shellenv",
+    "launchd",
+    "zprofile",
+    "dotfiles"
   ]
 }

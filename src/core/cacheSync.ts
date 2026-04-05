@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { cfLogin, cfOrgs, cfTarget, cfApps } from './cfClient';
+import { getCredentials } from './shellEnv';
 import { saveCachedApps, saveCachedOrgs, getSyncProgress, saveSyncProgress, getCacheSettings } from '../storage/cacheStore';
 import { logInfo, logWarn, logError } from './logger';
 import type { SyncProgress } from '../types/index';
@@ -65,8 +66,7 @@ async function doSync(): Promise<void> {
     return;
   }
 
-  const email = process.env.SAP_EMAIL ?? '';
-  const password = process.env.SAP_PASSWORD ?? '';
+  const { email, password } = await getCredentials();
   if (!email || !password) {
     logWarn('[CacheSync] SAP_EMAIL/SAP_PASSWORD not set — skipping background sync.');
     return;

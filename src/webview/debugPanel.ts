@@ -7,6 +7,7 @@ import { findGroupFolders, findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
 import { mergeLaunchJson } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
+import { getCredentials } from '../core/shellEnv';
 import { getCachedApps, getCacheSettings, saveCacheSettings } from '../storage/cacheStore';
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { logError, logInfo, logWarn } from '../core/logger';
@@ -161,8 +162,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleLogin(apiEndpoint: string): Promise<void> {
-    const email = process.env.SAP_EMAIL ?? '';
-    const password = process.env.SAP_PASSWORD ?? '';
+    const { email, password } = await getCredentials();
 
     if (!email || !password) {
       const msg = 'SAP_EMAIL or SAP_PASSWORD environment variable is not set.';
