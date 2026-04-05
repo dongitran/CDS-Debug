@@ -3,14 +3,6 @@ import { join } from 'node:path';
 
 const MAX_SCAN_DEPTH = 6;
 
-export async function findGroupFolders(rootPath: string): Promise<string[]> {
-  const entries = await readdir(rootPath, { withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-}
-
 export async function findRepoFolder(
   groupPath: string,
   folderName: string,

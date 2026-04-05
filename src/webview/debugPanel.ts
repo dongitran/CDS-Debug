@@ -1,9 +1,8 @@
-import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { CacheSettings, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
 import { DEFAULT_CACHE_SETTINGS } from '../types/index';
 import { cfLogin, cfOrgs, cfTargetAndApps } from '../core/cfClient';
-import { findGroupFolders, findRepoFolder } from '../core/folderScanner';
+import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
 import { mergeLaunchJson } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
@@ -57,23 +56,18 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     switch (raw.type) {
       case 'LOAD_CONFIG': {
         const config = getConfig();
-        let groupFolders: string[] = [];
-        if (config?.rootFolderPath) {
-          groupFolders = await findGroupFolders(config.rootFolderPath);
-        }
-        this.post({ 
-          type: 'CONFIG_LOADED', 
-          payload: { 
+        this.post({
+          type: 'CONFIG_LOADED',
+          payload: {
             config: config ?? null,
-            groupFolders,
-            activeSessions: getActiveSessions()
-          } 
+            activeSessions: getActiveSessions(),
+          },
         });
         break;
       }
 
-      case 'SELECT_ROOT_FOLDER':
-        await this.handleSelectRootFolder();
+      case 'SELECT_GROUP_FOLDER':
+        await this.handleSelectGroupFolder();
         break;
 
       case 'LOGIN':
@@ -133,32 +127,18 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async handleSelectRootFolder(): Promise<void> {
+  private async handleSelectGroupFolder(): Promise<void> {
     const uris = await vscode.window.showOpenDialog({
       canSelectFiles: false,
       canSelectFolders: true,
       canSelectMany: false,
-      title: 'Select projects root folder',
+      title: 'Select local group folder for this org',
     });
     const selected = uris?.[0];
     if (!selected) return;
 
-    const rootPath = selected.fsPath;
-    logInfo(`Root folder selected: ${rootPath}`);
-    const groupFolders = await findGroupFolders(rootPath);
-    logInfo(`Found ${groupFolders.length.toString()} group folder(s): ${groupFolders.join(', ')}`);
-    const existing = getConfig();
-    await saveConfig({
-      rootFolderPath: rootPath,
-      apiEndpoint: existing?.apiEndpoint ?? '',
-      orgs: existing?.orgs ?? [],
-      orgGroupMappings: existing?.orgGroupMappings ?? [],
-    });
-
-    this.post({
-      type: 'ROOT_FOLDER_SELECTED',
-      payload: { path: rootPath, groupFolders },
-    });
+    logInfo(`Group folder selected: ${selected.fsPath}`);
+    this.post({ type: 'GROUP_FOLDER_SELECTED', payload: { path: selected.fsPath } });
   }
 
   private async handleLogin(apiEndpoint: string): Promise<void> {
@@ -186,7 +166,6 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       logInfo(`Login successful. Found ${orgs.length.toString()} org(s): ${orgs.join(', ')}`);
       const existing = getConfig();
       await saveConfig({
-        rootFolderPath: existing?.rootFolderPath ?? '',
         apiEndpoint,
         orgs,
         orgGroupMappings: existing?.orgGroupMappings ?? [],
@@ -262,7 +241,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     this.post({ type: 'DEBUG_CONNECTING', payload: { appNames } });
 
-    const groupPath = path.join(config.rootFolderPath, mapping.localGroupPath);
+    const groupPath = mapping.groupFolderPath;
 
     const resolvedPaths: string[] = [];
     for (const appName of appNames) {
@@ -280,7 +259,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? config.rootFolderPath;
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? mapping.groupFolderPath;
 
     const existingPorts: Record<string, number> = {};
     const usedPorts = new Set<number>();

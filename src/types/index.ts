@@ -14,7 +14,7 @@ export interface CfApp {
 
 export interface OrgGroupMapping {
   cfOrg: string;
-  localGroupPath: string;
+  groupFolderPath: string; // absolute path to the local group folder
 }
 
 export interface DebugTarget {
@@ -41,7 +41,6 @@ export interface LaunchJson {
 }
 
 export interface ExtensionConfig {
-  rootFolderPath: string;
   apiEndpoint: string;
   orgs: string[];
   orgGroupMappings: OrgGroupMapping[];
@@ -83,7 +82,7 @@ export const DEFAULT_CACHE_SETTINGS: CacheSettings = {
 
 // Messages from webview → extension
 export type WebviewMessage =
-  | { type: 'SELECT_ROOT_FOLDER' }
+  | { type: 'SELECT_GROUP_FOLDER' }
   | { type: 'LOGIN'; payload: { apiEndpoint: string } }
   | { type: 'LOAD_APPS'; payload: { org: string } }
   | { type: 'START_DEBUG'; payload: { appNames: string[]; org: string } }
@@ -99,7 +98,7 @@ export type WebviewMessage =
 
 // Messages from extension → webview
 export type ExtensionMessage =
-  | { type: 'ROOT_FOLDER_SELECTED'; payload: { path: string; groupFolders: string[] } }
+  | { type: 'GROUP_FOLDER_SELECTED'; payload: { path: string } }
   | { type: 'LOGIN_SUCCESS'; payload: { orgs: string[] } }
   | { type: 'LOGIN_ERROR'; payload: { message: string } }
   | { type: 'APPS_LOADED'; payload: { apps: CfApp[] } }
@@ -108,6 +107,6 @@ export type ExtensionMessage =
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[] } }
   | { type: 'APP_DEBUG_STATUS'; payload: { appName: string; status: string; message?: string } }
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
-  | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; groupFolders: string[]; activeSessions: Record<string, { status: string; message?: string }> } }
+  | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }> } }
   | { type: 'SYNC_STATUS'; payload: SyncProgress }
   | { type: 'CACHE_CONFIG'; payload: CacheSettings };

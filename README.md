@@ -72,27 +72,15 @@ ext install dongtran.cds-debug
 
 Click the **⚡ CDS Debug** icon in the Activity Bar.
 
-### 3 — Select your projects root folder
-
-Point to the folder containing your client group folders:
-
-```
-~/Code/projects/
-├── group-a/
-│   └── my-service/
-└── group-b/
-    └── another-service/
-```
-
-### 4 — Pick a CF region and log in
+### 3 — Pick a CF region and log in
 
 Select your region from the grid (or enter a custom endpoint), then click **Login to Cloud Foundry**. Credentials are read from your environment — nothing to type.
 
-### 5 — Map a CF org to a local folder
+### 4 — Map a CF org to a local folder
 
-Select the org you want to work with and match it to its local folder. This is saved automatically — you only do it once.
+Select the org you want to work with, then click **Browse…** to choose its local folder on your machine. This is saved automatically — you only do it once.
 
-### 6 — Select apps and start debugging
+### 5 — Select apps and start debugging
 
 Search or scroll the app list, tick the services you want to debug, and hit **▶ Start Debug Sessions**.
 
@@ -104,7 +92,7 @@ The extension opens a background process per service, updates `launch.json`, and
 
 | Command | Description |
 |---|---|
-| `CDS Debug: Reset Configuration` | Clears saved org mappings and root folder |
+| `CDS Debug: Reset Configuration` | Clears saved org mappings and login config |
 
 ---
 

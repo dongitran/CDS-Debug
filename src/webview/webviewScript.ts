@@ -13,7 +13,6 @@ export function getScript(nonce: string): string {
     // === CONSTANTS ===
 
     const SCREENS = {
-      INITIAL: 'initial',
       REGION: 'region',
       LOGGING_IN: 'logging-in',
       SELECT_ORG: 'select-org',
@@ -50,9 +49,7 @@ export function getScript(nonce: string): string {
     // === STATE ===
 
     let state = {
-      screen: SCREENS.INITIAL,
-      rootFolder: null,
-      groupFolders: [],
+      screen: SCREENS.REGION,
       apiEndpoint: '',
       selectedRegion: 'eu10',
       useCustomEndpoint: false,
@@ -121,7 +118,6 @@ export function getScript(nonce: string): string {
 
     function renderScreen() {
       switch (state.screen) {
-        case SCREENS.INITIAL:       return renderInitial();
         case SCREENS.REGION:        return renderRegion();
         case SCREENS.LOGGING_IN:    return renderLoggingIn();
         case SCREENS.SELECT_ORG:    return renderSelectOrg();
@@ -137,10 +133,6 @@ export function getScript(nonce: string): string {
 
     function attachListeners() {
       const $ = id => document.getElementById(id);
-
-      $('btn-select-folder')?.addEventListener('click', () => {
-        vscode.postMessage({ type: 'SELECT_ROOT_FOLDER' });
-      });
 
       document.querySelectorAll('input[name="cf-region"]').forEach(el => {
         el.addEventListener('change', e => {
@@ -167,10 +159,6 @@ export function getScript(nonce: string): string {
         vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: endpoint } });
       });
 
-      $('btn-back-initial')?.addEventListener('click', () => {
-        state.screen = SCREENS.INITIAL; state.error = null; render();
-      });
-
       document.querySelectorAll('input[name="cf-org"]').forEach(el => {
         el.addEventListener('change', e => {
           state.selectedOrg = e.target.value;
@@ -190,22 +178,13 @@ export function getScript(nonce: string): string {
         render();
       });
 
-      document.querySelectorAll('input[name="cf-folder"]').forEach(el => {
-        el.addEventListener('change', e => {
-          state.selectedFolder = e.target.value;
-          // Patch classes in-place — calling render() resets scroll position
-          document.querySelectorAll('label.org-item').forEach(label => {
-            const inp = label.querySelector('input[name="cf-folder"]');
-            if (inp) label.classList.toggle('selected', inp.value === state.selectedFolder);
-          });
-          const saveBtn = document.getElementById('btn-save-mapping');
-          if (saveBtn) saveBtn.removeAttribute('disabled');
-        });
+      $('btn-browse-folder')?.addEventListener('click', () => {
+        vscode.postMessage({ type: 'SELECT_GROUP_FOLDER' });
       });
 
       $('btn-save-mapping')?.addEventListener('click', () => {
         if (!state.selectedOrg || !state.selectedFolder) return;
-        const mappings = [{ cfOrg: state.selectedOrg, localGroupPath: state.selectedFolder }];
+        const mappings = [{ cfOrg: state.selectedOrg, groupFolderPath: state.selectedFolder }];
         state.mappings = mappings;
         state.error = null;
         state.screen = SCREENS.LOADING_APPS;
@@ -299,12 +278,10 @@ export function getScript(nonce: string): string {
     window.addEventListener('message', event => {
       const msg = event.data;
       switch (msg.type) {
-        case 'ROOT_FOLDER_SELECTED':
-          state.rootFolder = msg.payload.path;
-          state.groupFolders = msg.payload.groupFolders;
-          state.screen = SCREENS.REGION;
-          state.error = null;
-          break;
+        case 'GROUP_FOLDER_SELECTED':
+          state.selectedFolder = msg.payload.path;
+          render();
+          return;
         case 'LOGIN_SUCCESS':
           state.orgs = msg.payload.orgs;
           state.screen = SCREENS.SELECT_ORG;
@@ -377,8 +354,7 @@ export function getScript(nonce: string): string {
           return;
         case 'CONFIG_LOADED': {
           const cfg = msg.payload.config;
-          if (cfg?.rootFolderPath) {
-            state.rootFolder = cfg.rootFolderPath;
+          if (cfg) {
             state.apiEndpoint = cfg.apiEndpoint;
             const detectedRegion = endpointToRegion(cfg.apiEndpoint);
             if (detectedRegion && CF_REGIONS.some(r => r.code === detectedRegion)) {
@@ -402,19 +378,18 @@ export function getScript(nonce: string): string {
               }
             }
             state.activeSessions = restoredSessions;
-            state.groupFolders = msg.payload.groupFolders ?? [];
             state.orgs = cfg.orgs ?? [];
             state.mappings = cfg.orgGroupMappings;
             if (state.mappings.length > 0) {
               state.selectedOrg = state.mappings[0].cfOrg;
-              state.selectedFolder = state.mappings[0].localGroupPath;
+              state.selectedFolder = state.mappings[0].groupFolderPath;
               state.screen = SCREENS.LOADING_APPS;
               render();
               vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
               return;
             }
           }
-          state.screen = SCREENS.INITIAL;
+          state.screen = SCREENS.REGION;
           break;
         }
       }

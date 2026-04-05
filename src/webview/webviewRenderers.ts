@@ -5,21 +5,6 @@
  */
 export function getRendererScriptContent(): string {
   return `
-    function renderInitial() {
-      return \`
-        <div class="step-header">
-          <span class="step-badge">1/4</span>
-          <span class="step-title">Select Projects Folder</span>
-        </div>
-        <div class="info-box">
-          Choose the root folder that contains your client group folders
-          (e.g. <code>~/Code/projects/</code>).
-        </div>
-        \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
-        <button class="btn" id="btn-select-folder">Browse&hellip;</button>
-      \`;
-    }
-
     function renderRegion() {
       const regionCards = CF_REGIONS.map(r => \`
         <label class="region-card \${!state.useCustomEndpoint && state.selectedRegion === r.code ? 'selected' : ''}">
@@ -52,10 +37,9 @@ export function getRendererScriptContent(): string {
 
       return \`
         <div class="step-header">
-          <span class="step-badge">2/4</span>
+          <span class="step-badge">1/3</span>
           <span class="step-title">CF Region</span>
         </div>
-        <div class="info-box">Root: <code>\${escape(state.rootFolder)}</code></div>
         \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
         <div class="section-label">Select Region</div>
         <div class="region-grid">
@@ -64,8 +48,6 @@ export function getRendererScriptContent(): string {
         </div>
         \${customInput}
         <button class="btn" id="btn-login">Login to Cloud Foundry</button>
-        <div style="height:6px"></div>
-        <button class="btn btn-secondary" id="btn-back-initial">Back</button>
       \`;
     }
 
@@ -92,7 +74,7 @@ export function getRendererScriptContent(): string {
 
       return \`
         <div class="step-header">
-          <span class="step-badge">3/4</span>
+          <span class="step-badge">2/3</span>
           <span class="step-title">Select CF Org</span>
         </div>
         <div class="info-box">Choose the Cloud Foundry org you want to debug.</div>
@@ -109,25 +91,20 @@ export function getRendererScriptContent(): string {
     }
 
     function renderSelectFolder() {
-      const items = state.groupFolders.map(f => \`
-        <label class="org-item \${f === state.selectedFolder ? 'selected' : ''}">
-          <input type="radio" name="cf-folder" value="\${escape(f)}"
-            \${f === state.selectedFolder ? 'checked' : ''} />
-          <span class="org-item-name" title="\${escape(f)}">\${escape(f)}</span>
-        </label>
-      \`).join('');
+      const folderDisplay = state.selectedFolder
+        ? \`<div class="info-box" style="word-break:break-all"><code>\${escape(state.selectedFolder)}</code></div>\`
+        : \`<div class="radio-desc" style="margin-bottom:8px">No folder selected yet.</div>\`;
 
       return \`
         <div class="step-header">
-          <span class="step-badge">4/4</span>
+          <span class="step-badge">3/3</span>
           <span class="step-title">Select Local Folder</span>
         </div>
         <div class="info-box">Org: <code>\${escape(state.selectedOrg ?? '')}</code></div>
         \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
         <div class="section-label">Local Group Folder</div>
-        <div class="org-list">
-          \${items || \`<div class="org-list-empty">No folders found.</div>\`}
-        </div>
+        \${folderDisplay}
+        <button class="btn btn-secondary" id="btn-browse-folder">Browse&hellip;</button>
         <div style="height:10px"></div>
         <button class="btn" id="btn-save-mapping" \${!state.selectedFolder ? 'disabled' : ''}>Save &amp; Continue</button>
         <div style="height:6px"></div>

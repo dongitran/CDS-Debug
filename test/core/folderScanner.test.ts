@@ -3,7 +3,7 @@ import type { Stats } from 'node:fs';
 
 vi.mock('node:fs/promises');
 
-import { findGroupFolders, findRepoFolder } from '../../src/core/folderScanner';
+import { findRepoFolder } from '../../src/core/folderScanner';
 import * as fs from 'node:fs/promises';
 
 type ReaddirResult = Awaited<ReturnType<typeof fs.readdir>>;
@@ -29,38 +29,6 @@ function makeStats(): Stats {
 
 beforeEach(() => {
   vi.resetAllMocks();
-});
-
-describe('findGroupFolders', () => {
-  it('returns sorted directory names, excluding files', async () => {
-    vi.mocked(fs.readdir).mockResolvedValue([
-      makeDirent('client-b', true),
-      makeDirent('client-a', true),
-      makeDirent('README.md', false),
-    ] as ReaddirResult);
-
-    const result = await findGroupFolders('/root');
-    expect(result).toEqual(['client-a', 'client-b']);
-  });
-
-  it('returns empty array when no directories exist', async () => {
-    vi.mocked(fs.readdir).mockResolvedValue([
-      makeDirent('README.md', false),
-    ] as ReaddirResult);
-
-    const result = await findGroupFolders('/root');
-    expect(result).toEqual([]);
-  });
-
-  it('returns all directories when no files present', async () => {
-    vi.mocked(fs.readdir).mockResolvedValue([
-      makeDirent('group-a', true),
-      makeDirent('group-b', true),
-    ] as ReaddirResult);
-
-    const result = await findGroupFolders('/root');
-    expect(result).toEqual(['group-a', 'group-b']);
-  });
 });
 
 describe('findRepoFolder', () => {
