@@ -76,6 +76,8 @@ export function getRendererScriptContent(): string {
           Logging in&hellip;
         </div>
         <div class="radio-desc" style="text-align:center;margin-top:4px">\${escape(state.apiEndpoint)}</div>
+        <div style="height:16px"></div>
+        <button class="btn btn-secondary" id="btn-cancel-login">&#8592; Cancel</button>
       \`;
     }
 
@@ -117,7 +119,7 @@ export function getRendererScriptContent(): string {
 
       return \`
         <div class="step-header">
-          <span class="step-badge">3/4</span>
+          <span class="step-badge">4/4</span>
           <span class="step-title">Select Local Folder</span>
         </div>
         <div class="info-box">Org: <code>\${escape(state.selectedOrg ?? '')}</code></div>
@@ -139,26 +141,32 @@ export function getRendererScriptContent(): string {
           <span class="spinner"></span>
           Loading apps for <strong>\${escape(state.selectedOrg)}</strong>&hellip;
         </div>
+        <div style="height:16px"></div>
+        <button class="btn btn-secondary" id="btn-cancel-load-apps">&#8592; Cancel</button>
       \`;
+    }
+
+    function getStatusInnerHtml(session) {
+      if (session.status === 'TUNNELING') {
+        const text = LOADING_MESSAGES[session.msgPhase] || 'Connecting...';
+        return '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>'
+          + '<span class="status-text-anim">' + escape(text) + '</span>';
+      }
+      if (session.status === 'ATTACHED') {
+        return '<span style="color:var(--vscode-testing-iconPassed);margin-right:6px">&#9679;</span>'
+          + '<span class="status-text-anim">Debugger Attached</span>';
+      }
+      if (session.status === 'ERROR') {
+        return '<span style="color:var(--vscode-testing-iconFailed);margin-right:6px">&#10006;</span>'
+          + '<span class="status-text-anim">' + escape(session.message || 'Connection Error') + '</span>';
+      }
+      return '';
     }
 
     function renderActiveCard(appName) {
       const session = state.activeSessions[appName];
       const appInfo = state.apps.find(a => a.name === appName);
       const appUrl = (appInfo && appInfo.urls && appInfo.urls.length > 0) ? 'https://' + appInfo.urls[0] : '';
-
-      let icon = '';
-      let text = '';
-      if (session.status === 'TUNNELING') {
-        icon = '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>';
-        text = LOADING_MESSAGES[session.msgPhase] || "Connecting...";
-      } else if (session.status === 'ATTACHED') {
-        icon = '<span style="color:var(--vscode-testing-iconPassed);margin-right:6px">&#9679;</span>';
-        text = 'Debugger Attached';
-      } else if (session.status === 'ERROR') {
-        icon = '<span style="color:var(--vscode-testing-iconFailed);margin-right:6px">&#10006;</span>';
-        text = session.message || 'Connection Error';
-      }
 
       const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
         <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
@@ -171,10 +179,7 @@ export function getRendererScriptContent(): string {
         <div class="active-card" data-app-name="\${escape(appName)}">
           <div class="active-card-main">
             <div class="active-card-title" title="\${escape(appName)}">\${escape(appName)}</div>
-            <div class="active-card-status">
-              \${icon}
-              <span class="status-text-anim" key="\${session.msgPhase}">\${escape(text)}</span>
-            </div>
+            <div class="active-card-status">\${getStatusInnerHtml(session)}</div>
           </div>
           \${openBtn}
           <button class="active-stop-btn" data-stop-app="\${escape(appName)}"
@@ -200,15 +205,66 @@ export function getRendererScriptContent(): string {
     function refreshActiveSessionsPanel() {
       const panel = document.getElementById('active-sessions-panel');
       if (!panel) return;
-      panel.innerHTML = renderActiveSessionsContent();
+
+      const activeAppNames = Object.keys(state.activeSessions);
+
+      if (activeAppNames.length === 0) {
+        panel.innerHTML = '';
+        return;
+      }
+
+      const existingCards = Array.from(panel.querySelectorAll('[data-app-name]'));
+      const existingNames = existingCards.map(function(c) { return c.dataset.appName; });
+      const sameSet = activeAppNames.length === existingNames.length
+        && activeAppNames.every(function(n) { return existingNames.indexOf(n) !== -1; });
+
+      if (!sameSet) {
+        // Session added or removed — full rebuild with slide-in animation
+        panel.innerHTML = renderActiveSessionsContent();
+        return;
+      }
+
+      // Same set of sessions — update only the status part of each card (no animation)
+      for (let i = 0; i < activeAppNames.length; i++) {
+        const appName = activeAppNames[i];
+        const session = state.activeSessions[appName];
+        let card = null;
+        for (let j = 0; j < existingCards.length; j++) {
+          if (existingCards[j].dataset.appName === appName) { card = existingCards[j]; break; }
+        }
+        if (!card) continue;
+
+        const statusEl = card.querySelector('.active-card-status');
+        if (statusEl) {
+          const newHtml = getStatusInnerHtml(session);
+          if (statusEl.innerHTML !== newHtml) statusEl.innerHTML = newHtml;
+        }
+
+        // Handle open button visibility for ATTACHED state
+        const appInfo = state.apps.find(function(a) { return a.name === appName; });
+        const appUrl = (appInfo && appInfo.urls && appInfo.urls.length > 0)
+          ? 'https://' + appInfo.urls[0] : '';
+        const existingOpenBtn = card.querySelector('[data-open-url]');
+        const stopBtn = card.querySelector('[data-stop-app]');
+
+        if (session.status === 'ATTACHED' && appUrl && !existingOpenBtn && stopBtn) {
+          const tmp = document.createElement('div');
+          tmp.innerHTML = '<button class="active-open-btn" data-open-url="' + escape(appUrl) + '"'
+            + ' title="Open App in Browser" aria-label="Open ' + escape(appName) + ' in browser">'
+            + '&#8599; Open App</button>';
+          stopBtn.parentNode.insertBefore(tmp.firstChild, stopBtn);
+        } else if (session.status !== 'ATTACHED' && existingOpenBtn) {
+          existingOpenBtn.remove();
+        }
+      }
     }
 
     function refreshAppListSection() {
       const filtered = state.apps.filter(app =>
         !state.searchQuery || app.name.toLowerCase().includes(state.searchQuery.toLowerCase())
       );
-      const started = filtered.filter(a => a.state === 'started');
-      const stopped = filtered.filter(a => a.state === 'stopped');
+      const started = filtered.filter(a => a.state === 'started').sort((a, b) => a.name.localeCompare(b.name));
+      const stopped = filtered.filter(a => a.state === 'stopped').sort((a, b) => a.name.localeCompare(b.name));
       const selectedCount = [...state.selectedApps].filter(n =>
         state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
       ).length;
@@ -235,7 +291,7 @@ export function getRendererScriptContent(): string {
 
     function updateActiveCardStatusOnly(appName) {
       const session = state.activeSessions[appName];
-      if (!session || session.status !== 'TUNNELING') return;
+      if (!session) return;
       const cards = document.querySelectorAll('[data-app-name]');
       let card = null;
       for (let i = 0; i < cards.length; i++) {
@@ -244,10 +300,7 @@ export function getRendererScriptContent(): string {
       if (!card) return;
       const statusEl = card.querySelector('.active-card-status');
       if (!statusEl) return;
-      const text = LOADING_MESSAGES[session.msgPhase] || "Connecting...";
-      statusEl.innerHTML =
-        '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>' +
-        '<span class="status-text-anim">' + escape(text) + '</span>';
+      statusEl.innerHTML = getStatusInnerHtml(session);
     }
 
     function renderAppRow(app) {
@@ -278,28 +331,24 @@ export function getRendererScriptContent(): string {
       const filtered = state.apps.filter(app =>
         !state.searchQuery || app.name.toLowerCase().includes(state.searchQuery.toLowerCase())
       );
-      const started = filtered.filter(a => a.state === 'started');
-      const stopped = filtered.filter(a => a.state === 'stopped');
+      const started = filtered.filter(a => a.state === 'started').sort((a, b) => a.name.localeCompare(b.name));
+      const stopped = filtered.filter(a => a.state === 'stopped').sort((a, b) => a.name.localeCompare(b.name));
 
       const selectedCount = [...state.selectedApps].filter(n =>
         state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
       ).length;
 
-      const resetBtn = state.error ? \`
-        <div style="height:6px"></div>
-        <button class="btn btn-secondary" id="btn-reset-login" style="color:var(--vscode-errorForeground)">
-          &#8634; Logout / Re-login
-        </button>
-      \` : '';
-
       return \`
         <div class="step-header">
-          <span class="step-badge">4/4</span>
           <span class="step-title">Debug Launcher</span>
           <button class="gear-btn" id="btn-gear" title="Settings" aria-label="Open settings">&#9881;</button>
         </div>
         <div class="sr-only" aria-live="polite">\${escape(buildLiveStatus())}</div>
-        \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
+        \${state.error ? \`
+          <div class="error-box">\${escape(state.error)}</div>
+          <div style="height:6px"></div>
+          <button class="btn btn-secondary" id="btn-retry-apps" style="margin-bottom:4px">&#8635; Retry</button>
+        \` : ''}
 
         <div id="active-sessions-panel">\${renderActiveSessionsContent()}</div>
 
@@ -333,7 +382,6 @@ export function getRendererScriptContent(): string {
           </button>
           <div style="height:6px"></div>
           <button class="btn btn-secondary" id="btn-remap">&#8592; Change Mapping</button>
-          \${resetBtn}
         </div>
       \`;
     }
@@ -421,6 +469,9 @@ export function getRendererScriptContent(): string {
         </button>
         <div style="height:6px"></div>
         <button class="btn btn-secondary" id="btn-back-settings">&#8592; Back to Launcher</button>
+        <div style="height:6px"></div>
+        <button class="btn btn-secondary" id="btn-logout-settings"
+          style="color:var(--vscode-errorForeground)">&#8634; Logout / Change Region</button>
       \`;
     }
 
@@ -438,6 +489,13 @@ export function getRendererScriptContent(): string {
         state.screen = SCREENS.READY;
         state.error = null;
         render();
+      });
+
+      $('btn-logout-settings')?.addEventListener('click', () => {
+        state.error = null;
+        state.screen = SCREENS.REGION;
+        render();
+        vscode.postMessage({ type: 'RESET_LOGIN' });
       });
 
       $('chk-cache-enabled')?.addEventListener('change', function(e) {

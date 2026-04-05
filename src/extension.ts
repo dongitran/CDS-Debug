@@ -4,12 +4,13 @@ import { initCacheStore } from './storage/cacheStore';
 import { initCacheSync, disposeCacheSync } from './core/cacheSync';
 import { DebugLauncherViewProvider } from './webview/debugPanel';
 import { disposeLogger } from './core/logger';
-import { disposeAllProcesses } from './core/processManager';
+import { disposeAllProcesses, initializeProcessManager } from './core/processManager';
 
 export function activate(context: vscode.ExtensionContext): void {
   initConfigStore(context);
   initCacheStore(context);
   initCacheSync();
+  initializeProcessManager();
 
   const provider = new DebugLauncherViewProvider(context);
   context.subscriptions.push(

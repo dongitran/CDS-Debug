@@ -26,10 +26,16 @@ export function getScript(nonce: string): string {
     const CF_REGIONS = [
       { code: 'us10', name: 'US East (VA)' },
       { code: 'us20', name: 'US West (WA)' },
+      { code: 'us30', name: 'US Central (Iowa)' },
       { code: 'eu10', name: 'Europe (Frankfurt)' },
       { code: 'eu20', name: 'Europe (Amsterdam)' },
+      { code: 'eu30', name: 'Europe (Frankfurt) GCP' },
+      { code: 'ch20', name: 'Switzerland (Zürich)' },
       { code: 'ap10', name: 'Australia (Sydney)' },
       { code: 'ap11', name: 'Singapore' },
+      { code: 'ap12', name: 'South Korea (Seoul)' },
+      { code: 'jp10', name: 'Japan (Tokyo)' },
+      { code: 'in30', name: 'India (Mumbai)' },
       { code: 'br10', name: 'Brazil (São Paulo)' },
       { code: 'ca10', name: 'Canada (Montreal)' },
     ];
@@ -59,7 +65,7 @@ export function getScript(nonce: string): string {
       searchQuery: '',
       error: null,
       activeSessions: {}, // { appName: { status, message, msgPhase, intervalId } }
-      syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 8 },
+      syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 14 },
       cacheConfig: { enabled: true, intervalHours: 4 },
     };
 
@@ -252,9 +258,24 @@ export function getScript(nonce: string): string {
         state.screen = SCREENS.SELECT_ORG; state.error = null; render();
       });
 
-      $('btn-reset-login')?.addEventListener('click', () => {
-        state.error = null; state.screen = SCREENS.REGION; render();
-        vscode.postMessage({ type: 'RESET_LOGIN' });
+      $('btn-retry-apps')?.addEventListener('click', () => {
+        if (!state.selectedOrg) return;
+        state.error = null;
+        state.screen = SCREENS.LOADING_APPS;
+        render();
+        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
+      });
+
+      $('btn-cancel-login')?.addEventListener('click', () => {
+        state.screen = SCREENS.REGION;
+        state.error = null;
+        render();
+      });
+
+      $('btn-cancel-load-apps')?.addEventListener('click', () => {
+        state.screen = state.apps.length > 0 ? SCREENS.READY : SCREENS.SELECT_FOLDER;
+        state.error = null;
+        render();
       });
 
       // Settings screen listeners (defined in webviewRenderers.ts content)
@@ -303,7 +324,8 @@ export function getScript(nonce: string): string {
             }, 1800);
             state.activeSessions[appName].intervalId = tId;
           });
-          break;
+          refreshActiveSessionsPanel();
+          return;
         }
         case 'APP_DEBUG_STATUS': {
           const { appName, status, message } = msg.payload;
@@ -353,7 +375,21 @@ export function getScript(nonce: string): string {
             } else if (cfg.apiEndpoint) {
               state.useCustomEndpoint = true;
             }
-            state.activeSessions = msg.payload.activeSessions ?? {};
+            const restoredSessions = msg.payload.activeSessions ?? {};
+            for (const [appName, session] of Object.entries(restoredSessions)) {
+              if (session.status === 'TUNNELING') {
+                session.msgPhase = session.msgPhase || 0;
+                const tId = setInterval(() => {
+                  if (state.activeSessions[appName]?.status === 'TUNNELING') {
+                    state.activeSessions[appName].msgPhase =
+                      (state.activeSessions[appName].msgPhase + 1) % LOADING_MESSAGES.length;
+                    updateActiveCardStatusOnly(appName);
+                  }
+                }, 1800);
+                session.intervalId = tId;
+              }
+            }
+            state.activeSessions = restoredSessions;
             state.groupFolders = msg.payload.groupFolders ?? [];
             state.orgs = cfg.orgs ?? [];
             state.mappings = cfg.orgGroupMappings;

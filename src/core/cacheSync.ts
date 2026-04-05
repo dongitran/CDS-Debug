@@ -11,10 +11,16 @@ import type { SyncProgress } from '../types/index';
 const SCAN_REGIONS = [
   { code: 'eu10', name: 'Europe (Frankfurt)' },
   { code: 'eu20', name: 'Europe (Amsterdam)' },
+  { code: 'eu30', name: 'Europe (Frankfurt) GCP' },
+  { code: 'ch20', name: 'Switzerland (Zürich)' },
   { code: 'us10', name: 'US East (VA)' },
   { code: 'us20', name: 'US West (WA)' },
+  { code: 'us30', name: 'US Central (Iowa)' },
   { code: 'ap10', name: 'Australia (Sydney)' },
   { code: 'ap11', name: 'Singapore' },
+  { code: 'ap12', name: 'South Korea (Seoul)' },
+  { code: 'jp10', name: 'Japan (Tokyo)' },
+  { code: 'in30', name: 'India (Mumbai)' },
   { code: 'br10', name: 'Brazil (São Paulo)' },
   { code: 'ca10', name: 'Canada (Montreal)' },
 ] as const;
