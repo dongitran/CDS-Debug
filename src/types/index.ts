@@ -73,12 +73,12 @@ export interface SyncProgress {
 
 export interface CacheSettings {
   enabled: boolean;
-  syncIntervalHours: number;
+  intervalHours: number;
 }
 
 export const DEFAULT_CACHE_SETTINGS: CacheSettings = {
   enabled: true,
-  syncIntervalHours: 4,
+  intervalHours: 4,
 };
 
 // Messages from webview → extension

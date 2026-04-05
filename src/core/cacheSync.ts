@@ -24,7 +24,7 @@ export const cacheSyncEvents = new EventEmitter();
 const INITIAL_DELAY_MS = 5_000;
 
 function syncIntervalMs(): number {
-  return getCacheSettings().syncIntervalHours * 60 * 60 * 1000;
+  return getCacheSettings().intervalHours * 60 * 60 * 1000;
 }
 
 // Isolated CF config dir for background sync so it does not disturb the user's
@@ -165,6 +165,12 @@ export function initCacheSync(): void {
     void saveSyncProgress({ ...prev, isRunning: false });
   }
 
+  // Do not set up any timer if the user has disabled background sync.
+  if (!getCacheSettings().enabled) {
+    logInfo('[CacheSync] Background sync is disabled — skipping timer setup.');
+    return;
+  }
+
   const intervalMs = syncIntervalMs();
   const lastCompleted = prev?.lastCompletedAt ?? 0;
   if (Date.now() - lastCompleted >= intervalMs) {
@@ -178,9 +184,12 @@ export function initCacheSync(): void {
 }
 
 // Called after the user saves cache settings. Restarts the periodic timer with the
-// new interval. When the user disables caching, also signals any in-progress sync
-// to abort at the next checkpoint — doSync() will not update lastCompletedAt so
-// the next VS Code start correctly treats the cache as stale.
+// new interval.
+//   Disabling: clears the timer and aborts any in-progress sync. doSync() will not
+//     update lastCompletedAt, so the next VS Code start treats the cache as stale.
+//   Enabling / changing interval: resets abortRequested so a sync that was mid-abort
+//     is not killed, starts a fresh timer, and triggers an immediate sync if the
+//     cache is already stale under the new interval.
 export function restartCacheSyncTimer(): void {
   if (_timer !== undefined) {
     clearInterval(_timer);
@@ -188,13 +197,21 @@ export function restartCacheSyncTimer(): void {
   }
   const settings = getCacheSettings();
   if (!settings.enabled) {
-    // Abort the running sync if there is one. doSync() checks shouldAbort()
-    // between orgs and resets _sync.abortRequested = false at its next start,
-    // so re-enabling later works without any extra reset here.
     _sync.abortRequested = true;
     return;
   }
-  _timer = setInterval(() => { runCacheSync(); }, settings.syncIntervalHours * 60 * 60 * 1000);
+  // Reset the abort flag so a sync interrupted by a previous disable resumes
+  // correctly when the user re-enables, or an interval change does not kill the
+  // running sync.
+  _sync.abortRequested = false;
+  const intervalMs = settings.intervalHours * 60 * 60 * 1000;
+  _timer = setInterval(() => { runCacheSync(); }, intervalMs);
+  // If cache is stale under the new settings, run immediately (mirrors initCacheSync).
+  const prev = getSyncProgress();
+  const lastCompleted = prev?.lastCompletedAt ?? 0;
+  if (Date.now() - lastCompleted >= intervalMs) {
+    setTimeout(() => { runCacheSync(); }, INITIAL_DELAY_MS);
+  }
 }
 
 export function disposeCacheSync(): void {

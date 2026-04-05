@@ -346,7 +346,9 @@ export function getRendererScriptContent(): string {
       if (mins < 1) return 'Just now';
       if (mins < 60) return mins + ' minute' + (mins === 1 ? '' : 's') + ' ago';
       const hrs = Math.round(mins / 60);
-      return hrs + ' hour' + (hrs === 1 ? '' : 's') + ' ago';
+      if (hrs < 24) return hrs + ' hour' + (hrs === 1 ? '' : 's') + ' ago';
+      const days = Math.round(hrs / 24);
+      return days + ' day' + (days === 1 ? '' : 's') + ' ago';
     }
 
     function renderSettings() {
@@ -415,7 +417,7 @@ export function getRendererScriptContent(): string {
         \${statusRow}
         <div style="height:10px"></div>
         <button class="btn btn-secondary" id="btn-trigger-sync" \${!c.enabled || s.isRunning ? 'disabled' : ''}>
-          \${s.isRunning ? '&#8987; Syncing\u2026' : '&#8635; Sync Now'}
+          \${c.enabled && s.isRunning ? '&#8987; Syncing\u2026' : '&#8635; Sync Now'}
         </button>
         <div style="height:6px"></div>
         <button class="btn btn-secondary" id="btn-back-settings">&#8592; Back to Launcher</button>
