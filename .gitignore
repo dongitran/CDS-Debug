@@ -3,4 +3,4 @@ dist/
 *.vsix
 .env
 coverage/
-sample/note.md
+sample/
