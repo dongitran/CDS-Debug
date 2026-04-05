@@ -6,9 +6,6 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    labels:
-      - "dependencies"
-      - "github-actions"
 
   # Keep npm/pnpm dependencies up-to-date
   - package-ecosystem: "npm"
@@ -16,7 +13,4 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    labels:
-      - "dependencies"
-    # Only open PRs for security updates to avoid noise
     open-pull-requests-limit: 5
