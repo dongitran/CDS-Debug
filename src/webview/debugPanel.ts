@@ -1,14 +1,13 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import type { ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
-import { CACHE_TTL_MS } from '../types/index';
+import type { CacheSettings, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
 import { cfLogin, cfOrgs, cfTargetAndApps } from '../core/cfClient';
 import { findGroupFolders, findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
 import { mergeLaunchJson } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
-import { getCachedApps } from '../storage/cacheStore';
-import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress } from '../core/cacheSync';
+import { getCachedApps, getCacheSettings, saveCacheSettings } from '../storage/cacheStore';
+import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
 import { startTunnelAndAttach, stopProcess, debugProcessEvents, getActiveSessions } from '../core/processManager';
@@ -110,6 +109,18 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       case 'TRIGGER_SYNC':
         runCacheSync();
         break;
+
+      case 'GET_CACHE_CONFIG':
+        this.post({ type: 'CACHE_CONFIG', payload: getCacheSettings() });
+        break;
+
+      case 'SAVE_CACHE_CONFIG': {
+        const settings: CacheSettings = raw.payload;
+        await saveCacheSettings(settings);
+        restartCacheSyncTimer();
+        this.post({ type: 'CACHE_CONFIG', payload: settings });
+        break;
+      }
     }
   }
 
@@ -199,14 +210,18 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Serve from background cache when available and fresh (< 4h old).
-    const cached = getCachedApps(config.apiEndpoint, org);
-    if (cached) {
-      const ageMs = Date.now() - cached.cachedAt;
-      if (ageMs < CACHE_TTL_MS) {
-        logInfo(`Apps served from cache for org: ${org} (${Math.floor(ageMs / 60_000).toString()}m old).`);
-        this.post({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
-        return;
+    // Serve from background cache when enabled and fresh (within configured interval).
+    const cacheSettings = getCacheSettings();
+    if (cacheSettings.enabled) {
+      const cached = getCachedApps(config.apiEndpoint, org);
+      if (cached) {
+        const ageMs = Date.now() - cached.cachedAt;
+        const ttlMs = cacheSettings.syncIntervalHours * 60 * 60 * 1000;
+        if (ageMs < ttlMs) {
+          logInfo(`Apps served from cache for org: ${org} (${Math.floor(ageMs / 60_000).toString()}m old).`);
+          this.post({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
+          return;
+        }
       }
     }
 

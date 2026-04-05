@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { cfLogin, cfOrgs, cfTarget, cfApps } from './cfClient';
-import { saveCachedApps, saveCachedOrgs, getSyncProgress, saveSyncProgress } from '../storage/cacheStore';
+import { saveCachedApps, saveCachedOrgs, getSyncProgress, saveSyncProgress, getCacheSettings } from '../storage/cacheStore';
 import { logInfo, logWarn, logError } from './logger';
 import type { SyncProgress } from '../types/index';
 
@@ -21,8 +21,11 @@ const SCAN_REGIONS = [
 
 export const cacheSyncEvents = new EventEmitter();
 
-const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const INITIAL_DELAY_MS = 5_000;
+
+function syncIntervalMs(): number {
+  return getCacheSettings().syncIntervalHours * 60 * 60 * 1000;
+}
 
 // Isolated CF config dir for background sync so it does not disturb the user's
 // interactive CF session stored in the default ~/.cf directory.
@@ -51,6 +54,11 @@ async function doSync(): Promise<void> {
     return;
   }
 
+  if (!getCacheSettings().enabled) {
+    logInfo('[CacheSync] Cache sync disabled in settings — skipping.');
+    return;
+  }
+
   const email = process.env.SAP_EMAIL ?? '';
   const password = process.env.SAP_PASSWORD ?? '';
   if (!email || !password) {
@@ -69,9 +77,11 @@ async function doSync(): Promise<void> {
   pushStatus(progress);
   logInfo(`[CacheSync] Starting sync across ${total.toString()} regions…`);
 
+  let aborted = false;
   for (const region of SCAN_REGIONS) {
     if (shouldAbort()) {
       logInfo('[CacheSync] Abort requested — stopping early.');
+      aborted = true;
       break;
     }
 
@@ -114,13 +124,12 @@ async function doSync(): Promise<void> {
     pushStatus(progress);
   }
 
-  const final: SyncProgress = {
-    isRunning: false,
-    startedAt,
-    lastCompletedAt: Date.now(),
-    done: progress.done,
-    total,
-  };
+  // Only record lastCompletedAt when all regions were scanned. An aborted sync
+  // must not update this timestamp — otherwise initCacheSync() would think the
+  // cache is fresh on the next VS Code start and skip the auto-run.
+  const final: SyncProgress = aborted
+    ? { isRunning: false, startedAt, done: progress.done, total }
+    : { isRunning: false, startedAt, lastCompletedAt: Date.now(), done: progress.done, total };
   await saveSyncProgress(final);
   pushStatus(final);
   _sync.isSyncing = false;
@@ -156,15 +165,36 @@ export function initCacheSync(): void {
     void saveSyncProgress({ ...prev, isRunning: false });
   }
 
+  const intervalMs = syncIntervalMs();
   const lastCompleted = prev?.lastCompletedAt ?? 0;
-  if (Date.now() - lastCompleted >= SYNC_INTERVAL_MS) {
+  if (Date.now() - lastCompleted >= intervalMs) {
     // Cache is stale (or never populated). Run after a short delay so activation
     // finishes first and the extension is fully ready before CF CLI is invoked.
     setTimeout(() => { runCacheSync(); }, INITIAL_DELAY_MS);
   }
 
-  // Recurring sync every 4 hours.
-  _timer = setInterval(() => { runCacheSync(); }, SYNC_INTERVAL_MS);
+  // Recurring sync on configured interval.
+  _timer = setInterval(() => { runCacheSync(); }, intervalMs);
+}
+
+// Called after the user saves cache settings. Restarts the periodic timer with the
+// new interval. When the user disables caching, also signals any in-progress sync
+// to abort at the next checkpoint — doSync() will not update lastCompletedAt so
+// the next VS Code start correctly treats the cache as stale.
+export function restartCacheSyncTimer(): void {
+  if (_timer !== undefined) {
+    clearInterval(_timer);
+    _timer = undefined;
+  }
+  const settings = getCacheSettings();
+  if (!settings.enabled) {
+    // Abort the running sync if there is one. doSync() checks shouldAbort()
+    // between orgs and resets _sync.abortRequested = false at its next start,
+    // so re-enabling later works without any extra reset here.
+    _sync.abortRequested = true;
+    return;
+  }
+  _timer = setInterval(() => { runCacheSync(); }, settings.syncIntervalHours * 60 * 60 * 1000);
 }
 
 export function disposeCacheSync(): void {

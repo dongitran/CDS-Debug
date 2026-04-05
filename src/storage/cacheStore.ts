@@ -1,8 +1,10 @@
 import type * as vscode from 'vscode';
-import type { CfApp, CfRegionCache, SyncProgress } from '../types/index';
+import type { CacheSettings, CfApp, CfRegionCache, SyncProgress } from '../types/index';
+import { DEFAULT_CACHE_SETTINGS } from '../types/index';
 
 const CACHE_KEY = 'cds-debug.appCache';
 const SYNC_KEY = 'cds-debug.syncProgress';
+const SETTINGS_KEY = 'cds-debug.cacheSettings';
 
 let _context: vscode.ExtensionContext | undefined;
 
@@ -50,4 +52,12 @@ export function getSyncProgress(): SyncProgress | undefined {
 
 export async function saveSyncProgress(progress: SyncProgress): Promise<void> {
   await ctx().globalState.update(SYNC_KEY, progress);
+}
+
+export function getCacheSettings(): CacheSettings {
+  return ctx().globalState.get<CacheSettings>(SETTINGS_KEY) ?? { ...DEFAULT_CACHE_SETTINGS };
+}
+
+export async function saveCacheSettings(settings: CacheSettings): Promise<void> {
+  await ctx().globalState.update(SETTINGS_KEY, settings);
 }

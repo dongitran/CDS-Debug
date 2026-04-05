@@ -351,39 +351,70 @@ export function getRendererScriptContent(): string {
 
     function renderSettings() {
       const s = state.syncStatus;
+      const c = state.cacheConfig;
+      const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
       const progressText = s.isRunning
         ? (s.currentOrg
-          ? 'Scanning ' + escape(s.currentRegion || '') + ' / ' + escape(s.currentOrg) + ' (' + s.done + '/' + s.total + ')...'
+          ? 'Scanning ' + escape(s.currentRegion || '') + ' / ' + escape(s.currentOrg) + ' (' + s.done + '/' + s.total + ' \u00b7 ' + pct + '%)'
           : s.currentRegion
-            ? 'Logging into ' + escape(s.currentRegion) + ' (' + s.done + '/' + s.total + ')...'
+            ? 'Logging into ' + escape(s.currentRegion) + ' (' + s.done + '/' + s.total + ' \u00b7 ' + pct + '%)'
             : 'Initializing...')
         : '';
+
+      const intervalOptions = [1, 2, 4, 8].map(function(h) {
+        const sel = c.intervalHours === h ? ' selected' : '';
+        const label = h + ' hour' + (h === 1 ? '' : 's') + (h === 4 ? ' (default)' : '');
+        return '<option value="' + h + '"' + sel + '>' + label + '</option>';
+      }).join('');
+
+      let statusRow;
+      if (!c.enabled && s.isRunning) {
+        // Brief window between user saving "disabled" and doSync() reaching its next
+        // shouldAbort() checkpoint. Show a spinner so the user knows it's stopping.
+        statusRow = '<div class="sync-status-row running"><span class="spinner" style="width:11px;height:11px;border-width:1.5px;margin-right:6px"></span><span>Stopping sync\u2026</span></div>';
+      } else if (!c.enabled) {
+        statusRow = '<div class="sync-status-row"><span style="color:var(--vscode-descriptionForeground);margin-right:4px">&#9632;</span><span>Caching disabled</span></div>';
+      } else if (s.isRunning) {
+        statusRow = \`
+          <div class="sync-status-row running">
+            <span class="spinner" style="width:11px;height:11px;border-width:1.5px;margin-right:6px"></span>
+            <span>\${escape(progressText)}</span>
+          </div>
+        \`;
+      } else {
+        statusRow = \`
+          <div class="sync-status-row">
+            <span style="color:var(--vscode-testing-iconPassed);margin-right:4px">&#9679;</span>
+            <span>Last sync: <strong>\${escape(formatSyncTime(s.lastCompletedAt))}</strong></span>
+          </div>
+        \`;
+      }
 
       return \`
         <div class="step-header">
           <span class="step-title">Settings</span>
         </div>
 
-        <div class="section-label">Background Cache Sync</div>
-        <div class="info-box" style="margin-bottom:10px">
-          CF apps are cached every 4 hours across all regions.
-          When a cache hit is found (&lt;4h old), the app list loads instantly.
-        </div>
+        <div class="section-label">App Cache</div>
 
-        \${s.isRunning ? \`
-          <div class="sync-status-row running">
-            <span class="spinner" style="width:11px;height:11px;border-width:1.5px;margin-right:6px"></span>
-            <span>\${escape(progressText)}</span>
-          </div>
-        \` : \`
-          <div class="sync-status-row">
-            <span style="color:var(--vscode-testing-iconPassed);margin-right:4px">&#9679;</span>
-            <span>Last sync: <strong>\${escape(formatSyncTime(s.lastCompletedAt))}</strong></span>
-          </div>
-        \`}
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:10px;font-size:13px">
+          <input type="checkbox" id="chk-cache-enabled" \${c.enabled ? 'checked' : ''} />
+          <span>Enable background sync</span>
+        </label>
+
+        <div class="radio-desc" style="margin-bottom:4px">Sync interval</div>
+        <select class="select" id="select-interval" \${!c.enabled ? 'disabled' : ''}>
+          \${intervalOptions}
+        </select>
 
         <div style="height:10px"></div>
-        <button class="btn" id="btn-trigger-sync" \${s.isRunning ? 'disabled' : ''}>
+        <button class="btn" id="btn-save-cache-settings">Save Settings</button>
+
+        <div class="divider" style="margin:12px 0"></div>
+
+        \${statusRow}
+        <div style="height:10px"></div>
+        <button class="btn btn-secondary" id="btn-trigger-sync" \${!c.enabled || s.isRunning ? 'disabled' : ''}>
           \${s.isRunning ? '&#8987; Syncing\u2026' : '&#8635; Sync Now'}
         </button>
         <div style="height:6px"></div>
@@ -397,6 +428,7 @@ export function getRendererScriptContent(): string {
       $('btn-gear')?.addEventListener('click', () => {
         state.screen = SCREENS.SETTINGS;
         vscode.postMessage({ type: 'GET_SYNC_STATUS' });
+        vscode.postMessage({ type: 'GET_CACHE_CONFIG' });
         render();
       });
 
@@ -406,8 +438,23 @@ export function getRendererScriptContent(): string {
         render();
       });
 
+      $('chk-cache-enabled')?.addEventListener('change', function(e) {
+        const selectEl = document.getElementById('select-interval');
+        if (selectEl) selectEl.disabled = !e.target.checked;
+      });
+
+      $('btn-save-cache-settings')?.addEventListener('click', () => {
+        const enabled = !!document.getElementById('chk-cache-enabled')?.checked;
+        const selectEl = document.getElementById('select-interval');
+        const intervalHours = parseInt(selectEl?.value || '4', 10);
+        vscode.postMessage({ type: 'SAVE_CACHE_CONFIG', payload: { enabled, intervalHours } });
+        // Optimistic update so the status row reflects the new enabled state immediately.
+        state.cacheConfig = { enabled, intervalHours };
+        render();
+      });
+
       $('btn-trigger-sync')?.addEventListener('click', () => {
-        if (state.syncStatus.isRunning) return;
+        if (state.syncStatus.isRunning || !state.cacheConfig.enabled) return;
         vscode.postMessage({ type: 'TRIGGER_SYNC' });
         // Optimistically mark as running so the button disables immediately.
         state.syncStatus = { ...state.syncStatus, isRunning: true };

@@ -71,6 +71,16 @@ export interface SyncProgress {
   total: number;
 }
 
+export interface CacheSettings {
+  enabled: boolean;
+  syncIntervalHours: number;
+}
+
+export const DEFAULT_CACHE_SETTINGS: CacheSettings = {
+  enabled: true,
+  syncIntervalHours: 4,
+};
+
 // Messages from webview → extension
 export type WebviewMessage =
   | { type: 'SELECT_ROOT_FOLDER' }
@@ -83,7 +93,9 @@ export type WebviewMessage =
   | { type: 'LOAD_CONFIG' }
   | { type: 'RESET_LOGIN' }
   | { type: 'TRIGGER_SYNC' }
-  | { type: 'GET_SYNC_STATUS' };
+  | { type: 'GET_SYNC_STATUS' }
+  | { type: 'GET_CACHE_CONFIG' }
+  | { type: 'SAVE_CACHE_CONFIG'; payload: CacheSettings };
 
 // Messages from extension → webview
 export type ExtensionMessage =
@@ -97,4 +109,5 @@ export type ExtensionMessage =
   | { type: 'APP_DEBUG_STATUS'; payload: { appName: string; status: string; message?: string } }
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
   | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; groupFolders: string[]; activeSessions: Record<string, { status: string; message?: string }> } }
-  | { type: 'SYNC_STATUS'; payload: SyncProgress };
+  | { type: 'SYNC_STATUS'; payload: SyncProgress }
+  | { type: 'CACHE_CONFIG'; payload: CacheSettings };

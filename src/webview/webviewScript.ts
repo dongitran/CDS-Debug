@@ -60,6 +60,7 @@ export function getScript(nonce: string): string {
       error: null,
       activeSessions: {}, // { appName: { status, message, msgPhase, intervalId } }
       syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 8 },
+      cacheConfig: { enabled: true, intervalHours: 4 },
     };
 
     // === UTILS ===
@@ -334,6 +335,10 @@ export function getScript(nonce: string): string {
           state.syncStatus = msg.payload;
           // Only re-render if the user is on the settings screen; otherwise
           // the updated status will be picked up next time they open settings.
+          if (state.screen === SCREENS.SETTINGS) render();
+          return;
+        case 'CACHE_CONFIG':
+          state.cacheConfig = msg.payload;
           if (state.screen === SCREENS.SETTINGS) render();
           return;
         case 'CONFIG_LOADED': {
