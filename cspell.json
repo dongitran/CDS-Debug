@@ -80,6 +80,7 @@
     "shellenv",
     "launchd",
     "zprofile",
-    "dotfiles"
+    "dotfiles",
+    "untargeted"
   ]
 }

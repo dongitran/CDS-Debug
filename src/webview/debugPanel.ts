@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { CacheSettings, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
 import { DEFAULT_CACHE_SETTINGS } from '../types/index';
-import { cfLogin, cfOrgs, cfTargetAndApps } from '../core/cfClient';
+import { cfLogin, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
 import { mergeLaunchJson } from '../core/launchConfigurator';
@@ -238,6 +238,18 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
 
     logInfo(`Starting debug for ${appNames.length.toString()} app(s): ${appNames.join(', ')}`);
+
+    // Always target the org before spawning cds debug. handleLoadApps may have
+    // served apps from cache without calling cfTarget, leaving ~/.cf untargeted.
+    // cds debug uses cf ssh internally which requires an active org/space target.
+    try {
+      await cfTarget(org);
+    } catch (err: unknown) {
+      const msg = extractErrorMessage(err);
+      logError(`Failed to target org ${org}: ${msg}`);
+      this.post({ type: 'DEBUG_ERROR', payload: { message: `CF target failed: ${msg}` } });
+      return;
+    }
 
     this.post({ type: 'DEBUG_CONNECTING', payload: { appNames } });
 
