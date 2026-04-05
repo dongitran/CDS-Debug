@@ -143,7 +143,8 @@ export function getRendererScriptContent(): string {
     function renderActiveCard(appName) {
       const session = state.activeSessions[appName];
       const appInfo = state.apps.find(a => a.name === appName);
-      const appUrl = (appInfo && appInfo.urls && appInfo.urls.length > 0) ? 'https://' + appInfo.urls[0] : '';
+      const rawUrl = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
+      const appUrl = rawUrl ? (rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl) : '';
 
       const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
         <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
@@ -219,8 +220,8 @@ export function getRendererScriptContent(): string {
 
         // Handle open button visibility for ATTACHED state
         const appInfo = state.apps.find(function(a) { return a.name === appName; });
-        const appUrl = (appInfo && appInfo.urls && appInfo.urls.length > 0)
-          ? 'https://' + appInfo.urls[0] : '';
+        const rawUrl2 = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
+        const appUrl = rawUrl2 ? (rawUrl2.startsWith('http://') || rawUrl2.startsWith('https://') ? rawUrl2 : 'https://' + rawUrl2) : '';
         const existingOpenBtn = card.querySelector('[data-open-url]');
         const stopBtn = card.querySelector('[data-stop-app]');
 
@@ -282,16 +283,21 @@ export function getRendererScriptContent(): string {
 
     function renderAppRow(app) {
       const isActive = !!state.activeSessions[app.name];
-      const isDisabled = app.state === 'stopped' || isActive;
+      const isStopped = app.state === 'stopped';
+      const isDisabled = isStopped || isActive;
       const isChecked = state.selectedApps.has(app.name) && !isActive;
+      const rowClass = isActive ? 'in-debug' : (isStopped ? 'stopped' : '');
+      const badge = isActive
+        ? \`<span class="badge badge-debug">debugging</span>\`
+        : \`<span class="badge badge-\${app.state}">\${app.state}</span>\`;
       return \`
-        <label class="app-row \${isDisabled ? 'stopped' : ''}">
+        <label class="app-row \${rowClass}">
           <input type="checkbox" data-app="\${escape(app.name)}"
             aria-label="Select \${escape(app.name)} for debug"
             \${isChecked ? 'checked' : ''}
             \${isDisabled ? 'disabled' : ''} />
           <span class="app-name" title="\${escape(app.name)}">\${escape(app.name)}</span>
-          <span class="badge badge-\${app.state}">\${app.state}</span>
+          \${badge}
         </label>
       \`;
     }

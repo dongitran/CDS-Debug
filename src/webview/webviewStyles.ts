@@ -10,6 +10,7 @@ export function getStyles(): string {
       background: var(--vscode-sideBar-background);
       padding: 12px;
       min-height: 100vh;
+      overflow-x: hidden;
     }
 
     h2 {
@@ -121,7 +122,7 @@ export function getStyles(): string {
       grid-column: 1 / -1;
     }
 
-    .app-list { display: flex; flex-direction: column; gap: 2px; max-height: 400px; overflow-y: auto; padding-right: 2px; }
+    .app-list { display: flex; flex-direction: column; gap: 2px; max-height: calc(100vh - 320px); min-height: 120px; overflow-y: auto; padding-right: 2px; }
     .app-row {
       display: flex;
       align-items: center;
@@ -131,8 +132,9 @@ export function getStyles(): string {
       cursor: pointer;
       transition: background 0.1s;
     }
-    .app-row:hover:not(.stopped) { background: var(--vscode-list-hoverBackground); }
+    .app-row:hover:not(.stopped):not(.in-debug) { background: var(--vscode-list-hoverBackground); }
     .app-row.stopped { opacity: 0.5; cursor: not-allowed; }
+    .app-row.in-debug { cursor: default; opacity: 0.75; }
     .app-name {
       flex: 1;
       font-size: 12px;
@@ -150,6 +152,7 @@ export function getStyles(): string {
     }
     .badge-started { background: #2d7d46; color: #fff; }
     .badge-stopped { background: #6e6e6e; color: #fff; }
+    .badge-debug { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 
     .divider { height: 1px; background: var(--vscode-panel-border); margin: 12px 0; }
 
@@ -322,7 +325,11 @@ export function getStyles(): string {
       color: var(--vscode-descriptionForeground);
       display: flex;
       align-items: center;
+      min-width: 0;
       white-space: nowrap;
+      overflow: hidden;
+    }
+    .active-card-status > span:last-child {
       overflow: hidden;
       text-overflow: ellipsis;
     }
@@ -395,6 +402,11 @@ export function getStyles(): string {
       clip: rect(0, 0, 0, 0);
       white-space: nowrap;
       border: 0;
+    }
+
+    @media (max-width: 260px) {
+      .region-grid { grid-template-columns: 1fr; }
+      .region-card-custom { grid-column: 1; }
     }
   `;
 }
