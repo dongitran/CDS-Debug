@@ -189,6 +189,7 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
         if (success) {
           sessionStates.set(appName, { status: 'ATTACHED' });
           debugProcessEvents.emit('statusChanged', { appName, status: 'ATTACHED' });
+          void vscode.window.showInformationMessage(`CDS Debug: debugger attached to ${appName}`);
         } else {
           sessionStates.set(appName, { status: 'ERROR', message: 'Failed to start VS Code debugging.' });
           debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: 'Failed to start VS Code debugging.' });
@@ -222,6 +223,13 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
     sessionStates.set(appName, { status: 'ERROR', message: err.message });
     debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: err.message });
   });
+}
+
+export function stopAllProcesses(): void {
+  const appNames = Array.from(sessionStates.keys());
+  for (const appName of appNames) {
+    stopProcess(appName);
+  }
 }
 
 export function disposeAllProcesses(): void {

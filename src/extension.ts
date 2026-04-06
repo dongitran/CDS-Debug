@@ -4,7 +4,7 @@ import { initCacheStore } from './storage/cacheStore';
 import { initCacheSync, disposeCacheSync } from './core/cacheSync';
 import { DebugLauncherViewProvider } from './webview/debugPanel';
 import { disposeLogger } from './core/logger';
-import { disposeAllProcesses, initializeProcessManager } from './core/processManager';
+import { disposeAllProcesses, initializeProcessManager, stopAllProcesses } from './core/processManager';
 
 export function activate(context: vscode.ExtensionContext): void {
   initConfigStore(context);
@@ -26,6 +26,13 @@ export function activate(context: vscode.ExtensionContext): void {
           'CDS Debug: configuration reset. Reload the panel to start over.',
         );
       });
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cdsDebug.stopAllSessions', () => {
+      stopAllProcesses();
+      void vscode.window.showInformationMessage('CDS Debug: all debug sessions stopped.');
     }),
   );
 }

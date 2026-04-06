@@ -114,7 +114,13 @@ export function getStyles(): string {
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
     }
-    .region-card input[type=radio] { display: none; }
+    .region-card input[type=radio] {
+      position: absolute;
+      opacity: 0;
+      width: 1px;
+      height: 1px;
+      pointer-events: none;
+    }
     .region-code { font-size: 13px; font-weight: 700; font-family: var(--vscode-editor-font-family); }
     .region-name { font-size: 10px; color: var(--vscode-descriptionForeground); }
     .region-card.selected .region-name { color: inherit; opacity: 0.8; }
@@ -150,8 +156,16 @@ export function getStyles(): string {
       white-space: nowrap;
       flex-shrink: 0;
     }
-    .badge-started { background: #2d7d46; color: #fff; }
-    .badge-stopped { background: #6e6e6e; color: #fff; }
+    .badge-started {
+      background: transparent;
+      border: 1px solid var(--vscode-testing-iconPassed);
+      color: var(--vscode-testing-iconPassed);
+    }
+    .badge-stopped {
+      background: transparent;
+      border: 1px solid var(--vscode-descriptionForeground);
+      color: var(--vscode-descriptionForeground);
+    }
     .badge-debug { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 
     .divider { height: 1px; background: var(--vscode-panel-border); margin: 12px 0; }
@@ -282,7 +296,13 @@ export function getStyles(): string {
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
     }
-    .org-item input[type=radio] { display: none; }
+    .org-item input[type=radio] {
+      position: absolute;
+      opacity: 0;
+      width: 1px;
+      height: 1px;
+      pointer-events: none;
+    }
     .org-item-name {
       font-family: var(--vscode-editor-font-family);
       font-size: 12px;
@@ -402,6 +422,63 @@ export function getStyles(): string {
       clip: rect(0, 0, 0, 0);
       white-space: nowrap;
       border: 0;
+    }
+
+    .active-card-port {
+      font-size: 10px;
+      font-family: var(--vscode-editor-font-family);
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.8;
+      margin-left: 4px;
+    }
+
+    .select-all-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 6px;
+      margin-bottom: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      border-radius: 4px;
+    }
+    .select-all-row:hover { background: var(--vscode-list-hoverBackground); color: var(--vscode-foreground); }
+    .select-all-row input[type=checkbox] { cursor: pointer; }
+
+    .stop-all-btn {
+      display: block;
+      width: 100%;
+      padding: 4px 8px;
+      margin-bottom: 6px;
+      background: transparent;
+      border: 1px solid var(--vscode-testing-iconFailed);
+      color: var(--vscode-testing-iconFailed);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-family: var(--vscode-font-family);
+      text-align: center;
+      transition: all 0.2s;
+    }
+    .stop-all-btn:hover {
+      background: var(--vscode-testing-iconFailed);
+      color: white;
+    }
+
+    .progress-bar-wrap {
+      height: 4px;
+      background: var(--vscode-progressBar-background, var(--vscode-panel-border));
+      border-radius: 2px;
+      overflow: hidden;
+      margin: 6px 0 4px;
+      opacity: 0.5;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--vscode-button-background);
+      border-radius: 2px;
+      transition: width 0.4s ease;
     }
 
     @media (max-width: 260px) {

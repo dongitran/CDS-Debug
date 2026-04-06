@@ -11,7 +11,7 @@ import { getCachedApps, getCacheSettings, saveCacheSettings } from '../storage/c
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
-import { startTunnelAndAttach, stopProcess, debugProcessEvents, getActiveSessions } from '../core/processManager';
+import { startTunnelAndAttach, stopProcess, stopAllProcesses, debugProcessEvents, getActiveSessions } from '../core/processManager';
 
 export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'cdsDebug.mainView';
@@ -88,6 +88,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       case 'STOP_DEBUG':
         stopProcess(raw.payload.appName);
+        break;
+
+      case 'STOP_ALL_DEBUG':
+        stopAllProcesses();
         break;
         
       case 'OPEN_APP_URL':
@@ -251,8 +255,6 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    this.post({ type: 'DEBUG_CONNECTING', payload: { appNames } });
-
     const groupPath = mapping.groupFolderPath;
 
     const resolvedPaths: string[] = [];
@@ -299,6 +301,12 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     await mergeLaunchJson(workspaceRoot, targets);
     logInfo(`Updated .vscode/launch.json with ${targets.length.toString()} config(s).`);
+
+    const ports: Record<string, number> = {};
+    for (const target of targets) {
+      ports[target.appName] = target.port;
+    }
+    this.post({ type: 'DEBUG_CONNECTING', payload: { appNames: targets.map((t) => t.appName), ports } });
 
     for (const target of targets) {
       const launchConfigName = `Debug: ${target.appName}`;

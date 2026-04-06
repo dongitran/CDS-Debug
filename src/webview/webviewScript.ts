@@ -234,6 +234,28 @@ export function getScript(nonce: string): string {
         });
       }
 
+      $('btn-stop-all-sessions')?.addEventListener('click', () => {
+        vscode.postMessage({ type: 'STOP_ALL_DEBUG' });
+      });
+
+      $('btn-refresh-apps')?.addEventListener('click', () => {
+        if (!state.selectedOrg) return;
+        state.error = null;
+        state.screen = SCREENS.LOADING_APPS;
+        render();
+        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
+      });
+
+      $('chk-select-all')?.addEventListener('change', function(e) {
+        const selectableStarted = state.apps.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
+        if (e.target.checked) {
+          selectableStarted.forEach(a => state.selectedApps.add(a.name));
+        } else {
+          selectableStarted.forEach(a => state.selectedApps.delete(a.name));
+        }
+        refreshAppListSection();
+      });
+
       $('btn-start-debug')?.addEventListener('click', () => {
         const appNames = [...state.selectedApps].filter(
           n => state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
@@ -303,7 +325,8 @@ export function getScript(nonce: string): string {
           break;
         case 'DEBUG_CONNECTING': {
           msg.payload.appNames.forEach(appName => {
-            state.activeSessions[appName] = { status: 'TUNNELING', msgPhase: 0 };
+            const port = (msg.payload.ports || {})[appName];
+            state.activeSessions[appName] = { status: 'TUNNELING', msgPhase: 0, port };
             const tId = setInterval(() => {
               if (state.activeSessions[appName]?.status === 'TUNNELING') {
                 state.activeSessions[appName].msgPhase =

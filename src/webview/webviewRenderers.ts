@@ -145,18 +145,19 @@ export function getRendererScriptContent(): string {
       const appInfo = state.apps.find(a => a.name === appName);
       const rawUrl = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
       const appUrl = rawUrl ? (rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl) : '';
+      const portText = session.port ? '<span class="active-card-port">:' + session.port + '</span>' : '';
 
       const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
         <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
           title="Open App in Browser" aria-label="Open \${escape(appName)} in browser">
-          &#8599; Open App
+          &#8599; Open
         </button>
       \` : '';
 
       return \`
         <div class="active-card" data-app-name="\${escape(appName)}">
           <div class="active-card-main">
-            <div class="active-card-title" title="\${escape(appName)}">\${escape(appName)}</div>
+            <div class="active-card-title" title="\${escape(appName)}">\${escape(appName)}\${portText}</div>
             <div class="active-card-status">\${getStatusInnerHtml(session)}</div>
           </div>
           \${openBtn}
@@ -169,10 +170,16 @@ export function getRendererScriptContent(): string {
     function renderActiveSessionsContent() {
       const activeAppNames = Object.keys(state.activeSessions);
       if (activeAppNames.length === 0) return '';
+      const stopAllBtn = activeAppNames.length > 1 ? \`
+        <button class="stop-all-btn" id="btn-stop-all-sessions" aria-label="Stop all debug sessions">
+          &#9632; Stop All Sessions (\${activeAppNames.length})
+        </button>
+      \` : '';
       return \`
         <div class="section-label" style="display:flex;align-items:center;gap:6px">
           <span style="color:var(--vscode-testing-iconPassed)">&#9679;</span> Active Sessions
         </div>
+        \${stopAllBtn}
         <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
           \${activeAppNames.map(renderActiveCard).join('')}
         </div>
@@ -243,6 +250,7 @@ export function getRendererScriptContent(): string {
       );
       const started = filtered.filter(a => a.state === 'started').sort((a, b) => a.name.localeCompare(b.name));
       const stopped = filtered.filter(a => a.state === 'stopped').sort((a, b) => a.name.localeCompare(b.name));
+      const startedNonActive = state.apps.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
       const selectedCount = [...state.selectedApps].filter(n =>
         state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
       ).length;
@@ -258,12 +266,28 @@ export function getRendererScriptContent(): string {
 
       const footerInfo = document.querySelector('.footer-info');
       if (footerInfo) {
-        footerInfo.textContent = selectedCount + ' service' + (selectedCount !== 1 ? 's' : '') + ' selected';
+        const totalStarted = startedNonActive.length;
+        footerInfo.textContent = totalStarted > 0
+          ? selectedCount + ' / ' + totalStarted + ' selected'
+          : 'No started apps';
       }
       const startBtn = document.getElementById('btn-start-debug');
       if (startBtn) {
         if (selectedCount === 0) startBtn.setAttribute('disabled', '');
         else startBtn.removeAttribute('disabled');
+      }
+
+      // Sync select-all checkbox state
+      const selectAllChk = document.getElementById('chk-select-all');
+      if (selectAllChk) {
+        const selectableStarted = filtered.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
+        const allSelected = selectableStarted.length > 0 && selectableStarted.every(a => state.selectedApps.has(a.name));
+        selectAllChk.checked = allSelected;
+        const label = selectAllChk.closest('label');
+        if (label) {
+          const span = label.querySelector('span');
+          if (span) span.textContent = (allSelected ? 'Deselect all' : 'Select all started') + ' (' + startedNonActive.length + ')';
+        }
       }
     }
 
@@ -317,13 +341,28 @@ export function getRendererScriptContent(): string {
       const started = filtered.filter(a => a.state === 'started').sort((a, b) => a.name.localeCompare(b.name));
       const stopped = filtered.filter(a => a.state === 'stopped').sort((a, b) => a.name.localeCompare(b.name));
 
+      const startedNonActive = state.apps.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
+      const selectableStarted = filtered.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
       const selectedCount = [...state.selectedApps].filter(n =>
         state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
       ).length;
+      const allSelected = selectableStarted.length > 0 && selectableStarted.every(a => state.selectedApps.has(a.name));
+      const selectAllRow = startedNonActive.length > 0 ? \`
+        <label class="select-all-row">
+          <input type="checkbox" id="chk-select-all" \${allSelected ? 'checked' : ''} />
+          <span>\${allSelected ? 'Deselect all' : 'Select all started'} (\${startedNonActive.length})</span>
+        </label>
+      \` : '';
+
+      const totalStarted = startedNonActive.length;
+      const countLabel = totalStarted > 0
+        ? selectedCount + ' / ' + totalStarted + ' selected'
+        : 'No started apps';
 
       return \`
         <div class="step-header">
           <span class="step-title">Debug Launcher</span>
+          <button class="gear-btn" id="btn-refresh-apps" title="Refresh app list" aria-label="Refresh apps" style="font-size:13px">&#8635;</button>
           <button class="gear-btn" id="btn-gear" title="Settings" aria-label="Open settings">&#9881;</button>
         </div>
         <div class="sr-only" aria-live="polite">\${escape(buildLiveStatus())}</div>
@@ -349,7 +388,8 @@ export function getRendererScriptContent(): string {
         <div style="height:8px"></div>
         <input class="input" id="search-input" placeholder="Search apps&hellip;"
           aria-label="Search apps" value="\${escape(state.searchQuery)}" />
-        <div style="height:8px"></div>
+        <div style="height:4px"></div>
+        \${selectAllRow}
 
         <div class="app-list">
           \${renderAppSection(started, 'Started')}
@@ -358,7 +398,7 @@ export function getRendererScriptContent(): string {
         </div>
 
         <div class="footer">
-          <div class="footer-info">\${selectedCount} service\${selectedCount !== 1 ? 's' : ''} selected</div>
+          <div class="footer-info">\${countLabel}</div>
           <button class="btn" id="btn-start-debug" aria-label="Start selected debug sessions"
             \${selectedCount === 0 ? 'disabled' : ''}>
             &#9654; Start Debug Sessions
@@ -412,6 +452,9 @@ export function getRendererScriptContent(): string {
           <div class="sync-status-row running">
             <span class="spinner" style="width:11px;height:11px;border-width:1.5px;margin-right:6px"></span>
             <span>\${escape(progressText)}</span>
+          </div>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar-fill" style="width:\${pct}%"></div>
           </div>
         \`;
       } else {
