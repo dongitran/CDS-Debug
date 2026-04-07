@@ -165,7 +165,7 @@ function stopActiveDebugSessionForApp(appName: string): void {
   }
 }
 
-export async function startTunnelAndAttach(appName: string, folderPath: string, port: number, launchConfigName: string): Promise<void> {
+export async function startTunnelAndAttach(appName: string, folderPath: string, port: number, launchConfigName: string, openBrowser = false): Promise<void> {
   initializeProcessManager();
 
   let channel = channels.get(appName);
@@ -181,12 +181,15 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
   await killProcessOnPort(port);
   await new Promise(r => setTimeout(r, 200)); // allow OS buffer time to fully release the socket
 
-  const cmdStr = `cds debug ${appName} -f --no-devtools -p ${port.toString()}`;
+  // When auto-open browser is enabled, omit --no-devtools so the CLI launches
+  // Chrome DevTools itself. Otherwise suppress it to avoid unwanted browser windows.
+  const noDevToolsFlag = openBrowser ? [] : ['--no-devtools'];
+  const cmdStr = `cds debug ${appName} -f${openBrowser ? '' : ' --no-devtools'} -p ${port.toString()}`;
   channel.appendLine(`[Extension] Starting background process: ${cmdStr}`);
   logInfo(`[Background] ${cmdStr}`);
 
   const isWindows = process.platform === 'win32';
-  const child = spawn(isWindows ? 'cds.cmd' : 'cds', ['debug', appName, '-f', '--no-devtools', '-p', port.toString()], {
+  const child = spawn(isWindows ? 'cds.cmd' : 'cds', ['debug', appName, '-f', ...noDevToolsFlag, '-p', port.toString()], {
     cwd: folderPath,
     shell: isWindows,
     // On Unix, detached creates a new process group so killProcessGroup(-pid)
