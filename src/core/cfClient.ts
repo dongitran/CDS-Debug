@@ -74,6 +74,10 @@ export async function cfOrgs(cfHome?: string): Promise<string[]> {
   return parseOrgs(stdout);
 }
 
+export async function cfLogout(cfHome?: string): Promise<void> {
+  await runCf(['logout'], cfHome);
+}
+
 export async function cfTarget(org: string, space = CF_DEFAULT_SPACE, cfHome?: string): Promise<void> {
   await runCf(['target', '-o', org, '-s', space], cfHome);
 }

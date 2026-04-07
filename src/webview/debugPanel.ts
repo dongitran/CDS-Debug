@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { CacheSettings, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
 import { DEFAULT_CACHE_SETTINGS } from '../types/index';
-import { cfLogin, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
+import { cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
 import { mergeLaunchJson, removeLaunchConfigs } from '../core/launchConfigurator';
@@ -169,14 +169,33 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     logInfo(`Logging in to ${apiEndpoint} …`);
 
     try {
+      // Clear any stale CF session before switching regions. Without this, the
+      // CF CLI retains the previously-targeted org/space from a different region
+      // in ~/.cf/config.json, causing "org not found" errors on cfTarget calls.
+      try {
+        await cfLogout();
+        logInfo('Cleared previous CF session before login.');
+      } catch {
+        // Safe to ignore: logout fails when no prior session exists.
+      }
+
       await cfLogin(apiEndpoint, email, password);
       const orgs = await cfOrgs();
       logInfo(`Login successful. Found ${orgs.length.toString()} org(s): ${orgs.join(', ')}`);
+
+      // Preserve only mappings whose org exists in the new region.
+      // Stale mappings from a previous region would cause "org not found" when
+      // the extension auto-selects them or the user resumes without re-mapping.
+      const newOrgSet = new Set(orgs);
       const existing = getConfig();
+      const validMappings = (existing?.orgGroupMappings ?? []).filter(
+        (m) => newOrgSet.has(m.cfOrg),
+      );
+
       await saveConfig({
         apiEndpoint,
         orgs,
-        orgGroupMappings: existing?.orgGroupMappings ?? [],
+        orgGroupMappings: validMappings,
       });
       this.post({ type: 'LOGIN_SUCCESS', payload: { orgs } });
     } catch (err: unknown) {
