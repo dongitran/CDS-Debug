@@ -149,7 +149,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
           'Keep Running & Change'
         );
         if (choice === 'Stop Sessions & Change') {
-          vscode.commands.executeCommand('cds-debug.stopAllDebug');
+          const activeAppNames = Object.keys(getActiveSessions());
+          stopAllProcesses();
+          await this.cleanupLaunchConfig(activeAppNames);
           this.post({ type: 'PROCEED_CHANGE_MAPPING' });
         } else if (choice === 'Keep Running & Change') {
           this.post({ type: 'PROCEED_CHANGE_MAPPING' });
