@@ -3,9 +3,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('node:fs/promises');
 
 import {
+  buildLaunchConfiguration,
+  readCapDebugConfig,
   generateLaunchConfigurations,
   getExistingLaunchConfigs,
   mergeLaunchJson,
+  removeLaunchConfigs,
 } from '../../src/core/launchConfigurator';
 import type { DebugTarget } from '../../src/types/index';
 import * as fs from 'node:fs/promises';
@@ -19,48 +22,130 @@ beforeEach(() => {
   vi.resetAllMocks();
 });
 
-describe('generateLaunchConfigurations', () => {
-  it('generates one configuration per target', () => {
-    const configs = generateLaunchConfigurations(TARGETS);
-    expect(configs).toHaveLength(2);
+describe('readCapDebugConfig', () => {
+  it('returns null when file does not exist', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const result = await readCapDebugConfig('/some/folder');
+    expect(result).toBeNull();
   });
 
-  it('sets correct name, port, folder paths, and attach mode', () => {
-    const configs = generateLaunchConfigurations(TARGETS);
+  it('returns remoteRoot when file exists with valid remoteRoot', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ remoteRoot: '/home/vcap/app' })); // cspell:ignore vcap
 
-    expect(configs[0]).toMatchObject({
+    const result = await readCapDebugConfig('/some/folder');
+    expect(result).toEqual({ remoteRoot: '/home/vcap/app' });
+  });
+
+  it('returns empty object when file exists but remoteRoot is not a string', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ remoteRoot: 123 }));
+
+    const result = await readCapDebugConfig('/some/folder');
+    expect(result).toEqual({});
+  });
+
+  it('returns null when JSON is invalid', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue('{ invalid json }');
+
+    const result = await readCapDebugConfig('/some/folder');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when parsed JSON is not an object', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue('null');
+
+    const result = await readCapDebugConfig('/some/folder');
+    expect(result).toBeNull();
+  });
+});
+
+describe('buildLaunchConfiguration', () => {
+  const target: DebugTarget = { appName: 'myapp-svc-one', folderPath: '/group/sub-a/myapp_svc_one', port: 9229 };
+
+  it('sets correct name, port, address, and attach mode', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+
+    expect(config).toMatchObject({
       type: 'node',
       request: 'attach',
       name: 'Debug: myapp-svc-one',
+      address: '127.0.0.1',
       port: 9229,
-      localRoot: '/group/sub-a/myapp_svc_one',
-      remoteRoot: '/home/vcap/app', // cspell:ignore vcap
       restart: true,
     });
-
-    expect(configs[1]).toMatchObject({
-      name: 'Debug: myapp-svc-two',
-      port: 9230,
-      localRoot: '/group/sub-b/myapp_svc_two',
-    });
   });
 
-  it('sets sourceMaps to true on every configuration', () => {
-    const configs = generateLaunchConfigurations(TARGETS);
-    for (const config of configs) {
-      expect(config.sourceMaps).toBe(true);
-    }
+  it('appends gen/srv to localRoot', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.localRoot).toBe('/group/sub-a/myapp_svc_one/gen/srv');
   });
 
-  it('includes skipFiles in every configuration', () => {
-    const configs = generateLaunchConfigurations(TARGETS);
-    for (const config of configs) {
-      expect(config.skipFiles).toContain('<node_internals>/**');
-    }
+  it('sets outFiles using the gen/srv path', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/gen/srv/**/*.js');
   });
 
-  it('returns empty array for empty targets list', () => {
-    expect(generateLaunchConfigurations([])).toEqual([]);
+  it('sets sourceMaps to true', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.sourceMaps).toBe(true);
+  });
+
+  it('includes both skipFiles entries', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.skipFiles).toContain('<node_internals>/**');
+    expect(config.skipFiles).toContain('**/node_modules/**');
+  });
+
+  it('includes remoteRoot when explicitly provided', () => {
+    const config = buildLaunchConfiguration(target, '/home/vcap/app'); // cspell:ignore vcap
+    expect(config.remoteRoot).toBe('/home/vcap/app');
+  });
+
+  it('omits remoteRoot when not provided', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect('remoteRoot' in config).toBe(false);
+  });
+});
+
+describe('generateLaunchConfigurations', () => {
+  it('generates one configuration per target', async () => {
+    // No cap-debug-config.json — readFile throws ENOENT for each
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const configs = await generateLaunchConfigurations(TARGETS);
+    expect(configs).toHaveLength(2);
+  });
+
+  it('sets correct name and port for each target', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const configs = await generateLaunchConfigurations(TARGETS);
+
+    expect(configs[0]).toMatchObject({ name: 'Debug: myapp-svc-one', port: 9229 });
+    expect(configs[1]).toMatchObject({ name: 'Debug: myapp-svc-two', port: 9230 });
+  });
+
+  it('reads remoteRoot from cap-debug-config.json when present', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ remoteRoot: '/home/vcap/app' })); // cspell:ignore vcap
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget]);
+    expect(configs[0]?.remoteRoot).toBe('/home/vcap/app');
+  });
+
+  it('omits remoteRoot when cap-debug-config.json is absent', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget]);
+    expect('remoteRoot' in (configs[0] ?? {})).toBe(false);
+  });
+
+  it('returns empty array for empty targets list', async () => {
+    const configs = await generateLaunchConfigurations([]);
+    expect(configs).toEqual([]);
   });
 });
 
@@ -80,12 +165,13 @@ describe('getExistingLaunchConfigs', () => {
           name: 'Debug: myapp-svc-one',
           type: 'node',
           request: 'attach',
+          address: '127.0.0.1',
           port: 9229,
-          localRoot: '/group/sub-a/myapp_svc_one',
-          remoteRoot: '/home/vcap/app',
+          localRoot: '/group/sub-a/myapp_svc_one/gen/srv',
           sourceMaps: true,
           restart: true,
-          skipFiles: ['<node_internals>/**'],
+          skipFiles: ['<node_internals>/**', '**/node_modules/**'],
+          outFiles: ['/group/sub-a/myapp_svc_one/gen/srv/**/*.js'],
         },
       ],
     };
@@ -216,5 +302,79 @@ describe('mergeLaunchJson', () => {
 
     const content = vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string;
     expect(content.endsWith('\n')).toBe(true);
+  });
+});
+
+describe('removeLaunchConfigs', () => {
+  it('removes matching configs by app name', async () => {
+    const existing = {
+      version: '0.2.0',
+      configurations: [
+        { name: 'Debug: myapp-svc-one', type: 'node', port: 9229 },
+        { name: 'Debug: myapp-svc-two', type: 'node', port: 9230 },
+        { name: 'My manual config', type: 'node', port: 8080 },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await removeLaunchConfigs('/workspace', ['myapp-svc-one']);
+
+    const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
+      configurations: { name: string }[];
+    };
+
+    expect(written.configurations).toHaveLength(2);
+    expect(written.configurations.find((c) => c.name === 'Debug: myapp-svc-one')).toBeUndefined();
+    expect(written.configurations.find((c) => c.name === 'My manual config')).toBeDefined();
+  });
+
+  it('removes multiple configs at once', async () => {
+    const existing = {
+      version: '0.2.0',
+      configurations: [
+        { name: 'Debug: myapp-svc-one', type: 'node', port: 9229 },
+        { name: 'Debug: myapp-svc-two', type: 'node', port: 9230 },
+        { name: 'My manual config', type: 'node', port: 8080 },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await removeLaunchConfigs('/workspace', ['myapp-svc-one', 'myapp-svc-two']);
+
+    const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
+      configurations: { name: string }[];
+    };
+
+    expect(written.configurations).toHaveLength(1);
+    expect(written.configurations[0]?.name).toBe('My manual config');
+  });
+
+  it('does nothing when no matching config names exist', async () => {
+    const existing = {
+      version: '0.2.0',
+      configurations: [
+        { name: 'My manual config', type: 'node', port: 8080 },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+
+    await removeLaunchConfigs('/workspace', ['nonexistent-app']);
+
+    // writeFile should NOT be called since nothing changed
+    expect(fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when appNames is empty', async () => {
+    await removeLaunchConfigs('/workspace', []);
+
+    expect(fs.readFile).not.toHaveBeenCalled();
+    expect(fs.writeFile).not.toHaveBeenCalled();
   });
 });

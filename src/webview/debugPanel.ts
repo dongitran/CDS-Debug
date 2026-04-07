@@ -4,7 +4,7 @@ import { DEFAULT_CACHE_SETTINGS } from '../types/index';
 import { cfLogin, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
-import { mergeLaunchJson } from '../core/launchConfigurator';
+import { mergeLaunchJson, removeLaunchConfigs } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
 import { getCredentials } from '../core/shellEnv';
 import { getCachedApps, getCacheSettings, saveCacheSettings } from '../storage/cacheStore';
@@ -88,11 +88,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       case 'STOP_DEBUG':
         stopProcess(raw.payload.appName);
+        await this.cleanupLaunchConfig([raw.payload.appName]);
         break;
 
-      case 'STOP_ALL_DEBUG':
+      case 'STOP_ALL_DEBUG': {
+        const activeAppNames = Object.keys(getActiveSessions());
         stopAllProcesses();
+        await this.cleanupLaunchConfig(activeAppNames);
         break;
+      }
         
       case 'OPEN_APP_URL':
         this.handleOpenAppUrl(raw.payload.url);
@@ -330,6 +334,21 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     void vscode.env.openExternal(safeUri);
+  }
+
+  private async cleanupLaunchConfig(appNames: string[]): Promise<void> {
+    if (appNames.length === 0) return;
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      logWarn('Cannot clean launch.json: no workspace folder open.');
+      return;
+    }
+    try {
+      await removeLaunchConfigs(workspaceRoot, appNames);
+      logInfo(`Removed ${appNames.length.toString()} debug config(s) from launch.json.`);
+    } catch (err: unknown) {
+      logWarn(`Failed to clean launch.json: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 

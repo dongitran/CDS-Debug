@@ -27,12 +27,14 @@ export interface LaunchConfiguration {
   type: string;
   request: string;
   name: string;
+  address: string;
   port: number;
   localRoot: string;
-  remoteRoot: string;
+  remoteRoot?: string;
   sourceMaps: boolean;
   restart: boolean;
   skipFiles: string[];
+  outFiles: string[];
 }
 
 export interface LaunchJson {
