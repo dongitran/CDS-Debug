@@ -511,6 +511,27 @@ export function getStyles(): string {
       vertical-align: middle;
       margin-left: 4px;
     }
+    .pref-state-badge {
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 1px 6px;
+      border-radius: 99px;
+      vertical-align: middle;
+      margin-left: 6px;
+    }
+    .pref-state-off {
+      background: transparent;
+      border: 1px solid var(--vscode-descriptionForeground);
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.7;
+    }
+    .pref-state-on {
+      background: transparent;
+      border: 1px solid var(--vscode-testing-iconPassed);
+      color: var(--vscode-testing-iconPassed);
+    }
     .pref-row-desc {
       display: block;
       font-size: 11px;

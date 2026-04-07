@@ -485,8 +485,12 @@ export function getRendererScriptContent(): string {
 
         <label class="pref-row" for="chk-open-browser">
           <div class="pref-row-content">
-            <span class="pref-row-title">Auto-open app in browser</span>
-            <span class="pref-row-desc">Automatically opens the app URL in your default browser as soon as the debugger attaches. The &ldquo;&#8599;&nbsp;Open&rdquo; button is always available for manual open.</span>
+            <span class="pref-row-title">&#127758;&nbsp;Open browser on debugger attach
+              <span class="pref-state-badge \${state.debugPrefs.openBrowserOnAttach ? 'pref-state-on' : 'pref-state-off'}">
+                \${state.debugPrefs.openBrowserOnAttach ? 'enabled' : 'off by default'}
+              </span>
+            </span>
+            <span class="pref-row-desc">When enabled, automatically opens the app URL in your browser once the debugger attaches. Off by default &mdash; use the &ldquo;&#8599;&nbsp;Open&rdquo; button on each active session card for manual control.</span>
           </div>
           <div class="toggle-switch \${state.debugPrefs.openBrowserOnAttach ? 'on' : ''}">
             <input type="checkbox" id="chk-open-browser" \${state.debugPrefs.openBrowserOnAttach ? 'checked' : ''} />
@@ -629,6 +633,13 @@ export function getRendererScriptContent(): string {
         state.debugPrefs = { ...state.debugPrefs, openBrowserOnAttach };
         var toggle = $('chk-open-browser')?.closest('.toggle-switch');
         if (toggle) toggle.classList.toggle('on', openBrowserOnAttach);
+        // Update badge text and state class in-place to avoid a full render()
+        var badge = $('chk-open-browser')?.closest('.pref-row')?.querySelector('.pref-state-badge');
+        if (badge) {
+          badge.textContent = openBrowserOnAttach ? 'enabled' : 'off by default';
+          badge.classList.toggle('pref-state-on', openBrowserOnAttach);
+          badge.classList.toggle('pref-state-off', !openBrowserOnAttach);
+        }
         vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: state.debugPrefs });
       });
 
