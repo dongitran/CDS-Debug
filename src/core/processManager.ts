@@ -285,6 +285,14 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
     if (!activeVsCodeSessions.has(launchConfigName)) {
       sessionStates.delete(appName);
       debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
+
+      // Clean up launch config if the process dies before debugging starts
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (workspaceRoot) {
+        void removeLaunchConfigs(workspaceRoot, [appName]).catch((err: unknown) => {
+          logWarn(`Failed to clean launch config for ${appName} on process exit: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
     }
   });
   
