@@ -373,10 +373,12 @@ export function getScript(nonce: string): string {
           return;
         }
         case 'DEBUG_CONNECTING': {
+          let needFullRender = false;
           // If coming from branch prep screen, transition back to ready
           if (state.screen === SCREENS.PREPARING_BRANCHES) {
             state.screen = SCREENS.READY;
             state.branchPrepServices = [];
+            needFullRender = true;
           }
           msg.payload.appNames.forEach(appName => {
             const port = (msg.payload.ports || {})[appName];
@@ -390,7 +392,13 @@ export function getScript(nonce: string): string {
             }, 1800);
             state.activeSessions[appName].intervalId = tId;
           });
-          refreshActiveSessionsPanel();
+          
+          if (needFullRender) {
+            render();
+          } else {
+            refreshActiveSessionsPanel();
+            refreshAppListSection();
+          }
           return;
         }
         case 'APP_DEBUG_STATUS': {
@@ -399,7 +407,8 @@ export function getScript(nonce: string): string {
             const session = state.activeSessions[appName];
             if (session?.intervalId) clearInterval(session.intervalId);
             delete state.activeSessions[appName];
-            render();
+            refreshActiveSessionsPanel();
+            refreshAppListSection();
             return;
           }
           if (!state.activeSessions[appName]) {
@@ -414,6 +423,7 @@ export function getScript(nonce: string): string {
           }
 
           refreshActiveSessionsPanel();
+          refreshAppListSection();
           return;
         }
         case 'DEBUG_ERROR':
