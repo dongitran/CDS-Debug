@@ -136,7 +136,7 @@ export type WebviewMessage =
   | { type: 'START_DEBUG'; payload: { appNames: string[]; org: string } }
   | { type: 'STOP_DEBUG'; payload: { appName: string } }
   | { type: 'STOP_ALL_DEBUG' }
-  | { type: 'OPEN_APP_URL'; payload: { url: string } }
+  | { type: 'OPEN_APP_URL'; payload: { url: string; source: 'manual' | 'auto' } }
   | { type: 'SAVE_MAPPINGS'; payload: { mappings: OrgGroupMapping[] } }
   | { type: 'LOAD_CONFIG' }
   | { type: 'RESET_LOGIN' }

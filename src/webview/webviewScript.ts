@@ -246,7 +246,7 @@ export function getScript(nonce: string): string {
           }
           const openBtn = e.target.closest('[data-open-url]');
           if (openBtn) {
-            vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: openBtn.dataset.openUrl } });
+            vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: openBtn.dataset.openUrl, source: 'manual' } });
           }
         });
       }
@@ -412,13 +412,15 @@ export function getScript(nonce: string): string {
               if (session.intervalId) clearInterval(session.intervalId);
             }
           }
-          // Auto-open browser when debugger attaches (only if setting enabled)
+          // Auto-open browser when debugger attaches (only if setting enabled).
+          // Extension enforces a second gate at server side — this check is a
+          // client-side early-out to avoid the round trip when prefs are already loaded.
           if (status === 'ATTACHED' && state.debugPrefs.openBrowserOnAttach) {
             const appInfo = state.apps.find(a => a.name === appName);
             const rawUrl = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
             const appUrl = normalizeUrl(rawUrl);
             if (appUrl) {
-              vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: appUrl } });
+              vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: appUrl, source: 'auto' } });
             }
           }
           refreshActiveSessionsPanel();

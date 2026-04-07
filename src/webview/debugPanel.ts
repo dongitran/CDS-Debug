@@ -122,7 +122,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       }
         
       case 'OPEN_APP_URL':
-        this.handleOpenAppUrl(raw.payload.url);
+        this.handleOpenAppUrl(raw.payload.url, raw.payload.source);
         break;
 
       case 'RESET_LOGIN':
@@ -597,7 +597,13 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private handleOpenAppUrl(rawUrl: string): void {
+  private handleOpenAppUrl(rawUrl: string, source: 'manual' | 'auto'): void {
+    // Extension is the authoritative gatekeeper for auto-opens.
+    // Webview state can be stale due to timing races; globalState is always the truth.
+    if (source === 'auto' && !getDebugPreferences().openBrowserOnAttach) {
+      logInfo('Auto-open blocked: openBrowserOnAttach is disabled in preferences.');
+      return;
+    }
     const safeUri = toSafeHttpUri(rawUrl);
     if (!safeUri) {
       const msg = 'Blocked unsafe or malformed app URL.';
