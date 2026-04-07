@@ -67,6 +67,8 @@ export function getScript(nonce: string): string {
       cacheConfig: { enabled: true, intervalHours: 4 },
       // Branch preparation state: [{ appName, targetBranch, currentBranch, step, message }]
       branchPrepServices: [],
+      // Debug behavior preferences
+      debugPrefs: { openBrowserOnAttach: false },
     };
 
     // === UTILS ===
@@ -397,6 +399,12 @@ export function getScript(nonce: string): string {
           return;
         case 'CACHE_CONFIG':
           state.cacheConfig = msg.payload;
+          if (state.screen === SCREENS.SETTINGS) render();
+          return;
+        case 'DEBUG_PREFS':
+          state.debugPrefs = msg.payload;
+          // Re-render active sessions to reflect button visibility change
+          refreshActiveSessionsPanel();
           if (state.screen === SCREENS.SETTINGS) render();
           return;
         case 'CONFIG_LOADED': {

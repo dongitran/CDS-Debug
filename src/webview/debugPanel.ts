@@ -8,7 +8,7 @@ import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
 import { mergeLaunchJson, readCapDebugConfig, removeLaunchConfigs } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
 import { getCredentials } from '../core/shellEnv';
-import { getCachedApps, getCacheSettings, saveCacheSettings } from '../storage/cacheStore';
+import { getCachedApps, getCacheSettings, getDebugPreferences, saveCacheSettings, saveDebugPreferences } from '../storage/cacheStore';
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
@@ -134,6 +134,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       case 'GET_CACHE_CONFIG':
         this.post({ type: 'CACHE_CONFIG', payload: getCacheSettings() });
+        break;
+
+      case 'GET_DEBUG_PREFS':
+        this.post({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
+        break;
+
+      case 'SAVE_DEBUG_PREFS':
+        await saveDebugPreferences(raw.payload);
+        this.post({ type: 'DEBUG_PREFS', payload: raw.payload });
         break;
 
       case 'SAVE_CACHE_CONFIG': {

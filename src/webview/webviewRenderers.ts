@@ -147,7 +147,7 @@ export function getRendererScriptContent(): string {
       const appUrl = rawUrl ? (rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl) : '';
       const portText = session.port ? '<span class="active-card-port">:' + session.port + '</span>' : '';
 
-      const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
+      const openBtn = (session.status === 'ATTACHED' && appUrl && state.debugPrefs.openBrowserOnAttach) ? \`
         <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
           title="Open App in Browser" aria-label="Open \${escape(appName)} in browser">
           &#8599; Open
@@ -232,13 +232,13 @@ export function getRendererScriptContent(): string {
         const existingOpenBtn = card.querySelector('[data-open-url]');
         const stopBtn = card.querySelector('[data-stop-app]');
 
-        if (session.status === 'ATTACHED' && appUrl && !existingOpenBtn && stopBtn) {
+        if (session.status === 'ATTACHED' && appUrl && state.debugPrefs.openBrowserOnAttach && !existingOpenBtn && stopBtn) {
           const tmp = document.createElement('div');
           tmp.innerHTML = '<button class="active-open-btn" data-open-url="' + escape(appUrl) + '"'
             + ' title="Open App in Browser" aria-label="Open ' + escape(appName) + ' in browser">'
             + '&#8599; Open App</button>';
           stopBtn.parentNode.insertBefore(tmp.firstChild, stopBtn);
-        } else if (session.status !== 'ATTACHED' && existingOpenBtn) {
+        } else if ((session.status !== 'ATTACHED' || !state.debugPrefs.openBrowserOnAttach) && existingOpenBtn) {
           existingOpenBtn.remove();
         }
       }
@@ -471,6 +471,21 @@ export function getRendererScriptContent(): string {
           <span class="step-title">Settings</span>
         </div>
 
+        <div class="section-label">Debug Behavior</div>
+
+        <label class="pref-row" for="chk-open-browser">
+          <div class="pref-row-content">
+            <span class="pref-row-title">Open app in browser</span>
+            <span class="pref-row-desc">Show an &ldquo;Open&rdquo; button on active sessions that opens the app URL in your default browser. Off by default.</span>
+          </div>
+          <div class="toggle-switch \${state.debugPrefs.openBrowserOnAttach ? 'on' : ''}">
+            <input type="checkbox" id="chk-open-browser" \${state.debugPrefs.openBrowserOnAttach ? 'checked' : ''} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </div>
+        </label>
+
+        <div class="divider" style="margin:12px 0"></div>
+
         <div class="section-label">App Cache</div>
 
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:10px;font-size:13px">
@@ -582,7 +597,19 @@ export function getRendererScriptContent(): string {
         state.screen = SCREENS.SETTINGS;
         vscode.postMessage({ type: 'GET_SYNC_STATUS' });
         vscode.postMessage({ type: 'GET_CACHE_CONFIG' });
+        vscode.postMessage({ type: 'GET_DEBUG_PREFS' });
         render();
+      });
+
+      $('chk-open-browser')?.addEventListener('change', function(e) {
+        const openBrowserOnAttach = !!e.target.checked;
+        state.debugPrefs = { openBrowserOnAttach };
+        // Toggle class on the switch wrapper for immediate visual feedback
+        const toggle = document.querySelector('.toggle-switch');
+        if (toggle) toggle.classList.toggle('on', openBrowserOnAttach);
+        vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: { openBrowserOnAttach } });
+        // Re-render active sessions to add/remove Open buttons
+        refreshActiveSessionsPanel();
       });
 
       $('btn-back-settings')?.addEventListener('click', () => {

@@ -107,6 +107,16 @@ export const DEFAULT_CACHE_SETTINGS: CacheSettings = {
   intervalHours: 4,
 };
 
+/** User-facing debug behavior preferences (separate from cache settings). */
+export interface DebugPreferences {
+  /** Whether the "Open in Browser" button is shown on active debug cards. Default: false. */
+  openBrowserOnAttach: boolean;
+}
+
+export const DEFAULT_DEBUG_PREFERENCES: DebugPreferences = {
+  openBrowserOnAttach: false,
+};
+
 // Messages from webview → extension
 export type WebviewMessage =
   | { type: 'SELECT_GROUP_FOLDER' }
@@ -122,7 +132,9 @@ export type WebviewMessage =
   | { type: 'TRIGGER_SYNC' }
   | { type: 'GET_SYNC_STATUS' }
   | { type: 'GET_CACHE_CONFIG' }
-  | { type: 'SAVE_CACHE_CONFIG'; payload: CacheSettings };
+  | { type: 'SAVE_CACHE_CONFIG'; payload: CacheSettings }
+  | { type: 'GET_DEBUG_PREFS' }
+  | { type: 'SAVE_DEBUG_PREFS'; payload: DebugPreferences };
 
 // Messages from extension → webview
 export type ExtensionMessage =
@@ -139,4 +151,5 @@ export type ExtensionMessage =
   | { type: 'SYNC_STATUS'; payload: SyncProgress }
   | { type: 'CACHE_CONFIG'; payload: CacheSettings }
   | { type: 'BRANCH_PREP_START'; payload: { services: BranchPrepService[] } }
-  | { type: 'BRANCH_PREP_STATUS'; payload: { appName: string; step: BranchPrepStep; message?: string } };
+  | { type: 'BRANCH_PREP_STATUS'; payload: { appName: string; step: BranchPrepStep; message?: string } }
+  | { type: 'DEBUG_PREFS'; payload: DebugPreferences };

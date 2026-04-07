@@ -95,6 +95,15 @@
     "preplist",
     "prepicon",
     "unconfigured",
-    "pathspec"
+    "pathspec",
+    "debugprefs",
+    "prefrow",
+    "openbrower",
+    "toggleswitch",
+    "toggletrack",
+    "togglethumb",
+    "ldquo",
+    "rdquo",
+    "prefs"
   ]
 }
