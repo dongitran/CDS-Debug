@@ -153,7 +153,7 @@ export function getRendererScriptContent(): string {
       const appUrl = rawUrl ? (rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl) : '';
       const portText = session.port ? '<span class="active-card-port">:' + session.port + '</span>' : '';
 
-      const openBtn = (session.status === 'ATTACHED' && appUrl && state.debugPrefs.openBrowserOnAttach) ? \`
+      const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
         <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
           title="Open App in Browser" aria-label="Open \${escape(appName)} in browser">
           &#8599; Open
@@ -238,13 +238,13 @@ export function getRendererScriptContent(): string {
         const existingOpenBtn = card.querySelector('[data-open-url]');
         const stopBtn = card.querySelector('[data-stop-app]');
 
-        if (session.status === 'ATTACHED' && appUrl && state.debugPrefs.openBrowserOnAttach && !existingOpenBtn && stopBtn) {
+        if (session.status === 'ATTACHED' && appUrl && !existingOpenBtn && stopBtn) {
           const tmp = document.createElement('div');
           tmp.innerHTML = '<button class="active-open-btn" data-open-url="' + escape(appUrl) + '"'
             + ' title="Open App in Browser" aria-label="Open ' + escape(appName) + ' in browser">'
             + '&#8599; Open App</button>';
           stopBtn.parentNode.insertBefore(tmp.firstChild, stopBtn);
-        } else if ((session.status !== 'ATTACHED' || !state.debugPrefs.openBrowserOnAttach) && existingOpenBtn) {
+        } else if (session.status !== 'ATTACHED' && existingOpenBtn) {
           existingOpenBtn.remove();
         }
       }
@@ -481,11 +481,24 @@ export function getRendererScriptContent(): string {
 
         <label class="pref-row" for="chk-open-browser">
           <div class="pref-row-content">
-            <span class="pref-row-title">Open app in browser</span>
-            <span class="pref-row-desc">Show an &ldquo;Open&rdquo; button on active sessions that opens the app URL in your default browser. Off by default.</span>
+            <span class="pref-row-title">Auto-open app in browser</span>
+            <span class="pref-row-desc">Automatically opens the app URL in your default browser as soon as the debugger attaches. The &ldquo;&#8599;&nbsp;Open&rdquo; button is always available for manual open.</span>
           </div>
           <div class="toggle-switch \${state.debugPrefs.openBrowserOnAttach ? 'on' : ''}">
             <input type="checkbox" id="chk-open-browser" \${state.debugPrefs.openBrowserOnAttach ? 'checked' : ''} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </div>
+        </label>
+
+        <div style="height:4px"></div>
+
+        <label class="pref-row" for="chk-branch-prep">
+          <div class="pref-row-content">
+            <span class="pref-row-title">Branch auto-checkout <span class="beta-badge">experimental</span></span>
+            <span class="pref-row-desc">Before starting a debug session, automatically stash local changes, check out the branch mapped to the CF org, then run <code>pnpm install</code> and <code>pnpm build</code>. Configure branch mappings in <code>cap-debug-config.json</code>.</span>
+          </div>
+          <div class="toggle-switch \${state.debugPrefs.enableBranchPrep ? 'on' : ''}">
+            <input type="checkbox" id="chk-branch-prep" \${state.debugPrefs.enableBranchPrep ? 'checked' : ''} />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </div>
         </label>
@@ -609,13 +622,18 @@ export function getRendererScriptContent(): string {
 
       $('chk-open-browser')?.addEventListener('change', function(e) {
         const openBrowserOnAttach = !!e.target.checked;
-        state.debugPrefs = { openBrowserOnAttach };
-        // Toggle class on the switch wrapper for immediate visual feedback
-        const toggle = document.querySelector('.toggle-switch');
+        state.debugPrefs = { ...state.debugPrefs, openBrowserOnAttach };
+        var toggle = $('chk-open-browser')?.closest('.toggle-switch');
         if (toggle) toggle.classList.toggle('on', openBrowserOnAttach);
-        vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: { openBrowserOnAttach } });
-        // Re-render active sessions to add/remove Open buttons
-        refreshActiveSessionsPanel();
+        vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: state.debugPrefs });
+      });
+
+      $('chk-branch-prep')?.addEventListener('change', function(e) {
+        const enableBranchPrep = !!e.target.checked;
+        state.debugPrefs = { ...state.debugPrefs, enableBranchPrep };
+        var toggle = $('chk-branch-prep')?.closest('.toggle-switch');
+        if (toggle) toggle.classList.toggle('on', enableBranchPrep);
+        vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: state.debugPrefs });
       });
 
       $('btn-back-settings')?.addEventListener('click', () => {

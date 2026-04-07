@@ -405,6 +405,15 @@ export function getScript(nonce: string): string {
               if (session.intervalId) clearInterval(session.intervalId);
             }
           }
+          // Auto-open browser when debugger attaches (only if setting enabled)
+          if (status === 'ATTACHED' && state.debugPrefs.openBrowserOnAttach) {
+            const appInfo = state.apps.find(a => a.name === appName);
+            const rawUrl = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
+            if (rawUrl) {
+              const appUrl = rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl;
+              vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: appUrl } });
+            }
+          }
           refreshActiveSessionsPanel();
           return;
         }

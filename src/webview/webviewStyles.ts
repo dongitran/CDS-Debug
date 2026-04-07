@@ -499,6 +499,18 @@ export function getStyles(): string {
       font-size: 13px;
       margin-bottom: 3px;
     }
+    .beta-badge {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 1px 5px;
+      border-radius: 99px;
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+      vertical-align: middle;
+      margin-left: 4px;
+    }
     .pref-row-desc {
       display: block;
       font-size: 11px;

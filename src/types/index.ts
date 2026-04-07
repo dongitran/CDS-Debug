@@ -109,12 +109,23 @@ export const DEFAULT_CACHE_SETTINGS: CacheSettings = {
 
 /** User-facing debug behavior preferences (separate from cache settings). */
 export interface DebugPreferences {
-  /** Whether the "Open in Browser" button is shown on active debug cards. Default: false. */
+  /**
+   * When true, the app URL is opened in the default browser automatically
+   * as soon as a debug session reaches the ATTACHED state. Default: false.
+   */
   openBrowserOnAttach: boolean;
+  /**
+   * When true, the branch auto-checkout feature is enabled: before starting
+   * a debug session the extension stashes local changes, checks out the mapped
+   * branch, then runs `pnpm i --shamefully-hoist` and `pnpm build`.
+   * This is an experimental / potentially destructive operation. Default: false.
+   */
+  enableBranchPrep: boolean;
 }
 
 export const DEFAULT_DEBUG_PREFERENCES: DebugPreferences = {
   openBrowserOnAttach: false,
+  enableBranchPrep: false,
 };
 
 // Messages from webview → extension

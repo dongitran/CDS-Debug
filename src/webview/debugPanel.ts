@@ -348,31 +348,37 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Read workspace-level config for orgBranchMap fallback
-    const workspaceCapConfig = await readCapDebugConfig(join(workspaceRoot, '.vscode'));
-
-    // Resolve target branches: config lookup + optional QuickPick for unconfigured repos
-    const branchInfos = await this.resolveTargetBranches(targets, org, workspaceCapConfig);
-
-    // Services with a target branch go through preparation; others proceed directly
-    const servicesNeedingPrep = branchInfos.filter((b) => b.targetBranch !== null);
-    const targetsSkippingPrep = targets.filter((t) => !branchInfos.find((b) => b.appName === t.appName)?.targetBranch);
-
+    // Branch preparation is an experimental feature — only run when explicitly enabled.
+    const debugPrefs = getDebugPreferences();
     let finalTargets: DebugTarget[];
 
-    if (servicesNeedingPrep.length > 0) {
-      // Build list for webview prep screen (targetBranch is non-null for servicesNeedingPrep)
-      const prepServices: BranchPrepService[] = await Promise.all(
-        servicesNeedingPrep.map(async (b) => ({
-          appName: b.appName,
-          targetBranch: b.targetBranch ?? '',
-          currentBranch: (await getCurrentBranch(b.repoRoot ?? b.folderPath)) ?? 'unknown',
-        })),
-      );
-      this.post({ type: 'BRANCH_PREP_START', payload: { services: prepServices } });
+    if (debugPrefs.enableBranchPrep) {
+      // Read workspace-level config for orgBranchMap fallback
+      const workspaceCapConfig = await readCapDebugConfig(join(workspaceRoot, '.vscode'));
 
-      const prepSuccessful = await this.runBranchPreparation(targets, branchInfos);
-      finalTargets = [...targetsSkippingPrep, ...prepSuccessful];
+      // Resolve target branches: config lookup + optional QuickPick for unconfigured repos
+      const branchInfos = await this.resolveTargetBranches(targets, org, workspaceCapConfig);
+
+      // Services with a target branch go through preparation; others proceed directly
+      const servicesNeedingPrep = branchInfos.filter((b) => b.targetBranch !== null);
+      const targetsSkippingPrep = targets.filter((t) => !branchInfos.find((b) => b.appName === t.appName)?.targetBranch);
+
+      if (servicesNeedingPrep.length > 0) {
+        // Build list for webview prep screen (targetBranch is non-null for servicesNeedingPrep)
+        const prepServices: BranchPrepService[] = await Promise.all(
+          servicesNeedingPrep.map(async (b) => ({
+            appName: b.appName,
+            targetBranch: b.targetBranch ?? '',
+            currentBranch: (await getCurrentBranch(b.repoRoot ?? b.folderPath)) ?? 'unknown',
+          })),
+        );
+        this.post({ type: 'BRANCH_PREP_START', payload: { services: prepServices } });
+
+        const prepSuccessful = await this.runBranchPreparation(targets, branchInfos);
+        finalTargets = [...targetsSkippingPrep, ...prepSuccessful];
+      } else {
+        finalTargets = targets;
+      }
     } else {
       finalTargets = targets;
     }

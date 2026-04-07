@@ -156,19 +156,23 @@ describe('cacheStore', () => {
   });
 
   it('saveDebugPreferences persists prefs and getDebugPreferences retrieves them', async () => {
-    const prefs: DebugPreferences = { openBrowserOnAttach: true };
+    const prefs: DebugPreferences = { openBrowserOnAttach: true, enableBranchPrep: true };
     await saveDebugPreferences(prefs);
     expect(getDebugPreferences()).toEqual(prefs);
   });
 
   it('saveDebugPreferences overwrites previous prefs', async () => {
-    await saveDebugPreferences({ openBrowserOnAttach: true });
-    await saveDebugPreferences({ openBrowserOnAttach: false });
-    expect(getDebugPreferences().openBrowserOnAttach).toBe(false);
+    await saveDebugPreferences({ openBrowserOnAttach: true, enableBranchPrep: true });
+    await saveDebugPreferences({ openBrowserOnAttach: false, enableBranchPrep: false });
+    expect(getDebugPreferences()).toEqual({ openBrowserOnAttach: false, enableBranchPrep: false });
   });
 
   it('DEFAULT_DEBUG_PREFERENCES has openBrowserOnAttach = false', () => {
     expect(DEFAULT_DEBUG_PREFERENCES.openBrowserOnAttach).toBe(false);
+  });
+
+  it('DEFAULT_DEBUG_PREFERENCES has enableBranchPrep = false', () => {
+    expect(DEFAULT_DEBUG_PREFERENCES.enableBranchPrep).toBe(false);
   });
 
   // ── uninitialized guard ────────────────────────────────────────────────────
