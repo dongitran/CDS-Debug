@@ -120,11 +120,11 @@ export function initializeProcessManager(): void {
       setTimeout(() => void killProcessOnPort(port), 600);
     }
 
-    // Guard: stopProcess() may have already emitted EXITED
-    if (stoppedApps.has(appName)) {
-      stoppedApps.delete(appName);
-      return;
-    }
+    // Guard: stopProcess() or primitive exit may have already handled cleanup
+    if (stoppedApps.has(appName)) return;
+    
+    // Claim token to prevent concurrent native hooks from duplicating cleanup
+    stoppedApps.add(appName);
 
     sessionStates.delete(appName);
     debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
@@ -185,6 +185,9 @@ function stopActiveDebugSessionForApp(appName: string, skipConfigCleanup = false
 
 export async function startTunnelAndAttach(appName: string, folderPath: string, port: number, launchConfigName: string, openBrowser = false): Promise<void> {
   initializeProcessManager();
+
+  // Clear any residual stopped state to ensure native termination works on subsequent runs
+  stoppedApps.delete(appName);
 
   let channel = channels.get(appName);
   if (!channel) {
@@ -277,12 +280,13 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
     if (ch) ch.appendLine(`\n[Extension] Process exited with code ${code?.toString() ?? 'null'}`);
     processes.delete(appName);
 
-    // stopProcess() already emitted EXITED — nothing more to do
+    // stopProcess() or VS Code native hooks may have already handled cleanup
     if (stoppedApps.has(appName)) return;
 
     // Only emit EXITED if VS Code debugging has also stopped.
     // Sometimes 'cds debug' exits but leaves the underlying tunnel active.
     if (!activeVsCodeSessions.has(launchConfigName)) {
+      stoppedApps.add(appName); // Claim token for primitive exit
       sessionStates.delete(appName);
       debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
 

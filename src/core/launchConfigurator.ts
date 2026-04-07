@@ -6,6 +6,21 @@ const LAUNCH_JSON_VERSION = '0.2.0';
 const SKIP_FILES = ['<node_internals>/**', '**/node_modules/**'];
 const GEN_SRV_SUFFIX = 'gen/srv';
 
+let launchJsonLock = Promise.resolve();
+
+async function withLock<T>(fn: () => Promise<T>): Promise<T> {
+  const currentLock = launchJsonLock;
+  let release: (() => void) | undefined;
+  launchJsonLock = new Promise((resolve) => { release = resolve; });
+  
+  await currentLock;
+  try {
+    return await fn();
+  } finally {
+    if (release) release();
+  }
+}
+
 // Reads cap-debug-config.json from the app's root folder.
 // Returns null if the file does not exist or is malformed.
 export async function readCapDebugConfig(folderPath: string): Promise<CapDebugConfig | null> {
@@ -87,48 +102,52 @@ export async function getExistingLaunchConfigs(workspacePath: string): Promise<L
 }
 
 export async function mergeLaunchJson(workspacePath: string, targets: DebugTarget[]): Promise<void> {
-  const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
+  return withLock(async () => {
+    const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
 
-  // Read workspace-level config from .vscode/cap-debug-config.json as fallback.
-  // Per-app config (in each service folder) takes priority over this.
-  const workspaceConfig = await readCapDebugConfig(join(workspacePath, '.vscode'));
+    // Read workspace-level config from .vscode/cap-debug-config.json as fallback.
+    // Per-app config (in each service folder) takes priority over this.
+    const workspaceConfig = await readCapDebugConfig(join(workspacePath, '.vscode'));
 
-  const newConfigs = await generateLaunchConfigurations(targets, workspaceConfig);
-  const newNames = new Set(newConfigs.map((c) => c.name));
+    const newConfigs = await generateLaunchConfigurations(targets, workspaceConfig);
+    const newNames = new Set(newConfigs.map((c) => c.name));
 
-  const existing = await getExistingLaunchConfigs(workspacePath);
+    const existing = await getExistingLaunchConfigs(workspacePath);
 
-  const kept = existing.configurations.filter((c) => !newNames.has(c.name));
-  const merged: LaunchJson = {
-    version: existing.version || LAUNCH_JSON_VERSION,
-    configurations: [...kept, ...newConfigs],
-  };
+    const kept = existing.configurations.filter((c) => !newNames.has(c.name));
+    const merged: LaunchJson = {
+      version: existing.version || LAUNCH_JSON_VERSION,
+      configurations: [...kept, ...newConfigs],
+    };
 
-  await mkdir(dirname(launchJsonPath), { recursive: true });
-  await writeFile(launchJsonPath, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+    await mkdir(dirname(launchJsonPath), { recursive: true });
+    await writeFile(launchJsonPath, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+  });
 }
 
 // Removes configurations with the given debug names (e.g. "Debug: my-app")
 // from launch.json. Called on stop to keep the file clean.
 export async function removeLaunchConfigs(workspacePath: string, appNames: string[]): Promise<void> {
-  if (appNames.length === 0) return;
+  return withLock(async () => {
+    if (appNames.length === 0) return;
 
-  const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
-  const existing = await getExistingLaunchConfigs(workspacePath);
+    const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
+    const existing = await getExistingLaunchConfigs(workspacePath);
 
-  const namesToRemove = new Set(appNames.map((n) => `Debug: ${n}`));
-  const kept = existing.configurations.filter((c) => !namesToRemove.has(c.name));
+    const namesToRemove = new Set(appNames.map((n) => `Debug: ${n}`));
+    const kept = existing.configurations.filter((c) => !namesToRemove.has(c.name));
 
-  // Nothing changed — skip the write to avoid unnecessary disk I/O
-  if (kept.length === existing.configurations.length) return;
+    // Nothing changed — skip the write to avoid unnecessary disk I/O
+    if (kept.length === existing.configurations.length) return;
 
-  const updated: LaunchJson = {
-    version: existing.version || LAUNCH_JSON_VERSION,
-    configurations: kept,
-  };
+    const updated: LaunchJson = {
+      version: existing.version || LAUNCH_JSON_VERSION,
+      configurations: kept,
+    };
 
-  await mkdir(dirname(launchJsonPath), { recursive: true });
-  await writeFile(launchJsonPath, JSON.stringify(updated, null, 2) + '\n', 'utf8');
+    await mkdir(dirname(launchJsonPath), { recursive: true });
+    await writeFile(launchJsonPath, JSON.stringify(updated, null, 2) + '\n', 'utf8');
+  });
 }
 
 function normalizeLaunchJson(value: unknown): LaunchJson {
