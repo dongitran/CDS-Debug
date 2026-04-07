@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
-import { logInfo, logWarn } from './logger';
+import { logInfo, logWarn, logError } from './logger';
 
 const execFileAsync = promisify(execFile);
 
@@ -44,9 +44,33 @@ function killProcessGroup(child: ChildProcess): void {
 // Used as a fallback when `cds debug` spawns `cf ssh` in a separate process group,
 // which means SIGTERM to the cds process group does NOT reach the SSH tunnel.
 async function killProcessOnPort(port: number): Promise<void> {
-  if (process.platform === 'win32') return;
+  const portStr = port.toString();
+  if (process.platform === 'win32') {
+    try {
+      const { stdout } = await execFileAsync('netstat', ['-ano']);
+      const lines = stdout.split('\n');
+      const pidsToKill = new Set<number>();
+      for (const line of lines) {
+        if (line.includes(`:${portStr}`) && line.includes('LISTENING')) {
+          const parts = line.trim().split(/\s+/);
+          const lastPart = parts[parts.length - 1];
+          if (!lastPart) continue;
+          const pid = parseInt(lastPart, 10);
+          if (!isNaN(pid)) pidsToKill.add(pid);
+        }
+      }
+      for (const pid of pidsToKill) {
+        // cspell:ignore taskkill
+        try { await execFileAsync('taskkill', ['/F', '/PID', pid.toString()]); } catch { /* ignore */ }
+      }
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
   try {
-    const { stdout } = await execFileAsync('lsof', ['-t', '-i', `tcp:${port.toString()}`]);
+    const { stdout } = await execFileAsync('lsof', ['-t', '-i', `tcp:${portStr}`]);
     const pids = stdout.trim().split('\n').filter(Boolean);
     for (const pidStr of pids) {
       const pid = parseInt(pidStr, 10);
@@ -141,7 +165,7 @@ function stopActiveDebugSessionForApp(appName: string): void {
   }
 }
 
-export function startTunnelAndAttach(appName: string, folderPath: string, port: number, launchConfigName: string): void {
+export async function startTunnelAndAttach(appName: string, folderPath: string, port: number, launchConfigName: string): Promise<void> {
   initializeProcessManager();
 
   let channel = channels.get(appName);
@@ -150,6 +174,13 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
     channels.set(appName, channel);
   }
   channel.clear();
+  
+  // Pre-flight check: Ensure the requested port is perfectly free
+  channel.appendLine(`[Extension] Ensuring port ${port.toString()} is free...`);
+  logInfo(`Ensuring port ${port.toString()} is free before starting...`);
+  await killProcessOnPort(port);
+  await new Promise(r => setTimeout(r, 200)); // allow OS buffer time to fully release the socket
+
   const cmdStr = `cds debug ${appName} -f --no-devtools -p ${port.toString()}`;
   channel.appendLine(`[Extension] Starting background process: ${cmdStr}`);
   logInfo(`[Background] ${cmdStr}`);
@@ -175,28 +206,47 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
     const ch = channels.get(appName);
     if (ch) ch.append(output);
 
+    const lowerOutput = output.toLowerCase();
+
+    // Check for SSH port binding failures
+    if (lowerOutput.includes('address already in use') || lowerOutput.includes('permission denied')) {
+      const errMsg = `Port ${port.toString()} is already in use or access was denied.`;
+      logError(`[${appName}] ${errMsg}`);
+      sessionStates.set(appName, { status: 'ERROR', message: errMsg });
+      debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: errMsg });
+      return;
+    }
+
     // Trigger attach when the tunnel is ready
-    if (!attached && output.toLowerCase().includes('now attach a debugger to port')) {
+    const hasDevToolsMsg = lowerOutput.includes('now attach a debugger to port');
+    const hasTunnelMsg = lowerOutput.includes('opening ssh tunnel');
+
+    if (!attached && (hasDevToolsMsg || hasTunnelMsg)) {
       attached = true;
-      if (ch) ch.appendLine(`\n[Extension] Detected debugger readiness. Attaching VS Code debug config '${launchConfigName}'...`);
-      logInfo(`Tunnel ready for ${appName}, attaching VS Code debugger...`);
+      const delayMs = hasDevToolsMsg ? 0 : 2000;
       
-      const workspaceFolder = vscode.workspace.workspaceFolders 
-        ? vscode.workspace.workspaceFolders[0] 
-        : undefined;
+      if (ch) ch.appendLine(`\n[Extension] Detected debugger readiness. Waiting ${delayMs.toString()}ms, then attaching VS Code debug config '${launchConfigName}'...`);
+      logInfo(`Tunnel ready for ${appName}, attaching VS Code debugger after ${delayMs.toString()}ms...`);
       
-      void vscode.debug.startDebugging(workspaceFolder, launchConfigName).then((success) => {
-        if (success) {
-          sessionStates.set(appName, { status: 'ATTACHED' });
-          debugProcessEvents.emit('statusChanged', { appName, status: 'ATTACHED' });
-          void vscode.window.showInformationMessage(`CDS Debug: debugger attached to ${appName}`);
-        } else {
-          sessionStates.set(appName, { status: 'ERROR', message: 'Failed to start VS Code debugging.' });
-          debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: 'Failed to start VS Code debugging.' });
-        }
-      });
+      setTimeout(() => {
+        const workspaceFolder = vscode.workspace.workspaceFolders 
+          ? vscode.workspace.workspaceFolders[0] 
+          : undefined;
+        
+        void vscode.debug.startDebugging(workspaceFolder, launchConfigName).then((success) => {
+          if (success) {
+            sessionStates.set(appName, { status: 'ATTACHED' });
+            debugProcessEvents.emit('statusChanged', { appName, status: 'ATTACHED' });
+            void vscode.window.showInformationMessage(`CDS Debug: debugger attached to ${appName}`);
+          } else {
+            sessionStates.set(appName, { status: 'ERROR', message: 'Failed to start VS Code debugging.' });
+            debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: 'Failed to start VS Code debugging.' });
+          }
+        });
+      }, delayMs);
     }
   };
+
 
   child.stdout.on('data', handleOutput);
   child.stderr.on('data', handleOutput);

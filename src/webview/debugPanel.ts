@@ -586,7 +586,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     for (const target of targets) {
       const launchConfigName = `Debug: ${target.appName}`;
-      startTunnelAndAttach(target.appName, target.folderPath, target.port, launchConfigName);
+      void startTunnelAndAttach(target.appName, target.folderPath, target.port, launchConfigName).catch((err: unknown) => {
+        logError(`Failed to start tunnel for ${target.appName}: ${err instanceof Error ? err.message : String(err)}`);
+      });
     }
 
     if (unmapped.length > 0) {
