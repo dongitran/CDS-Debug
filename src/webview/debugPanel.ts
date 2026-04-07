@@ -141,6 +141,24 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'CACHE_CONFIG', payload: getCacheSettings() });
         break;
 
+      case 'REQUEST_CHANGE_MAPPING': {
+        const choice = await vscode.window.showWarningMessage(
+          'You have active debug sessions running. Do you want to stop them before changing the organization mapping?',
+          { modal: true },
+          'Stop Sessions & Change',
+          'Keep Running & Change'
+        );
+        if (choice === 'Stop Sessions & Change') {
+          vscode.commands.executeCommand('cds-debug.stopAllDebug');
+          this.post({ type: 'PROCEED_CHANGE_MAPPING' });
+        } else if (choice === 'Keep Running & Change') {
+          this.post({ type: 'PROCEED_CHANGE_MAPPING' });
+        }
+        // Cancel does nothing
+        break;
+      }
+        break;
+
       case 'GET_DEBUG_PREFS':
         this.post({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
         break;

@@ -145,7 +145,8 @@ export type WebviewMessage =
   | { type: 'GET_CACHE_CONFIG' }
   | { type: 'SAVE_CACHE_CONFIG'; payload: CacheSettings }
   | { type: 'GET_DEBUG_PREFS' }
-  | { type: 'SAVE_DEBUG_PREFS'; payload: DebugPreferences };
+  | { type: 'SAVE_DEBUG_PREFS'; payload: DebugPreferences }
+  | { type: 'REQUEST_CHANGE_MAPPING' };
 
 // Messages from extension → webview
 export type ExtensionMessage =
@@ -161,6 +162,7 @@ export type ExtensionMessage =
   | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }> } }
   | { type: 'SYNC_STATUS'; payload: SyncProgress }
   | { type: 'CACHE_CONFIG'; payload: CacheSettings }
-  | { type: 'BRANCH_PREP_START'; payload: { services: BranchPrepService[] } }
+  | { type: 'DEBUG_PREFS'; payload: DebugPreferences }
+  | { type: 'BRANCH_PREP_START'; payload: { services: { appName: string; currentBranch: string; targetBranch: string }[] } }
   | { type: 'BRANCH_PREP_STATUS'; payload: { appName: string; step: BranchPrepStep; message?: string } }
-  | { type: 'DEBUG_PREFS'; payload: DebugPreferences };
+  | { type: 'PROCEED_CHANGE_MAPPING' };

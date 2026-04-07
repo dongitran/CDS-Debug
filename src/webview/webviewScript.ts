@@ -285,7 +285,13 @@ export function getScript(nonce: string): string {
       });
 
       $('btn-remap')?.addEventListener('click', () => {
-        state.screen = SCREENS.SELECT_ORG; state.error = null; render();
+        if (Object.keys(state.activeSessions).length > 0) {
+          vscode.postMessage({ type: 'REQUEST_CHANGE_MAPPING' });
+        } else {
+          state.screen = SCREENS.SELECT_ORG; 
+          state.error = null; 
+          render();
+        }
       });
 
       $('btn-retry-apps')?.addEventListener('click', () => {
@@ -319,6 +325,11 @@ export function getScript(nonce: string): string {
       switch (msg.type) {
         case 'GROUP_FOLDER_SELECTED':
           state.selectedFolder = msg.payload.path;
+          render();
+          break;
+        case 'PROCEED_CHANGE_MAPPING':
+          state.screen = SCREENS.SELECT_ORG;
+          state.error = null;
           render();
           return;
         case 'LOGIN_SUCCESS':
