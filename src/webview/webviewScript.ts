@@ -69,6 +69,11 @@ export function getScript(nonce: string): string {
       branchPrepServices: [],
       // Debug behavior preferences
       debugPrefs: { openBrowserOnAttach: false },
+      // True when the current LOAD_APPS was triggered automatically by session restore
+      // (VS Code restart). Used to determine whether APPS_ERROR should auto-reconnect.
+      isRestoringSession: false,
+      // True when auto-reconnect was triggered (shows different spinner message).
+      isReconnecting: false,
     };
 
     // === UTILS ===
@@ -312,20 +317,36 @@ export function getScript(nonce: string): string {
           return;
         case 'LOGIN_SUCCESS':
           state.orgs = msg.payload.orgs;
+          state.isReconnecting = false;
           state.screen = SCREENS.SELECT_ORG;
           state.error = null;
           break;
         case 'LOGIN_ERROR':
+          state.isReconnecting = false;
           state.error = msg.payload.message;
           state.screen = SCREENS.REGION;
           break;
         case 'APPS_LOADED':
           state.apps = msg.payload.apps;
           state.selectedApps = new Set();
+          state.isRestoringSession = false;
           state.screen = SCREENS.READY;
           state.error = null;
           break;
         case 'APPS_ERROR':
+          // If this error happened during session restore (VS Code restart), the CF
+          // session token is likely expired. Auto-reconnect using the saved endpoint
+          // so user lands on SELECT_ORG with a fresh org list instead of a broken
+          // READY screen.
+          if (state.isRestoringSession && state.apiEndpoint) {
+            state.isRestoringSession = false;
+            state.isReconnecting = true;
+            state.error = null;
+            state.screen = SCREENS.LOGGING_IN;
+            render();
+            vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: state.apiEndpoint } });
+            return;
+          }
           state.error = msg.payload.message;
           state.screen = SCREENS.READY;
           break;
@@ -438,6 +459,9 @@ export function getScript(nonce: string): string {
             if (state.mappings.length > 0) {
               state.selectedOrg = state.mappings[0].cfOrg;
               state.selectedFolder = state.mappings[0].groupFolderPath;
+              // Mark as restoring so APPS_ERROR can trigger auto-reconnect instead
+              // of leaving the user stuck on a broken READY screen.
+              state.isRestoringSession = true;
               state.screen = SCREENS.LOADING_APPS;
               render();
               vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });

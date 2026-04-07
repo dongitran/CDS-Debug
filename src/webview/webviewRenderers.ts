@@ -52,14 +52,20 @@ export function getRendererScriptContent(): string {
     }
 
     function renderLoggingIn() {
+      const cancelBtn = state.isReconnecting ? '' : \`
+        <div style="height:16px"></div>
+        <button class="btn btn-secondary" id="btn-cancel-login">&#8592; Cancel</button>
+      \`;
+      const headingText = state.isReconnecting
+        ? 'Session expired. Reconnecting\u2026'
+        : 'Logging in\u2026';
       return \`
         <div style="text-align:center;padding:24px 0">
           <span class="spinner"></span>
-          Logging in&hellip;
+          \${headingText}
         </div>
         <div class="radio-desc" style="text-align:center;margin-top:4px">\${escape(state.apiEndpoint)}</div>
-        <div style="height:16px"></div>
-        <button class="btn btn-secondary" id="btn-cancel-login">&#8592; Cancel</button>
+        \${cancelBtn}
       \`;
     }
 
