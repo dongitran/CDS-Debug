@@ -139,7 +139,7 @@ export function initializeProcessManager(): void {
   });
 }
 
-export function stopProcess(appName: string): void {
+export function stopProcess(appName: string, skipConfigCleanup = false): void {
   const p = processes.get(appName);
   if (p) {
     logInfo(`Killing process group for ${appName} explicitly.`);
@@ -161,23 +161,25 @@ export function stopProcess(appName: string): void {
   // Mark as stopped so downstream close/terminate events skip duplicate EXITED emit
   stoppedApps.add(appName);
   // Stop only sessions tied to this app, never unrelated debug sessions.
-  stopActiveDebugSessionForApp(appName);
+  stopActiveDebugSessionForApp(appName, skipConfigCleanup);
   sessionStates.delete(appName);
   debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
 }
 
-function stopActiveDebugSessionForApp(appName: string): void {
+function stopActiveDebugSessionForApp(appName: string, skipConfigCleanup = false): void {
   const sessionName = `${DEBUG_SESSION_PREFIX}${appName}`;
   const session = activeDebugSessions.get(sessionName);
   if (session) {
     void vscode.debug.stopDebugging(session);
   }
   // Also explicitly clean launch.json for this specific app when manually stopped.
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (workspaceRoot) {
-    void removeLaunchConfigs(workspaceRoot, [appName]).catch((err: unknown) => {
-      logWarn(`Failed to clean launch config for ${appName}: ${err instanceof Error ? err.message : String(err)}`);
-    });
+  if (!skipConfigCleanup) {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (workspaceRoot) {
+      void removeLaunchConfigs(workspaceRoot, [appName]).catch((err: unknown) => {
+        logWarn(`Failed to clean launch config for ${appName}: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
   }
 }
 
@@ -295,9 +297,18 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
 }
 
 export function stopAllProcesses(): void {
-  const appNames = Array.from(sessionStates.keys());
-  for (const appName of appNames) {
-    stopProcess(appName);
+  const activeAppNames = Array.from(sessionStates.keys());
+  
+  for (const appName of activeAppNames) {
+    stopProcess(appName, true);
+  }
+
+  // Bulk clean config outside the loop to prevent filesystem race conditions
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (workspaceRoot && activeAppNames.length > 0) {
+    void removeLaunchConfigs(workspaceRoot, activeAppNames).catch((err: unknown) => {
+      logWarn(`Failed to bulk clean launch configs: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 }
 
