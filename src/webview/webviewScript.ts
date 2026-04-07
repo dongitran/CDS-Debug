@@ -493,6 +493,11 @@ export function getScript(nonce: string): string {
 
     // === INIT ===
 
+    // Belt-and-suspenders: always request fresh prefs from globalState at startup.
+    // LOAD_CONFIG handler also pushes DEBUG_PREFS, but this handles rare timing
+    // races where acquireVsCodeApi() state held a stale openBrowserOnAttach:true
+    // value from a previous VS Code session.
+    vscode.postMessage({ type: 'GET_DEBUG_PREFS' });
     vscode.postMessage({ type: 'LOAD_CONFIG' });
     render();
   </script>`;

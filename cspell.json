@@ -105,6 +105,11 @@
     "togglethumb",
     "ldquo",
     "rdquo",
-    "prefs"
+    "prefs",
+    "behaviour",
+    "debugattach",
+    "vscodenotebox",
+    "vscodenoteicon",
+    "notebox"
   ]
 }

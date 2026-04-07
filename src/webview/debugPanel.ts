@@ -82,6 +82,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
             activeSessions: getActiveSessions(),
           },
         });
+        // Push current debug preferences immediately so the webview's in-memory
+        // state always reflects globalState — not a stale acquireVsCodeApi() snapshot
+        // from a previous VS Code session where openBrowserOnAttach may have been true.
+        this.post({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
         break;
       }
 

@@ -580,6 +580,35 @@ export function getStyles(): string {
       transform: translateX(14px);
     }
 
+    /* Informational note box in settings — explains VSCode's own debug settings */
+    .vscode-note-box {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      background: var(--vscode-textBlockQuote-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-left: 3px solid var(--vscode-editorInfo-foreground, var(--vscode-focusBorder));
+      border-radius: 0 4px 4px 0;
+      padding: 8px 10px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 4px;
+    }
+    .vscode-note-box code {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 10.5px;
+      background: var(--vscode-textCodeBlock-background);
+      padding: 0 3px;
+      border-radius: 2px;
+    }
+    .vscode-note-icon {
+      flex-shrink: 0;
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--vscode-editorInfo-foreground, var(--vscode-focusBorder));
+    }
+
     /* Branch preparation screen */
     .prep-list {
       display: flex;

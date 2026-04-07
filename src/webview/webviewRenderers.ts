@@ -485,18 +485,23 @@ export function getRendererScriptContent(): string {
 
         <label class="pref-row" for="chk-open-browser">
           <div class="pref-row-content">
-            <span class="pref-row-title">&#127758;&nbsp;Open browser on debugger attach
+            <span class="pref-row-title">&#127758;&nbsp;Auto-open browser on attach
               <span class="pref-state-badge \${state.debugPrefs.openBrowserOnAttach ? 'pref-state-on' : 'pref-state-off'}">
                 \${state.debugPrefs.openBrowserOnAttach ? 'enabled' : 'off by default'}
               </span>
             </span>
-            <span class="pref-row-desc">When enabled, automatically opens the app URL in your browser once the debugger attaches. Off by default &mdash; use the &ldquo;&#8599;&nbsp;Open&rdquo; button on each active session card for manual control.</span>
+            <span class="pref-row-desc">When enabled, this extension opens the app URL in your browser the moment the debugger attaches. Disabled by default &mdash; use the &ldquo;&#8599;&nbsp;Open&rdquo; button on each session card for manual control.</span>
           </div>
           <div class="toggle-switch \${state.debugPrefs.openBrowserOnAttach ? 'on' : ''}">
             <input type="checkbox" id="chk-open-browser" \${state.debugPrefs.openBrowserOnAttach ? 'checked' : ''} />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </div>
         </label>
+
+        <div class="vscode-note-box" id="vscode-browser-hint">
+          <span class="vscode-note-icon">&#8505;</span>
+          <span><strong>Browser still opening?</strong> VS Code\u2019s built-in JavaScript debugger has its own auto-open behaviour independent of this extension. If a browser opens even with this toggle <em>off</em>, disable it in VS Code: open <code>Settings</code> &rarr; search <code>debug.javascript.openBrowserOnDebugAttach</code> &rarr; set to <code>never</code>.</span>
+        </div>
 
         <div style="height:4px"></div>
 
