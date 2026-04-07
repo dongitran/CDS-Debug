@@ -150,12 +150,12 @@ export function startTunnelAndAttach(appName: string, folderPath: string, port: 
     channels.set(appName, channel);
   }
   channel.clear();
-  const cmdStr = `cds debug ${appName} -f -n -p ${port.toString()}`;
+  const cmdStr = `cds debug ${appName} -f --no-devtools -p ${port.toString()}`;
   channel.appendLine(`[Extension] Starting background process: ${cmdStr}`);
   logInfo(`[Background] ${cmdStr}`);
 
   const isWindows = process.platform === 'win32';
-  const child = spawn(isWindows ? 'cds.cmd' : 'cds', ['debug', appName, '-f', '-n', '-p', port.toString()], {
+  const child = spawn(isWindows ? 'cds.cmd' : 'cds', ['debug', appName, '-f', '--no-devtools', '-p', port.toString()], {
     cwd: folderPath,
     shell: isWindows,
     // On Unix, detached creates a new process group so killProcessGroup(-pid)
