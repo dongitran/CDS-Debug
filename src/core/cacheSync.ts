@@ -15,15 +15,21 @@ const SCAN_REGIONS = [
   { code: 'eu30', name: 'Europe (Frankfurt) GCP' },
   { code: 'ch20', name: 'Switzerland (Zürich)' },
   { code: 'us10', name: 'US East (VA)' },
+  { code: 'us11', name: 'US East (us11)' },
   { code: 'us20', name: 'US West (WA)' },
+  { code: 'us21', name: 'US West (us21)' },
   { code: 'us30', name: 'US Central (Iowa)' },
   { code: 'ap10', name: 'Australia (Sydney)' },
   { code: 'ap11', name: 'Singapore' },
   { code: 'ap12', name: 'South Korea (Seoul)' },
+  { code: 'ap20', name: 'APJ (Osaka)' },
+  { code: 'ap21', name: 'Singapore (Azure)' },
   { code: 'jp10', name: 'Japan (Tokyo)' },
+  { code: 'jp20', name: 'Japan (Osaka)' },
   { code: 'in30', name: 'India (Mumbai)' },
   { code: 'br10', name: 'Brazil (São Paulo)' },
   { code: 'ca10', name: 'Canada (Montreal)' },
+  { code: 'ca20', name: 'Canada (Toronto)' },
 ] as const;
 
 export const cacheSyncEvents = new EventEmitter();
