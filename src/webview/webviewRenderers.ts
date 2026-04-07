@@ -498,11 +498,6 @@ export function getRendererScriptContent(): string {
           </div>
         </label>
 
-        <div class="vscode-note-box" id="vscode-browser-hint">
-          <span class="vscode-note-icon">&#8505;</span>
-          <span><strong>Browser still opening?</strong> VS Code\u2019s built-in JavaScript debugger has its own auto-open behaviour independent of this extension. If a browser opens even with this toggle <em>off</em>, disable it in VS Code: open <code>Settings</code> &rarr; search <code>debug.javascript.openBrowserOnDebugAttach</code> &rarr; set to <code>never</code>.</span>
-        </div>
-
         <div style="height:4px"></div>
 
         <label class="pref-row" for="chk-branch-prep">
