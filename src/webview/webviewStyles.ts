@@ -484,5 +484,70 @@ export function getStyles(): string {
       .region-grid { grid-template-columns: 1fr; }
       .region-card-custom { grid-column: 1; }
     }
+
+    /* Branch preparation screen */
+    .prep-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .prep-row {
+      background: var(--vscode-editorGroupHeader-tabsBackground);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      animation: slideIn 0.25s ease;
+    }
+    .prep-row-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 5px;
+    }
+    .prep-name {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      font-weight: 600;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .branch-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 10px;
+      font-family: var(--vscode-editor-font-family);
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+      padding: 1px 7px 1px 5px;
+      border-radius: 99px;
+      flex-shrink: 0;
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .prep-row-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      min-height: 16px;
+    }
+    .prep-icon {
+      font-size: 12px;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .prep-icon-ok  { color: var(--vscode-testing-iconPassed); }
+    .prep-icon-skip { color: var(--vscode-descriptionForeground); }
+    .prep-icon-err { color: var(--vscode-testing-iconFailed); }
+    .prep-status-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   `;
 }

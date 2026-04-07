@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
-import type { CacheSettings, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
+import { join } from 'node:path';
+import type { BranchPrepService, BranchPrepStep, CacheSettings, CapDebugConfig, DebugTarget, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
 import { DEFAULT_CACHE_SETTINGS } from '../types/index';
 import { cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
-import { mergeLaunchJson, removeLaunchConfigs } from '../core/launchConfigurator';
+import { mergeLaunchJson, readCapDebugConfig, removeLaunchConfigs } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
 import { getCredentials } from '../core/shellEnv';
 import { getCachedApps, getCacheSettings, saveCacheSettings } from '../storage/cacheStore';
@@ -12,6 +13,23 @@ import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSync
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
 import { startTunnelAndAttach, stopProcess, stopAllProcesses, debugProcessEvents, getActiveSessions } from '../core/processManager';
+import {
+  checkoutBranch,
+  getCurrentBranch,
+  getGitRepoRoot,
+  hasUncommittedChanges,
+  listBranches,
+  runPnpmBuild,
+  runPnpmInstall,
+  stashChanges,
+} from '../core/gitOperations';
+
+interface ServiceBranchInfo {
+  appName: string;
+  folderPath: string;
+  repoRoot: string | null;
+  targetBranch: string | null;
+}
 
 export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'cdsDebug.mainView';
@@ -287,7 +305,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         folderPath = await findRepoFolder(groupPath, candidate);
         if (folderPath !== null) break;
       }
-      
+
       if (folderPath !== null) {
         resolvedPaths.push(folderPath);
         logInfo(`Mapped: ${appName} → ${folderPath}`);
@@ -301,10 +319,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const existingPorts: Record<string, number> = {};
     const usedPorts = new Set<number>();
     try {
-      const existingConfigs = await import('../core/launchConfigurator').then(m => m.getExistingLaunchConfigs(workspaceRoot));
+      const existingConfigs = await import('../core/launchConfigurator').then((m) => m.getExistingLaunchConfigs(workspaceRoot));
       for (const c of existingConfigs.configurations) {
         if (c.port) usedPorts.add(c.port);
-        // Extract original appName from "Debug: app-name"
         if (c.name.startsWith('Debug: ')) {
           existingPorts[c.name.slice(7)] = c.port;
         }
@@ -322,6 +339,219 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // Read workspace-level config for orgBranchMap fallback
+    const workspaceCapConfig = await readCapDebugConfig(join(workspaceRoot, '.vscode'));
+
+    // Resolve target branches: config lookup + optional QuickPick for unconfigured repos
+    const branchInfos = await this.resolveTargetBranches(targets, org, workspaceCapConfig);
+
+    // Services with a target branch go through preparation; others proceed directly
+    const servicesNeedingPrep = branchInfos.filter((b) => b.targetBranch !== null);
+    const targetsSkippingPrep = targets.filter((t) => !branchInfos.find((b) => b.appName === t.appName)?.targetBranch);
+
+    let finalTargets: DebugTarget[];
+
+    if (servicesNeedingPrep.length > 0) {
+      // Build list for webview prep screen (targetBranch is non-null for servicesNeedingPrep)
+      const prepServices: BranchPrepService[] = await Promise.all(
+        servicesNeedingPrep.map(async (b) => ({
+          appName: b.appName,
+          targetBranch: b.targetBranch ?? '',
+          currentBranch: (await getCurrentBranch(b.repoRoot ?? b.folderPath)) ?? 'unknown',
+        })),
+      );
+      this.post({ type: 'BRANCH_PREP_START', payload: { services: prepServices } });
+
+      const prepSuccessful = await this.runBranchPreparation(targets, branchInfos);
+      finalTargets = [...targetsSkippingPrep, ...prepSuccessful];
+    } else {
+      finalTargets = targets;
+    }
+
+    if (finalTargets.length === 0) {
+      this.post({ type: 'DEBUG_ERROR', payload: { message: 'Branch preparation failed for all services.' } });
+      return;
+    }
+
+    await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped);
+  }
+
+  /**
+   * Determines the target branch for each debug target.
+   * Priority: per-app `branch` field > workspace `orgBranchMap` > per-app `orgBranchMap` > QuickPick.
+   * QuickPick is shown once per git repo root to avoid duplicate prompts in monorepos.
+   */
+  private async resolveTargetBranches(
+    targets: DebugTarget[],
+    org: string,
+    workspaceConfig: CapDebugConfig | null,
+  ): Promise<ServiceBranchInfo[]> {
+    const results: ServiceBranchInfo[] = [];
+    const repoRoots = new Map<string, string | null>(); // folderPath → repoRoot
+    const resolvedBranches = new Map<string, string | null>(); // appName → targetBranch
+
+    // Repos that need a QuickPick: repoRoot → appNames
+    const reposNeedingPrompt = new Map<string, string[]>();
+
+    for (const target of targets) {
+      let repoRoot = repoRoots.get(target.folderPath);
+      if (repoRoot === undefined) {
+        repoRoot = await getGitRepoRoot(target.folderPath);
+        repoRoots.set(target.folderPath, repoRoot);
+      }
+
+      const appConfig = await readCapDebugConfig(target.folderPath);
+
+      if (appConfig?.branch) {
+        // Highest priority: per-app branch override
+        resolvedBranches.set(target.appName, appConfig.branch);
+      } else {
+        const orgMap = workspaceConfig?.orgBranchMap ?? appConfig?.orgBranchMap;
+        if (orgMap?.[org]) {
+          resolvedBranches.set(target.appName, orgMap[org]);
+        } else if (repoRoot) {
+          // Queue for QuickPick (grouped by repo root to avoid duplicate prompts)
+          if (!reposNeedingPrompt.has(repoRoot)) reposNeedingPrompt.set(repoRoot, []);
+          const queuedNames = reposNeedingPrompt.get(repoRoot);
+          if (queuedNames) queuedNames.push(target.appName);
+        } else {
+          // Not a git repo — skip branch ops
+          resolvedBranches.set(target.appName, null);
+        }
+      }
+    }
+
+    // Show one QuickPick per repo that has no configured branch
+    for (const [repoRoot, appNamesForRepo] of reposNeedingPrompt) {
+      const branches = await listBranches(repoRoot);
+      const currentBranch = await getCurrentBranch(repoRoot);
+      const serviceLabel = appNamesForRepo.join(', ');
+
+      type BranchItem = vscode.QuickPickItem & { branch: string | null };
+      const items: BranchItem[] = [
+        {
+          label: '$(close) Skip branch switch',
+          description: currentBranch ? `Keep current: ${currentBranch}` : 'Keep current branch',
+          branch: null,
+        },
+        ...branches.map((b): BranchItem => {
+          const item: BranchItem = { label: `$(git-branch) ${b}`, branch: b };
+          if (b === currentBranch) item.description = 'current';
+          return item;
+        }),
+      ];
+
+      const selected = await vscode.window.showQuickPick(items, {
+        title: `Select branch to debug: ${serviceLabel}`,
+        placeHolder: `Current branch: ${currentBranch ?? 'unknown'}`,
+        matchOnDescription: true,
+      });
+
+      const chosenBranch = selected ? selected.branch : null;
+      for (const appName of appNamesForRepo) {
+        resolvedBranches.set(appName, chosenBranch);
+      }
+    }
+
+    for (const target of targets) {
+      results.push({
+        appName: target.appName,
+        folderPath: target.folderPath,
+        repoRoot: repoRoots.get(target.folderPath) ?? null,
+        targetBranch: resolvedBranches.get(target.appName) ?? null,
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * Runs branch preparation (stash → checkout → install → build) for services
+   * that have a target branch. Handles monorepos by processing each git root once.
+   * Returns the list of DebugTargets whose preparation succeeded.
+   */
+  private async runBranchPreparation(
+    targets: DebugTarget[],
+    branchInfos: ServiceBranchInfo[],
+  ): Promise<DebugTarget[]> {
+    const successfulTargets: DebugTarget[] = [];
+
+    // Track per-repo whether a branch checkout was performed (for monorepo pnpm sharing)
+    const repoCheckedOut = new Map<string, boolean>();
+
+    const postStatus = (appName: string, step: BranchPrepStep, message?: string): void => {
+      const payload: { appName: string; step: BranchPrepStep; message?: string } = { appName, step };
+      if (message !== undefined) payload.message = message;
+      this.post({ type: 'BRANCH_PREP_STATUS', payload });
+    };
+
+    for (const info of branchInfos) {
+      if (info.targetBranch === null) continue; // handled separately (targetsSkippingPrep)
+
+      const target = targets.find((t) => t.appName === info.appName);
+      if (!target) continue;
+
+      const repoRoot = info.repoRoot ?? info.folderPath;
+      const alreadyProcessedRepo = repoCheckedOut.has(repoRoot);
+
+      try {
+        if (!alreadyProcessedRepo) {
+          const currentBranch = await getCurrentBranch(repoRoot);
+
+          if (currentBranch === info.targetBranch) {
+            // Already on the correct branch — no checkout needed
+            logInfo(`[${info.appName}] Already on branch ${info.targetBranch}, skipping git ops.`);
+            postStatus(info.appName, 'skipped', `Already on branch ${info.targetBranch}`);
+            repoCheckedOut.set(repoRoot, false);
+            successfulTargets.push(target);
+            continue;
+          }
+
+          // Stash uncommitted changes if any
+          const dirty = await hasUncommittedChanges(repoRoot);
+          if (dirty) {
+            logInfo(`[${info.appName}] Stashing uncommitted changes in ${repoRoot}`);
+            postStatus(info.appName, 'stashing');
+            await stashChanges(repoRoot);
+          }
+
+          // Checkout target branch
+          logInfo(`[${info.appName}] Checking out branch ${info.targetBranch} in ${repoRoot}`);
+          postStatus(info.appName, 'checking-out');
+          await checkoutBranch(repoRoot, info.targetBranch);
+          repoCheckedOut.set(repoRoot, true);
+        } else if (!repoCheckedOut.get(repoRoot)) {
+          // Shared repo that was already-on-right-branch — skip this service too
+          logInfo(`[${info.appName}] Shared repo already on correct branch, skipping git ops.`);
+          postStatus(info.appName, 'skipped', `Already on branch ${info.targetBranch}`);
+          successfulTargets.push(target);
+          continue;
+        }
+
+        // Run pnpm install + build after checkout
+        logInfo(`[${info.appName}] Running pnpm install in ${info.folderPath}`);
+        postStatus(info.appName, 'installing');
+        await runPnpmInstall(info.folderPath);
+
+        logInfo(`[${info.appName}] Running pnpm build in ${info.folderPath}`);
+        postStatus(info.appName, 'building');
+        await runPnpmBuild(info.folderPath);
+
+        logInfo(`[${info.appName}] Branch preparation complete.`);
+        postStatus(info.appName, 'done');
+        successfulTargets.push(target);
+      } catch (err: unknown) {
+        const msg = extractErrorMessage(err);
+        logError(`Branch prep failed for ${info.appName}: ${msg}`);
+        postStatus(info.appName, 'error', msg);
+      }
+    }
+
+    return successfulTargets;
+  }
+
+  /** Merges launch.json, posts DEBUG_CONNECTING, and starts tunnel processes. */
+  private async launchDebugSessions(targets: DebugTarget[], workspaceRoot: string, unmapped: string[]): Promise<void> {
     await mergeLaunchJson(workspaceRoot, targets);
     logInfo(`Updated .vscode/launch.json with ${targets.length.toString()} config(s).`);
 

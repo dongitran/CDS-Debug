@@ -1,5 +1,30 @@
 export const CF_DEFAULT_SPACE = 'app';
 
+// Schema for the optional per-project config file (cap-debug-config.json).
+export interface CapDebugConfig {
+  remoteRoot?: string;
+  /** Per-service branch override — takes priority over orgBranchMap. */
+  branch?: string;
+  /** Maps CF org name to the git branch that should be checked out before debugging. */
+  orgBranchMap?: Record<string, string>;
+}
+
+export type BranchPrepStep =
+  | 'pending'
+  | 'stashing'
+  | 'checking-out'
+  | 'installing'
+  | 'building'
+  | 'done'
+  | 'skipped'
+  | 'error';
+
+export interface BranchPrepService {
+  appName: string;
+  targetBranch: string;
+  currentBranch: string;
+}
+
 export const CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 
 export const DEBUG_BASE_PORT = 9229;
@@ -112,4 +137,6 @@ export type ExtensionMessage =
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
   | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }> } }
   | { type: 'SYNC_STATUS'; payload: SyncProgress }
-  | { type: 'CACHE_CONFIG'; payload: CacheSettings };
+  | { type: 'CACHE_CONFIG'; payload: CacheSettings }
+  | { type: 'BRANCH_PREP_START'; payload: { services: BranchPrepService[] } }
+  | { type: 'BRANCH_PREP_STATUS'; payload: { appName: string; step: BranchPrepStep; message?: string } };

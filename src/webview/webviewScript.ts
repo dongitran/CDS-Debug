@@ -20,6 +20,7 @@ export function getScript(nonce: string): string {
       LOADING_APPS: 'loading-apps',
       READY: 'ready',
       SETTINGS: 'settings',
+      PREPARING_BRANCHES: 'preparing-branches',
     };
 
     const CF_REGIONS = [
@@ -64,6 +65,8 @@ export function getScript(nonce: string): string {
       activeSessions: {}, // { appName: { status, message, msgPhase, intervalId } }
       syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 14 },
       cacheConfig: { enabled: true, intervalHours: 4 },
+      // Branch preparation state: [{ appName, targetBranch, currentBranch, step, message }]
+      branchPrepServices: [],
     };
 
     // === UTILS ===
@@ -118,14 +121,15 @@ export function getScript(nonce: string): string {
 
     function renderScreen() {
       switch (state.screen) {
-        case SCREENS.REGION:        return renderRegion();
-        case SCREENS.LOGGING_IN:    return renderLoggingIn();
-        case SCREENS.SELECT_ORG:    return renderSelectOrg();
-        case SCREENS.SELECT_FOLDER: return renderSelectFolder();
-        case SCREENS.LOADING_APPS:  return renderLoadingApps();
-        case SCREENS.READY:         return renderReady();
-        case SCREENS.SETTINGS:      return renderSettings();
-        default:                    return '';
+        case SCREENS.REGION:              return renderRegion();
+        case SCREENS.LOGGING_IN:          return renderLoggingIn();
+        case SCREENS.SELECT_ORG:          return renderSelectOrg();
+        case SCREENS.SELECT_FOLDER:       return renderSelectFolder();
+        case SCREENS.LOADING_APPS:        return renderLoadingApps();
+        case SCREENS.READY:               return renderReady();
+        case SCREENS.SETTINGS:            return renderSettings();
+        case SCREENS.PREPARING_BRANCHES:  return renderPreparingBranches();
+        default:                          return '';
       }
     }
 
@@ -323,7 +327,27 @@ export function getScript(nonce: string): string {
           state.error = msg.payload.message;
           state.screen = SCREENS.READY;
           break;
+        case 'BRANCH_PREP_START': {
+          state.branchPrepServices = msg.payload.services.map(function(s) {
+            return { appName: s.appName, targetBranch: s.targetBranch, currentBranch: s.currentBranch, step: 'pending', message: null };
+          });
+          state.screen = SCREENS.PREPARING_BRANCHES;
+          break;
+        }
+        case 'BRANCH_PREP_STATUS': {
+          var svc = state.branchPrepServices.find(function(s) { return s.appName === msg.payload.appName; });
+          if (svc) {
+            svc.step = msg.payload.step;
+            if (msg.payload.message) svc.message = msg.payload.message;
+          }
+          if (state.screen === SCREENS.PREPARING_BRANCHES) render();
+          return;
+        }
         case 'DEBUG_CONNECTING': {
+          // If coming from branch prep screen, transition back to ready
+          if (state.screen === SCREENS.PREPARING_BRANCHES) {
+            state.screen = SCREENS.READY;
+          }
           msg.payload.appNames.forEach(appName => {
             const port = (msg.payload.ports || {})[appName];
             state.activeSessions[appName] = { status: 'TUNNELING', msgPhase: 0, port };
