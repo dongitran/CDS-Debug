@@ -1,15 +1,10 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import type { DebugTarget, LaunchConfiguration, LaunchJson } from '../types/index';
+import type { CapDebugConfig, DebugTarget, LaunchConfiguration, LaunchJson } from '../types/index';
 
 const LAUNCH_JSON_VERSION = '0.2.0';
 const SKIP_FILES = ['<node_internals>/**', '**/node_modules/**'];
 const GEN_SRV_SUFFIX = 'gen/srv';
-
-// Schema for the optional per-project config file.
-interface CapDebugConfig {
-  remoteRoot?: string;
-}
 
 // Reads cap-debug-config.json from the app's root folder.
 // Returns null if the file does not exist or is malformed.
@@ -20,10 +15,18 @@ export async function readCapDebugConfig(folderPath: string): Promise<CapDebugCo
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== 'object' || parsed === null) return null;
     const record = parsed as Record<string, unknown>;
-    if (typeof record.remoteRoot === 'string') {
-      return { remoteRoot: record.remoteRoot };
+    const result: CapDebugConfig = {};
+    if (typeof record.remoteRoot === 'string') result.remoteRoot = record.remoteRoot;
+    if (typeof record.branch === 'string') result.branch = record.branch;
+    if (typeof record.orgBranchMap === 'object' && record.orgBranchMap !== null) {
+      const map = record.orgBranchMap as Record<string, unknown>;
+      const validated: Record<string, string> = {};
+      for (const [key, val] of Object.entries(map)) {
+        if (typeof val === 'string') validated[key] = val;
+      }
+      result.orgBranchMap = validated;
     }
-    return {};
+    return result;
   } catch {
     // File absent or cannot be parsed — caller falls back to defaults
     return null;
@@ -59,12 +62,14 @@ export function buildLaunchConfiguration(
 
 export async function generateLaunchConfigurations(
   targets: DebugTarget[],
+  fallbackConfig: CapDebugConfig | null = null,
 ): Promise<LaunchConfiguration[]> {
   const configs: LaunchConfiguration[] = [];
   for (const target of targets) {
-    const capConfig = await readCapDebugConfig(target.folderPath);
-    // capConfig.remoteRoot is used when set; undefined means field is omitted
-    configs.push(buildLaunchConfiguration(target, capConfig?.remoteRoot));
+    const appConfig = await readCapDebugConfig(target.folderPath);
+    // Per-app config takes priority; workspace-level .vscode/cap-debug-config.json is the fallback
+    const remoteRoot = appConfig?.remoteRoot ?? fallbackConfig?.remoteRoot;
+    configs.push(buildLaunchConfiguration(target, remoteRoot));
   }
   return configs;
 }
@@ -83,7 +88,12 @@ export async function getExistingLaunchConfigs(workspacePath: string): Promise<L
 
 export async function mergeLaunchJson(workspacePath: string, targets: DebugTarget[]): Promise<void> {
   const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
-  const newConfigs = await generateLaunchConfigurations(targets);
+
+  // Read workspace-level config from .vscode/cap-debug-config.json as fallback.
+  // Per-app config (in each service folder) takes priority over this.
+  const workspaceConfig = await readCapDebugConfig(join(workspacePath, '.vscode'));
+
+  const newConfigs = await generateLaunchConfigurations(targets, workspaceConfig);
   const newNames = new Set(newConfigs.map((c) => c.name));
 
   const existing = await getExistingLaunchConfigs(workspacePath);

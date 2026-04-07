@@ -8,9 +8,11 @@ import {
   saveSyncProgress,
   getCacheSettings,
   saveCacheSettings,
+  getDebugPreferences,
+  saveDebugPreferences,
 } from '../../src/storage/cacheStore';
-import type { CfApp, SyncProgress, CacheSettings } from '../../src/types/index';
-import { DEFAULT_CACHE_SETTINGS } from '../../src/types/index';
+import type { CfApp, SyncProgress, CacheSettings, DebugPreferences } from '../../src/types/index';
+import { DEFAULT_CACHE_SETTINGS, DEFAULT_DEBUG_PREFERENCES } from '../../src/types/index';
 
 function makeContext() {
   const store = new Map<string, unknown>();
@@ -145,6 +147,28 @@ describe('cacheStore', () => {
     await saveCacheSettings({ enabled: false, intervalHours: 1 });
 
     expect(getCacheSettings()).toEqual({ enabled: false, intervalHours: 1 });
+  });
+
+  // ── debug preferences ──────────────────────────────────────────────────────
+
+  it('getDebugPreferences returns DEFAULT_DEBUG_PREFERENCES when nothing has been saved', () => {
+    expect(getDebugPreferences()).toEqual(DEFAULT_DEBUG_PREFERENCES);
+  });
+
+  it('saveDebugPreferences persists prefs and getDebugPreferences retrieves them', async () => {
+    const prefs: DebugPreferences = { openBrowserOnAttach: true };
+    await saveDebugPreferences(prefs);
+    expect(getDebugPreferences()).toEqual(prefs);
+  });
+
+  it('saveDebugPreferences overwrites previous prefs', async () => {
+    await saveDebugPreferences({ openBrowserOnAttach: true });
+    await saveDebugPreferences({ openBrowserOnAttach: false });
+    expect(getDebugPreferences().openBrowserOnAttach).toBe(false);
+  });
+
+  it('DEFAULT_DEBUG_PREFERENCES has openBrowserOnAttach = false', () => {
+    expect(DEFAULT_DEBUG_PREFERENCES.openBrowserOnAttach).toBe(false);
   });
 
   // ── uninitialized guard ────────────────────────────────────────────────────

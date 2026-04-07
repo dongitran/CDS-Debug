@@ -1,5 +1,30 @@
 export const CF_DEFAULT_SPACE = 'app';
 
+// Schema for the optional per-project config file (cap-debug-config.json).
+export interface CapDebugConfig {
+  remoteRoot?: string;
+  /** Per-service branch override — takes priority over orgBranchMap. */
+  branch?: string;
+  /** Maps CF org name to the git branch that should be checked out before debugging. */
+  orgBranchMap?: Record<string, string>;
+}
+
+export type BranchPrepStep =
+  | 'pending'
+  | 'stashing'
+  | 'checking-out'
+  | 'installing'
+  | 'building'
+  | 'done'
+  | 'skipped'
+  | 'error';
+
+export interface BranchPrepService {
+  appName: string;
+  targetBranch: string;
+  currentBranch: string;
+}
+
 export const CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 
 export const DEBUG_BASE_PORT = 9229;
@@ -82,6 +107,16 @@ export const DEFAULT_CACHE_SETTINGS: CacheSettings = {
   intervalHours: 4,
 };
 
+/** User-facing debug behavior preferences (separate from cache settings). */
+export interface DebugPreferences {
+  /** Whether the "Open in Browser" button is shown on active debug cards. Default: false. */
+  openBrowserOnAttach: boolean;
+}
+
+export const DEFAULT_DEBUG_PREFERENCES: DebugPreferences = {
+  openBrowserOnAttach: false,
+};
+
 // Messages from webview → extension
 export type WebviewMessage =
   | { type: 'SELECT_GROUP_FOLDER' }
@@ -97,7 +132,9 @@ export type WebviewMessage =
   | { type: 'TRIGGER_SYNC' }
   | { type: 'GET_SYNC_STATUS' }
   | { type: 'GET_CACHE_CONFIG' }
-  | { type: 'SAVE_CACHE_CONFIG'; payload: CacheSettings };
+  | { type: 'SAVE_CACHE_CONFIG'; payload: CacheSettings }
+  | { type: 'GET_DEBUG_PREFS' }
+  | { type: 'SAVE_DEBUG_PREFS'; payload: DebugPreferences };
 
 // Messages from extension → webview
 export type ExtensionMessage =
@@ -112,4 +149,7 @@ export type ExtensionMessage =
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
   | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }> } }
   | { type: 'SYNC_STATUS'; payload: SyncProgress }
-  | { type: 'CACHE_CONFIG'; payload: CacheSettings };
+  | { type: 'CACHE_CONFIG'; payload: CacheSettings }
+  | { type: 'BRANCH_PREP_START'; payload: { services: BranchPrepService[] } }
+  | { type: 'BRANCH_PREP_STATUS'; payload: { appName: string; step: BranchPrepStep; message?: string } }
+  | { type: 'DEBUG_PREFS'; payload: DebugPreferences };

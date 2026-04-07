@@ -1,10 +1,11 @@
 import type * as vscode from 'vscode';
-import type { CacheSettings, CfApp, CfRegionCache, SyncProgress } from '../types/index';
-import { DEFAULT_CACHE_SETTINGS } from '../types/index';
+import type { CacheSettings, CfApp, CfRegionCache, DebugPreferences, SyncProgress } from '../types/index';
+import { DEFAULT_CACHE_SETTINGS, DEFAULT_DEBUG_PREFERENCES } from '../types/index';
 
 const CACHE_KEY = 'cds-debug.appCache';
 const SYNC_KEY = 'cds-debug.syncProgress';
 const SETTINGS_KEY = 'cds-debug.cacheSettings';
+const DEBUG_PREFS_KEY = 'cds-debug.debugPrefs';
 
 let _context: vscode.ExtensionContext | undefined;
 
@@ -60,4 +61,12 @@ export function getCacheSettings(): CacheSettings {
 
 export async function saveCacheSettings(settings: CacheSettings): Promise<void> {
   await ctx().globalState.update(SETTINGS_KEY, settings);
+}
+
+export function getDebugPreferences(): DebugPreferences {
+  return ctx().globalState.get<DebugPreferences>(DEBUG_PREFS_KEY) ?? { ...DEFAULT_DEBUG_PREFERENCES };
+}
+
+export async function saveDebugPreferences(prefs: DebugPreferences): Promise<void> {
+  await ctx().globalState.update(DEBUG_PREFS_KEY, prefs);
 }

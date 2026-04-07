@@ -52,14 +52,20 @@ export function getRendererScriptContent(): string {
     }
 
     function renderLoggingIn() {
+      const cancelBtn = state.isReconnecting ? '' : \`
+        <div style="height:16px"></div>
+        <button class="btn btn-secondary" id="btn-cancel-login">&#8592; Cancel</button>
+      \`;
+      const headingText = state.isReconnecting
+        ? 'Session expired. Reconnecting\u2026'
+        : 'Logging in\u2026';
       return \`
         <div style="text-align:center;padding:24px 0">
           <span class="spinner"></span>
-          Logging in&hellip;
+          \${headingText}
         </div>
         <div class="radio-desc" style="text-align:center;margin-top:4px">\${escape(state.apiEndpoint)}</div>
-        <div style="height:16px"></div>
-        <button class="btn btn-secondary" id="btn-cancel-login">&#8592; Cancel</button>
+        \${cancelBtn}
       \`;
     }
 
@@ -147,7 +153,7 @@ export function getRendererScriptContent(): string {
       const appUrl = rawUrl ? (rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl) : '';
       const portText = session.port ? '<span class="active-card-port">:' + session.port + '</span>' : '';
 
-      const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
+      const openBtn = (session.status === 'ATTACHED' && appUrl && state.debugPrefs.openBrowserOnAttach) ? \`
         <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
           title="Open App in Browser" aria-label="Open \${escape(appName)} in browser">
           &#8599; Open
@@ -232,13 +238,13 @@ export function getRendererScriptContent(): string {
         const existingOpenBtn = card.querySelector('[data-open-url]');
         const stopBtn = card.querySelector('[data-stop-app]');
 
-        if (session.status === 'ATTACHED' && appUrl && !existingOpenBtn && stopBtn) {
+        if (session.status === 'ATTACHED' && appUrl && state.debugPrefs.openBrowserOnAttach && !existingOpenBtn && stopBtn) {
           const tmp = document.createElement('div');
           tmp.innerHTML = '<button class="active-open-btn" data-open-url="' + escape(appUrl) + '"'
             + ' title="Open App in Browser" aria-label="Open ' + escape(appName) + ' in browser">'
             + '&#8599; Open App</button>';
           stopBtn.parentNode.insertBefore(tmp.firstChild, stopBtn);
-        } else if (session.status !== 'ATTACHED' && existingOpenBtn) {
+        } else if ((session.status !== 'ATTACHED' || !state.debugPrefs.openBrowserOnAttach) && existingOpenBtn) {
           existingOpenBtn.remove();
         }
       }
@@ -471,6 +477,21 @@ export function getRendererScriptContent(): string {
           <span class="step-title">Settings</span>
         </div>
 
+        <div class="section-label">Debug Behavior</div>
+
+        <label class="pref-row" for="chk-open-browser">
+          <div class="pref-row-content">
+            <span class="pref-row-title">Open app in browser</span>
+            <span class="pref-row-desc">Show an &ldquo;Open&rdquo; button on active sessions that opens the app URL in your default browser. Off by default.</span>
+          </div>
+          <div class="toggle-switch \${state.debugPrefs.openBrowserOnAttach ? 'on' : ''}">
+            <input type="checkbox" id="chk-open-browser" \${state.debugPrefs.openBrowserOnAttach ? 'checked' : ''} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </div>
+        </label>
+
+        <div class="divider" style="margin:12px 0"></div>
+
         <div class="section-label">App Cache</div>
 
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:10px;font-size:13px">
@@ -501,6 +522,80 @@ export function getRendererScriptContent(): string {
       \`;
     }
 
+    // === BRANCH PREP SCREEN ===
+
+    function getBranchPrepStepInfo(service) {
+      var step = service.step;
+      if (step === 'done') {
+        return { icon: '<span class="prep-icon prep-icon-ok">&#10003;</span>', text: 'Ready' };
+      }
+      if (step === 'skipped') {
+        return { icon: '<span class="prep-icon prep-icon-skip">&#8212;</span>', text: escape(service.message || 'No branch change needed') };
+      }
+      if (step === 'error') {
+        return { icon: '<span class="prep-icon prep-icon-err">&#10007;</span>', text: escape(service.message || 'Error') };
+      }
+      var text = 'Preparing\u2026';
+      if (step === 'stashing') text = 'Stashing uncommitted changes\u2026';
+      else if (step === 'checking-out') text = 'Checking out branch ' + escape(service.targetBranch) + '\u2026';
+      else if (step === 'installing') text = 'Running pnpm install\u2026';
+      else if (step === 'building') text = 'Running pnpm build\u2026';
+      return {
+        icon: '<span class="spinner" style="width:11px;height:11px;border-width:1.5px"></span>',
+        text: text,
+      };
+    }
+
+    function renderPreparingBranches() {
+      var services = state.branchPrepServices;
+      var terminalSteps = ['done', 'skipped', 'error'];
+      var allDone = services.length > 0 && services.every(function(s) { return terminalSteps.indexOf(s.step) !== -1; });
+      var hasError = services.some(function(s) { return s.step === 'error'; });
+
+      var rows = services.map(function(s) {
+        var info = getBranchPrepStepInfo(s);
+        var branchBadge = \`<span class="branch-badge">
+          <span style="font-size:10px;margin-right:3px">&#x2387;</span>\${escape(s.targetBranch)}
+        </span>\`;
+        return \`
+          <div class="prep-row">
+            <div class="prep-row-top">
+              <span class="prep-name" title="\${escape(s.appName)}">\${escape(s.appName)}</span>
+              \${branchBadge}
+            </div>
+            <div class="prep-row-status">
+              \${info.icon}
+              <span class="prep-status-text">\${info.text}</span>
+            </div>
+          </div>
+        \`;
+      }).join('');
+
+      var statusBlock;
+      if (allDone && !hasError) {
+        statusBlock = \`<div class="info-box" style="display:flex;align-items:center;gap:6px">
+          <span class="spinner" style="width:11px;height:11px;border-width:1.5px"></span>
+          <span>Starting debug sessions\u2026</span>
+        </div>\`;
+      } else if (allDone && hasError) {
+        statusBlock = \`<div class="info-box" style="color:var(--vscode-descriptionForeground)">
+          Some services failed. Debug will start for successful services.
+        </div>\`;
+      } else {
+        statusBlock = \`<div class="info-box">Preparing branch environment for debugging\u2026</div>\`;
+      }
+
+      return \`
+        <div class="step-header">
+          <span class="step-title">Preparing Branches</span>
+        </div>
+        \${statusBlock}
+        <div class="prep-list">
+          \${rows || '<div class="org-list-empty">No services to prepare.</div>'}
+        </div>
+      \`;
+    }
+
     function attachSettingsListeners() {
       const $ = id => document.getElementById(id);
 
@@ -508,7 +603,19 @@ export function getRendererScriptContent(): string {
         state.screen = SCREENS.SETTINGS;
         vscode.postMessage({ type: 'GET_SYNC_STATUS' });
         vscode.postMessage({ type: 'GET_CACHE_CONFIG' });
+        vscode.postMessage({ type: 'GET_DEBUG_PREFS' });
         render();
+      });
+
+      $('chk-open-browser')?.addEventListener('change', function(e) {
+        const openBrowserOnAttach = !!e.target.checked;
+        state.debugPrefs = { openBrowserOnAttach };
+        // Toggle class on the switch wrapper for immediate visual feedback
+        const toggle = document.querySelector('.toggle-switch');
+        if (toggle) toggle.classList.toggle('on', openBrowserOnAttach);
+        vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: { openBrowserOnAttach } });
+        // Re-render active sessions to add/remove Open buttons
+        refreshActiveSessionsPanel();
       });
 
       $('btn-back-settings')?.addEventListener('click', () => {

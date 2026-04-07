@@ -244,9 +244,8 @@ export function getStyles(): string {
       padding: 1px 6px;
       border-radius: 99px;
     }
-    .step-title { font-size: 13px; font-weight: 600; }
+    .step-title { font-size: 13px; font-weight: 600; flex: 1; }
     .gear-btn {
-      margin-left: auto;
       background: transparent;
       border: none;
       color: var(--vscode-descriptionForeground);
@@ -484,6 +483,133 @@ export function getStyles(): string {
     @media (max-width: 260px) {
       .region-grid { grid-template-columns: 1fr; }
       .region-card-custom { grid-column: 1; }
+    }
+
+    /* Debug preferences toggle row */
+    .pref-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 8px 0;
+      cursor: pointer;
+    }
+    .pref-row-content { flex: 1; min-width: 0; }
+    .pref-row-title {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 3px;
+    }
+    .pref-row-desc {
+      display: block;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      line-height: 1.4;
+    }
+    .toggle-switch {
+      flex-shrink: 0;
+      position: relative;
+      width: 32px;
+      height: 18px;
+      margin-top: 2px;
+      cursor: pointer;
+    }
+    .toggle-switch input[type=checkbox] {
+      position: absolute;
+      opacity: 0;
+      width: 1px;
+      height: 1px;
+      pointer-events: none;
+    }
+    .toggle-track {
+      display: block;
+      width: 32px;
+      height: 18px;
+      border-radius: 9px;
+      background: var(--vscode-input-border, rgba(128,128,128,0.4));
+      transition: background 0.2s;
+      position: relative;
+    }
+    .toggle-switch.on .toggle-track {
+      background: var(--vscode-button-background);
+    }
+    .toggle-thumb {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: white;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .toggle-switch.on .toggle-thumb {
+      transform: translateX(14px);
+    }
+
+    /* Branch preparation screen */
+    .prep-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .prep-row {
+      background: var(--vscode-editorGroupHeader-tabsBackground);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      animation: slideIn 0.25s ease;
+    }
+    .prep-row-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 5px;
+    }
+    .prep-name {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      font-weight: 600;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .branch-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 10px;
+      font-family: var(--vscode-editor-font-family);
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+      padding: 1px 7px 1px 5px;
+      border-radius: 99px;
+      flex-shrink: 0;
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .prep-row-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      min-height: 16px;
+    }
+    .prep-icon {
+      font-size: 12px;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .prep-icon-ok  { color: var(--vscode-testing-iconPassed); }
+    .prep-icon-skip { color: var(--vscode-descriptionForeground); }
+    .prep-icon-err { color: var(--vscode-testing-iconFailed); }
+    .prep-status-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   `;
 }

@@ -147,6 +147,24 @@ describe('generateLaunchConfigurations', () => {
     const configs = await generateLaunchConfigurations([]);
     expect(configs).toEqual([]);
   });
+
+  it('uses workspace-level fallback remoteRoot when app config is absent', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget], { remoteRoot: '/home/vcap/fallback' }); // cspell:ignore vcap
+    expect(configs[0]?.remoteRoot).toBe('/home/vcap/fallback');
+  });
+
+  it('app-level remoteRoot takes priority over workspace fallback', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ remoteRoot: '/home/vcap/app-level' })); // cspell:ignore vcap
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget], { remoteRoot: '/home/vcap/workspace-level' });
+    expect(configs[0]?.remoteRoot).toBe('/home/vcap/app-level');
+  });
 });
 
 describe('getExistingLaunchConfigs', () => {

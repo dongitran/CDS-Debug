@@ -20,6 +20,7 @@ export function getScript(nonce: string): string {
       LOADING_APPS: 'loading-apps',
       READY: 'ready',
       SETTINGS: 'settings',
+      PREPARING_BRANCHES: 'preparing-branches',
     };
 
     const CF_REGIONS = [
@@ -64,6 +65,15 @@ export function getScript(nonce: string): string {
       activeSessions: {}, // { appName: { status, message, msgPhase, intervalId } }
       syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 14 },
       cacheConfig: { enabled: true, intervalHours: 4 },
+      // Branch preparation state: [{ appName, targetBranch, currentBranch, step, message }]
+      branchPrepServices: [],
+      // Debug behavior preferences
+      debugPrefs: { openBrowserOnAttach: false },
+      // True when the current LOAD_APPS was triggered automatically by session restore
+      // (VS Code restart). Used to determine whether APPS_ERROR should auto-reconnect.
+      isRestoringSession: false,
+      // True when auto-reconnect was triggered (shows different spinner message).
+      isReconnecting: false,
     };
 
     // === UTILS ===
@@ -118,14 +128,15 @@ export function getScript(nonce: string): string {
 
     function renderScreen() {
       switch (state.screen) {
-        case SCREENS.REGION:        return renderRegion();
-        case SCREENS.LOGGING_IN:    return renderLoggingIn();
-        case SCREENS.SELECT_ORG:    return renderSelectOrg();
-        case SCREENS.SELECT_FOLDER: return renderSelectFolder();
-        case SCREENS.LOADING_APPS:  return renderLoadingApps();
-        case SCREENS.READY:         return renderReady();
-        case SCREENS.SETTINGS:      return renderSettings();
-        default:                    return '';
+        case SCREENS.REGION:              return renderRegion();
+        case SCREENS.LOGGING_IN:          return renderLoggingIn();
+        case SCREENS.SELECT_ORG:          return renderSelectOrg();
+        case SCREENS.SELECT_FOLDER:       return renderSelectFolder();
+        case SCREENS.LOADING_APPS:        return renderLoadingApps();
+        case SCREENS.READY:               return renderReady();
+        case SCREENS.SETTINGS:            return renderSettings();
+        case SCREENS.PREPARING_BRANCHES:  return renderPreparingBranches();
+        default:                          return '';
       }
     }
 
@@ -306,24 +317,60 @@ export function getScript(nonce: string): string {
           return;
         case 'LOGIN_SUCCESS':
           state.orgs = msg.payload.orgs;
+          state.isReconnecting = false;
           state.screen = SCREENS.SELECT_ORG;
           state.error = null;
           break;
         case 'LOGIN_ERROR':
+          state.isReconnecting = false;
           state.error = msg.payload.message;
           state.screen = SCREENS.REGION;
           break;
         case 'APPS_LOADED':
           state.apps = msg.payload.apps;
           state.selectedApps = new Set();
+          state.isRestoringSession = false;
           state.screen = SCREENS.READY;
           state.error = null;
           break;
         case 'APPS_ERROR':
+          // If this error happened during session restore (VS Code restart), the CF
+          // session token is likely expired. Auto-reconnect using the saved endpoint
+          // so user lands on SELECT_ORG with a fresh org list instead of a broken
+          // READY screen.
+          if (state.isRestoringSession && state.apiEndpoint) {
+            state.isRestoringSession = false;
+            state.isReconnecting = true;
+            state.error = null;
+            state.screen = SCREENS.LOGGING_IN;
+            render();
+            vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: state.apiEndpoint } });
+            return;
+          }
           state.error = msg.payload.message;
           state.screen = SCREENS.READY;
           break;
+        case 'BRANCH_PREP_START': {
+          state.branchPrepServices = msg.payload.services.map(function(s) {
+            return { appName: s.appName, targetBranch: s.targetBranch, currentBranch: s.currentBranch, step: 'pending', message: null };
+          });
+          state.screen = SCREENS.PREPARING_BRANCHES;
+          break;
+        }
+        case 'BRANCH_PREP_STATUS': {
+          var svc = state.branchPrepServices.find(function(s) { return s.appName === msg.payload.appName; });
+          if (svc) {
+            svc.step = msg.payload.step;
+            if (msg.payload.message) svc.message = msg.payload.message;
+          }
+          if (state.screen === SCREENS.PREPARING_BRANCHES) render();
+          return;
+        }
         case 'DEBUG_CONNECTING': {
+          // If coming from branch prep screen, transition back to ready
+          if (state.screen === SCREENS.PREPARING_BRANCHES) {
+            state.screen = SCREENS.READY;
+          }
           msg.payload.appNames.forEach(appName => {
             const port = (msg.payload.ports || {})[appName];
             state.activeSessions[appName] = { status: 'TUNNELING', msgPhase: 0, port };
@@ -375,6 +422,12 @@ export function getScript(nonce: string): string {
           state.cacheConfig = msg.payload;
           if (state.screen === SCREENS.SETTINGS) render();
           return;
+        case 'DEBUG_PREFS':
+          state.debugPrefs = msg.payload;
+          // Re-render active sessions to reflect button visibility change
+          refreshActiveSessionsPanel();
+          if (state.screen === SCREENS.SETTINGS) render();
+          return;
         case 'CONFIG_LOADED': {
           const cfg = msg.payload.config;
           if (cfg) {
@@ -406,6 +459,9 @@ export function getScript(nonce: string): string {
             if (state.mappings.length > 0) {
               state.selectedOrg = state.mappings[0].cfOrg;
               state.selectedFolder = state.mappings[0].groupFolderPath;
+              // Mark as restoring so APPS_ERROR can trigger auto-reconnect instead
+              // of leaving the user stuck on a broken READY screen.
+              state.isRestoringSession = true;
               state.screen = SCREENS.LOADING_APPS;
               render();
               vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
