@@ -432,9 +432,14 @@ export function getScript(nonce: string): string {
           return;
         case 'DEBUG_PREFS':
           state.debugPrefs = msg.payload;
-          // Re-render active sessions to reflect button visibility change
+          // Always sync both panels so active-session cards and the app-list
+          // (which grays-out apps currently being debugged) stay consistent
+          // whenever prefs are pushed from the extension.
           refreshActiveSessionsPanel();
-          if (state.screen === SCREENS.SETTINGS) render();
+          refreshAppListSection();
+          // Do NOT call render() here — the Settings UI updates its checkbox in-place
+          // and render() would rebuild the full DOM, accumulating duplicate listeners
+          // on every subsequent toggle.
           return;
         case 'CONFIG_LOADED': {
           const cfg = msg.payload.config;
