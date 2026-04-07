@@ -11,7 +11,6 @@ vi.mock('node:util', () => ({
 
 import { exec } from 'node:child_process';
 import {
-  isGitRepo,
   getGitRepoRoot,
   getCurrentBranch,
   hasUncommittedChanges,
@@ -32,18 +31,6 @@ function rejectWith(message: string) {
 
 beforeEach(() => {
   vi.resetAllMocks();
-});
-
-describe('isGitRepo', () => {
-  it('returns true when git rev-parse succeeds', async () => {
-    resolveWith('.git');
-    expect(await isGitRepo('/some/path')).toBe(true);
-  });
-
-  it('returns false when git rev-parse fails', async () => {
-    rejectWith('not a git repository');
-    expect(await isGitRepo('/some/path')).toBe(false);
-  });
 });
 
 describe('getGitRepoRoot', () => {

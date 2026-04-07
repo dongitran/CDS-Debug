@@ -68,7 +68,7 @@ export function getScript(nonce: string): string {
       // Branch preparation state: [{ appName, targetBranch, currentBranch, step, message }]
       branchPrepServices: [],
       // Debug behavior preferences
-      debugPrefs: { openBrowserOnAttach: false },
+      debugPrefs: { openBrowserOnAttach: false, enableBranchPrep: false },
       // True when the current LOAD_APPS was triggered automatically by session restore
       // (VS Code restart). Used to determine whether APPS_ERROR should auto-reconnect.
       isRestoringSession: false,
@@ -358,7 +358,7 @@ export function getScript(nonce: string): string {
           break;
         }
         case 'BRANCH_PREP_STATUS': {
-          var svc = state.branchPrepServices.find(function(s) { return s.appName === msg.payload.appName; });
+          const svc = state.branchPrepServices.find(function(s) { return s.appName === msg.payload.appName; });
           if (svc) {
             svc.step = msg.payload.step;
             if (msg.payload.message) svc.message = msg.payload.message;
@@ -370,6 +370,7 @@ export function getScript(nonce: string): string {
           // If coming from branch prep screen, transition back to ready
           if (state.screen === SCREENS.PREPARING_BRANCHES) {
             state.screen = SCREENS.READY;
+            state.branchPrepServices = [];
           }
           msg.payload.appNames.forEach(appName => {
             const port = (msg.payload.ports || {})[appName];
@@ -409,8 +410,8 @@ export function getScript(nonce: string): string {
           if (status === 'ATTACHED' && state.debugPrefs.openBrowserOnAttach) {
             const appInfo = state.apps.find(a => a.name === appName);
             const rawUrl = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
-            if (rawUrl) {
-              const appUrl = rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl;
+            const appUrl = normalizeUrl(rawUrl);
+            if (appUrl) {
               vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: appUrl } });
             }
           }

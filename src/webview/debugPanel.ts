@@ -5,7 +5,7 @@ import { DEFAULT_CACHE_SETTINGS } from '../types/index';
 import { cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
-import { mergeLaunchJson, readCapDebugConfig, removeLaunchConfigs } from '../core/launchConfigurator';
+import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig, removeLaunchConfigs } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
 import { getCredentials } from '../core/shellEnv';
 import { getCachedApps, getCacheSettings, getDebugPreferences, saveCacheSettings, saveDebugPreferences } from '../storage/cacheStore';
@@ -29,6 +29,7 @@ interface ServiceBranchInfo {
   folderPath: string;
   repoRoot: string | null;
   targetBranch: string | null;
+  currentBranch: string | null;
 }
 
 export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
@@ -328,7 +329,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const existingPorts: Record<string, number> = {};
     const usedPorts = new Set<number>();
     try {
-      const existingConfigs = await import('../core/launchConfigurator').then((m) => m.getExistingLaunchConfigs(workspaceRoot));
+      const existingConfigs = await getExistingLaunchConfigs(workspaceRoot);
       for (const c of existingConfigs.configurations) {
         if (c.port) usedPorts.add(c.port);
         if (c.name.startsWith('Debug: ')) {
@@ -364,14 +365,11 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const targetsSkippingPrep = targets.filter((t) => !branchInfos.find((b) => b.appName === t.appName)?.targetBranch);
 
       if (servicesNeedingPrep.length > 0) {
-        // Build list for webview prep screen (targetBranch is non-null for servicesNeedingPrep)
-        const prepServices: BranchPrepService[] = await Promise.all(
-          servicesNeedingPrep.map(async (b) => ({
-            appName: b.appName,
-            targetBranch: b.targetBranch ?? '',
-            currentBranch: (await getCurrentBranch(b.repoRoot ?? b.folderPath)) ?? 'unknown',
-          })),
-        );
+        const prepServices: BranchPrepService[] = servicesNeedingPrep.map((b) => ({
+          appName: b.appName,
+          targetBranch: b.targetBranch ?? '',
+          currentBranch: b.currentBranch ?? 'unknown',
+        }));
         this.post({ type: 'BRANCH_PREP_START', payload: { services: prepServices } });
 
         const prepSuccessful = await this.runBranchPreparation(targets, branchInfos);
@@ -401,46 +399,43 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     org: string,
     workspaceConfig: CapDebugConfig | null,
   ): Promise<ServiceBranchInfo[]> {
-    const results: ServiceBranchInfo[] = [];
-    const repoRoots = new Map<string, string | null>(); // folderPath → repoRoot
-    const resolvedBranches = new Map<string, string | null>(); // appName → targetBranch
+    // Pre-fetch repo roots and per-app configs in parallel (deduplicated by folder path)
+    const uniqueFolderPaths = [...new Set(targets.map((t) => t.folderPath))];
+    const [repoRootResults, appConfigResults] = await Promise.all([
+      Promise.all(uniqueFolderPaths.map((p) => getGitRepoRoot(p))),
+      Promise.all(uniqueFolderPaths.map((p) => readCapDebugConfig(p))),
+    ]);
+    const repoRoots = new Map(uniqueFolderPaths.map((p, i) => [p, repoRootResults[i]]));
+    const appConfigs = new Map(uniqueFolderPaths.map((p, i) => [p, appConfigResults[i]]));
 
-    // Repos that need a QuickPick: repoRoot → appNames
-    const reposNeedingPrompt = new Map<string, string[]>();
+    const resolvedBranches = new Map<string, string | null>();
+    const reposNeedingPrompt = new Map<string, string[]>(); // repoRoot → appNames
+    const currentBranches = new Map<string, string | null>(); // repoRoot → currentBranch
 
     for (const target of targets) {
-      let repoRoot = repoRoots.get(target.folderPath);
-      if (repoRoot === undefined) {
-        repoRoot = await getGitRepoRoot(target.folderPath);
-        repoRoots.set(target.folderPath, repoRoot);
-      }
-
-      const appConfig = await readCapDebugConfig(target.folderPath);
+      const repoRoot = repoRoots.get(target.folderPath) ?? null;
+      const appConfig = appConfigs.get(target.folderPath);
 
       if (appConfig?.branch) {
-        // Highest priority: per-app branch override
         resolvedBranches.set(target.appName, appConfig.branch);
       } else {
         const orgMap = workspaceConfig?.orgBranchMap ?? appConfig?.orgBranchMap;
         if (orgMap?.[org]) {
           resolvedBranches.set(target.appName, orgMap[org]);
         } else if (repoRoot) {
-          // Queue for QuickPick (grouped by repo root to avoid duplicate prompts)
           if (!reposNeedingPrompt.has(repoRoot)) reposNeedingPrompt.set(repoRoot, []);
           const queuedNames = reposNeedingPrompt.get(repoRoot);
           if (queuedNames) queuedNames.push(target.appName);
         } else {
-          // Not a git repo — skip branch ops
           resolvedBranches.set(target.appName, null);
         }
       }
     }
 
-    // Show one QuickPick per repo that has no configured branch
+    // Show one QuickPick per repo; fetch branches + currentBranch in parallel
     for (const [repoRoot, appNamesForRepo] of reposNeedingPrompt) {
-      const branches = await listBranches(repoRoot);
-      const currentBranch = await getCurrentBranch(repoRoot);
-      const serviceLabel = appNamesForRepo.join(', ');
+      const [branches, currentBranch] = await Promise.all([listBranches(repoRoot), getCurrentBranch(repoRoot)]);
+      currentBranches.set(repoRoot, currentBranch);
 
       type BranchItem = vscode.QuickPickItem & { branch: string | null };
       const items: BranchItem[] = [
@@ -457,7 +452,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       ];
 
       const selected = await vscode.window.showQuickPick(items, {
-        title: `Select branch to debug: ${serviceLabel}`,
+        title: `Select branch to debug: ${appNamesForRepo.join(', ')}`,
         placeHolder: `Current branch: ${currentBranch ?? 'unknown'}`,
         matchOnDescription: true,
       });
@@ -468,16 +463,25 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    for (const target of targets) {
-      results.push({
-        appName: target.appName,
-        folderPath: target.folderPath,
-        repoRoot: repoRoots.get(target.folderPath) ?? null,
-        targetBranch: resolvedBranches.get(target.appName) ?? null,
-      });
+    // Fetch currentBranch for repos that had a configured branch (skipped QuickPick path)
+    const reposWithoutCurrentBranch = [...new Set(
+      repoRootResults.filter((r): r is string => r !== null && !currentBranches.has(r)),
+    )];
+    if (reposWithoutCurrentBranch.length > 0) {
+      const fetched = await Promise.all(reposWithoutCurrentBranch.map((r) => getCurrentBranch(r)));
+      reposWithoutCurrentBranch.forEach((r, i) => currentBranches.set(r, fetched[i] ?? null));
     }
 
-    return results;
+    return targets.map((target) => {
+      const repoRoot = repoRoots.get(target.folderPath) ?? null;
+      return {
+        appName: target.appName,
+        folderPath: target.folderPath,
+        repoRoot,
+        targetBranch: resolvedBranches.get(target.appName) ?? null,
+        currentBranch: repoRoot ? (currentBranches.get(repoRoot) ?? null) : null,
+      };
+    });
   }
 
   /**
@@ -511,7 +515,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       try {
         if (!alreadyProcessedRepo) {
-          const currentBranch = await getCurrentBranch(repoRoot);
+          const currentBranch = info.currentBranch;
 
           if (currentBranch === info.targetBranch) {
             // Already on the correct branch — no checkout needed

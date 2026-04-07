@@ -8,16 +8,6 @@ async function run(cwd: string, command: string): Promise<string> {
   return stdout.trim();
 }
 
-/** Returns true if the given folder is inside a git repository. */
-export async function isGitRepo(folderPath: string): Promise<boolean> {
-  try {
-    await run(folderPath, 'git rev-parse --git-dir');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Returns the root of the git repository containing folderPath, or null. */
 export async function getGitRepoRoot(folderPath: string): Promise<string | null> {
   try {

@@ -146,11 +146,16 @@ export function getRendererScriptContent(): string {
       return '';
     }
 
+    function normalizeUrl(rawUrl) {
+      if (!rawUrl) return '';
+      return rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl;
+    }
+
     function renderActiveCard(appName) {
       const session = state.activeSessions[appName];
       const appInfo = state.apps.find(a => a.name === appName);
       const rawUrl = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
-      const appUrl = rawUrl ? (rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl) : '';
+      const appUrl = normalizeUrl(rawUrl);
       const portText = session.port ? '<span class="active-card-port">:' + session.port + '</span>' : '';
 
       const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
@@ -233,8 +238,7 @@ export function getRendererScriptContent(): string {
 
         // Handle open button visibility for ATTACHED state
         const appInfo = state.apps.find(function(a) { return a.name === appName; });
-        const rawUrl2 = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
-        const appUrl = rawUrl2 ? (rawUrl2.startsWith('http://') || rawUrl2.startsWith('https://') ? rawUrl2 : 'https://' + rawUrl2) : '';
+        const appUrl = normalizeUrl(appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '');
         const existingOpenBtn = card.querySelector('[data-open-url]');
         const stopBtn = card.querySelector('[data-stop-app]');
 
