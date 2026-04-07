@@ -244,9 +244,8 @@ export function getStyles(): string {
       padding: 1px 6px;
       border-radius: 99px;
     }
-    .step-title { font-size: 13px; font-weight: 600; }
+    .step-title { font-size: 13px; font-weight: 600; flex: 1; }
     .gear-btn {
-      margin-left: auto;
       background: transparent;
       border: none;
       color: var(--vscode-descriptionForeground);

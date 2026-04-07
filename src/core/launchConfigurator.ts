@@ -59,12 +59,14 @@ export function buildLaunchConfiguration(
 
 export async function generateLaunchConfigurations(
   targets: DebugTarget[],
+  fallbackConfig: CapDebugConfig | null = null,
 ): Promise<LaunchConfiguration[]> {
   const configs: LaunchConfiguration[] = [];
   for (const target of targets) {
-    const capConfig = await readCapDebugConfig(target.folderPath);
-    // capConfig.remoteRoot is used when set; undefined means field is omitted
-    configs.push(buildLaunchConfiguration(target, capConfig?.remoteRoot));
+    const appConfig = await readCapDebugConfig(target.folderPath);
+    // Per-app config takes priority; workspace-level .vscode/cap-debug-config.json is the fallback
+    const remoteRoot = appConfig?.remoteRoot ?? fallbackConfig?.remoteRoot;
+    configs.push(buildLaunchConfiguration(target, remoteRoot));
   }
   return configs;
 }
@@ -83,7 +85,12 @@ export async function getExistingLaunchConfigs(workspacePath: string): Promise<L
 
 export async function mergeLaunchJson(workspacePath: string, targets: DebugTarget[]): Promise<void> {
   const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
-  const newConfigs = await generateLaunchConfigurations(targets);
+
+  // Read workspace-level config from .vscode/cap-debug-config.json as fallback.
+  // Per-app config (in each service folder) takes priority over this.
+  const workspaceConfig = await readCapDebugConfig(join(workspacePath, '.vscode'));
+
+  const newConfigs = await generateLaunchConfigurations(targets, workspaceConfig);
   const newNames = new Set(newConfigs.map((c) => c.name));
 
   const existing = await getExistingLaunchConfigs(workspacePath);
