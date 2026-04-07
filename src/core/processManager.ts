@@ -3,6 +3,7 @@ import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
 import { logInfo, logWarn, logError } from './logger';
+import { removeLaunchConfigs } from './launchConfigurator';
 
 const execFileAsync = promisify(execFile);
 
@@ -127,6 +128,14 @@ export function initializeProcessManager(): void {
 
     sessionStates.delete(appName);
     debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
+
+    // Clean up launch config automatically when VS Code debugging stops natively
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (workspaceRoot) {
+      void removeLaunchConfigs(workspaceRoot, [appName]).catch((err: unknown) => {
+        logWarn(`Failed to clean launch config for ${appName}: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
   });
 }
 
@@ -162,6 +171,13 @@ function stopActiveDebugSessionForApp(appName: string): void {
   const session = activeDebugSessions.get(sessionName);
   if (session) {
     void vscode.debug.stopDebugging(session);
+  }
+  // Also explicitly clean launch.json for this specific app when manually stopped.
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (workspaceRoot) {
+    void removeLaunchConfigs(workspaceRoot, [appName]).catch((err: unknown) => {
+      logWarn(`Failed to clean launch config for ${appName}: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 }
 
