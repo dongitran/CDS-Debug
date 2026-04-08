@@ -281,6 +281,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         if (ageMs < ttlMs) {
           logInfo(`Apps served from cache for org: ${org} (${Math.floor(ageMs / 60_000).toString()}m old).`);
           this.post({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
+          // Warm up the CF session in the background so that handleStartDebug
+          // never hits an expired token when the app list came from cache.
+          // Failures are silently retried with a full re-login.
+          void this.ensureCfSession(config.apiEndpoint, org);
           return;
         }
       }
@@ -313,16 +317,22 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     logInfo(`Starting debug for ${appNames.length.toString()} app(s): ${appNames.join(', ')}`);
 
-    // Always target the org before spawning cds debug. handleLoadApps may have
+    // Always target the org before opening the cf ssh tunnel. handleLoadApps may have
     // served apps from cache without calling cfTarget, leaving ~/.cf untargeted.
-    // cds debug uses cf ssh internally which requires an active org/space target.
+    // If the token has expired in the meantime, re-login automatically.
     try {
       await cfTarget(org);
-    } catch (err: unknown) {
-      const msg = extractErrorMessage(err);
-      logError(`Failed to target org ${org}: ${msg}`);
-      this.post({ type: 'DEBUG_ERROR', payload: { message: `CF target failed: ${msg}` } });
-      return;
+    } catch {
+      logInfo(`cfTarget failed — attempting re-login before starting debug for ${org}.`);
+      try {
+        await this.reLogin(config.apiEndpoint);
+        await cfTarget(org);
+      } catch (retryErr: unknown) {
+        const msg = extractErrorMessage(retryErr);
+        logError(`Failed to target org ${org} after re-login: ${msg}`);
+        this.post({ type: 'DEBUG_ERROR', payload: { message: `CF target failed: ${msg}` } });
+        return;
+      }
     }
 
     const groupPath = mapping.groupFolderPath;
@@ -641,6 +651,48 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     void vscode.env.openExternal(safeUri);
+  }
+
+  /**
+   * Re-authenticates against the CF API using stored credentials.
+   * Used as a recovery path when a cached app list is loaded and the
+   * interactive CF token has since expired.
+   */
+  private async reLogin(apiEndpoint: string): Promise<void> {
+    const { email, password } = await getCredentials();
+    if (!email || !password) {
+      throw new Error('SAP_EMAIL or SAP_PASSWORD not set — cannot re-authenticate.');
+    }
+    logInfo(`Re-authenticating to ${apiEndpoint} after token expiry…`);
+    try {
+      await cfLogout();
+    } catch {
+      // Ignore logout failure when there is no prior session.
+    }
+    await cfLogin(apiEndpoint, email, password);
+    logInfo('Re-authentication successful.');
+  }
+
+  /**
+   * Targets the given CF org in the background to keep ~/.cf warmed up.
+   * Called after serving apps from cache so that handleStartDebug never
+   * encounters an expired token as the very first CF CLI invocation.
+   */
+  private async ensureCfSession(apiEndpoint: string, org: string): Promise<void> {
+    try {
+      await cfTarget(org);
+      logInfo(`[Session] CF session refreshed — org ${org} targeted.`);
+    } catch {
+      logInfo(`[Session] cfTarget failed — attempting silent re-login for org ${org}.`);
+      try {
+        await this.reLogin(apiEndpoint);
+        await cfTarget(org);
+        logInfo(`[Session] Silent re-login successful — org ${org} targeted.`);
+      } catch (err: unknown) {
+        // Non-fatal: the user will get a clear error if they then try to start a debug session.
+        logWarn(`[Session] Silent re-login failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 }
 
