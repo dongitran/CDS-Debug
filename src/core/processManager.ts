@@ -25,6 +25,12 @@ let startListener: vscode.Disposable | null = null;
 const DEBUG_SESSION_PREFIX = 'Debug: ';
 const activeVsCodeSessions = new Set<string>();
 
+// Serializes concurrent vscode.debug.startDebugging() calls.
+// VS Code's debug API is not safe for simultaneous attach requests — the second
+// call can silently fail (return false) if it arrives before the first resolves.
+// This queue ensures each app attaches only after the previous attach completes.
+let debugAttachQueue = Promise.resolve();
+
 // Kills a child process and its entire process group on Unix (SIGTERM → process group),
 // ensuring sub-processes like `cf ssh` are also terminated.
 function killProcessGroup(child: ChildProcess): void {
@@ -253,20 +259,33 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
       logInfo(`Tunnel ready for ${appName}, attaching VS Code debugger after ${delayMs.toString()}ms...`);
       
       setTimeout(() => {
-        const workspaceFolder = vscode.workspace.workspaceFolders 
-          ? vscode.workspace.workspaceFolders[0] 
+        const workspaceFolder = vscode.workspace.workspaceFolders
+          ? vscode.workspace.workspaceFolders[0]
           : undefined;
-        
-        void vscode.debug.startDebugging(workspaceFolder, launchConfigName).then((success) => {
-          if (success) {
-            sessionStates.set(appName, { status: 'ATTACHED' });
-            debugProcessEvents.emit('statusChanged', { appName, status: 'ATTACHED' });
-            void vscode.window.showInformationMessage(`CDS Debug: debugger attached to ${appName}`);
-          } else {
-            sessionStates.set(appName, { status: 'ERROR', message: 'Failed to start VS Code debugging.' });
-            debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: 'Failed to start VS Code debugging.' });
-          }
-        });
+
+        // Enqueue this attach after any in-progress startDebugging call completes.
+        // Concurrent startDebugging calls for different apps cause VS Code to silently
+        // fail the second request — serializing them ensures each app attaches reliably.
+        const currentQueue = debugAttachQueue;
+        debugAttachQueue = currentQueue
+          .then(() => vscode.debug.startDebugging(workspaceFolder, launchConfigName))
+          .then((success) => {
+            if (success) {
+              sessionStates.set(appName, { status: 'ATTACHED' });
+              debugProcessEvents.emit('statusChanged', { appName, status: 'ATTACHED' });
+              void vscode.window.showInformationMessage(`CDS Debug: debugger attached to ${appName}`);
+            } else {
+              sessionStates.set(appName, { status: 'ERROR', message: 'Failed to start VS Code debugging.' });
+              debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: 'Failed to start VS Code debugging.' });
+            }
+          })
+          .catch((err: unknown) => {
+            // Errors must not break the queue chain for subsequent apps
+            const msg = err instanceof Error ? err.message : String(err);
+            logError(`startDebugging error for ${appName}: ${msg}`);
+            sessionStates.set(appName, { status: 'ERROR', message: msg });
+            debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
+          });
       }, delayMs);
     }
   };
@@ -336,6 +355,10 @@ export function disposeAllProcesses(): void {
   sessionStates.clear();
   activeDebugSessions.clear();
   stoppedApps.clear();
+
+  // Reset the attach queue so stale promise chains from a previous session
+  // do not interfere after the extension is deactivated and re-activated.
+  debugAttachQueue = Promise.resolve();
 
   for (const channel of channels.values()) {
     channel.dispose();
