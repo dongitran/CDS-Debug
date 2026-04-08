@@ -161,7 +161,7 @@ export function getRendererScriptContent(): string {
       const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
         <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
           title="Open App in Browser" aria-label="Open \${escape(appName)} in browser">
-          &#8599; Open
+          &#8599; Open App
         </button>
       \` : '';
 

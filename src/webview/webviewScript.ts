@@ -239,6 +239,11 @@ export function getScript(nonce: string): string {
       const activePanel = document.getElementById('active-sessions-panel');
       if (activePanel) {
         activePanel.addEventListener('click', e => {
+          const stopAllBtn = e.target.closest('#btn-stop-all-sessions');
+          if (stopAllBtn) {
+            vscode.postMessage({ type: 'STOP_ALL_DEBUG' });
+            return;
+          }
           const stopBtn = e.target.closest('[data-stop-app]');
           if (stopBtn) {
             vscode.postMessage({ type: 'STOP_DEBUG', payload: { appName: stopBtn.dataset.stopApp } });
@@ -250,10 +255,6 @@ export function getScript(nonce: string): string {
           }
         });
       }
-
-      $('btn-stop-all-sessions')?.addEventListener('click', () => {
-        vscode.postMessage({ type: 'STOP_ALL_DEBUG' });
-      });
 
       $('btn-refresh-apps')?.addEventListener('click', () => {
         if (!state.selectedOrg) return;
