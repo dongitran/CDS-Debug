@@ -3,25 +3,39 @@ export function getStyles(): string {
   return `
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+    }
+
     body {
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
       color: var(--vscode-foreground);
       background: var(--vscode-sideBar-background);
       padding: 12px;
-      height: 100vh;
-      overflow: hidden;
       display: flex;
       flex-direction: column;
     }
 
-    /* Wrapper for the READY screen — fills remaining body height as a flex column */
+    #app {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      height: 100%;
+      width: 100%;
+    }
+
+    /* Wrapper for the READY screen — fills remaining height as a flex column */
     .ready-layout {
       display: flex;
       flex-direction: column;
       flex: 1;
       min-height: 0;
-      overflow: hidden;
+      height: 100%;
     }
 
     h2 {
