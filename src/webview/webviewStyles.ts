@@ -9,8 +9,19 @@ export function getStyles(): string {
       color: var(--vscode-foreground);
       background: var(--vscode-sideBar-background);
       padding: 12px;
-      min-height: 100vh;
-      overflow-x: hidden;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Wrapper for the READY screen — fills remaining body height as a flex column */
+    .ready-layout {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
     }
 
     h2 {
@@ -128,7 +139,9 @@ export function getStyles(): string {
       grid-column: 1 / -1;
     }
 
-    .app-list { display: flex; flex-direction: column; gap: 2px; max-height: calc(100vh - 320px); min-height: 120px; overflow-y: auto; padding-right: 2px; }
+    /* flex:1 + min-height:0 lets it fill whatever space .ready-layout has left after
+       the active-sessions-panel, CF info box, search bar, and footer claim their rows */
+    .app-list { display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
     .app-row {
       display: flex;
       align-items: center;
@@ -397,9 +410,9 @@ export function getStyles(): string {
     }
     @keyframes fadeIn { from { opacity: 0.3; } to { opacity: 1; } }
 
+    /* Footer is a natural flex item at the end of .ready-layout — no sticky needed */
     .footer {
-      position: sticky;
-      bottom: 0;
+      flex-shrink: 0;
       padding: 10px 0 0;
       background: var(--vscode-sideBar-background);
       border-top: 1px solid var(--vscode-panel-border);

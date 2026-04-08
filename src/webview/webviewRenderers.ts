@@ -373,51 +373,53 @@ export function getRendererScriptContent(): string {
         : 'No started apps';
 
       return \`
-        <div class="step-header">
-          <span class="step-title">Debug Launcher</span>
-          <button class="gear-btn" id="btn-refresh-apps" title="Refresh app list" aria-label="Refresh apps" style="font-size:13px">&#8635;</button>
-          <button class="gear-btn" id="btn-gear" title="Settings" aria-label="Open settings">&#9881;</button>
-        </div>
-        <div class="sr-only" aria-live="polite">\${escape(buildLiveStatus())}</div>
-        \${state.error ? \`
-          <div class="error-box">\${escape(state.error)}</div>
-          <div style="height:6px"></div>
-          <button class="btn btn-secondary" id="btn-retry-apps" style="margin-bottom:4px">&#8635; Retry</button>
-        \` : ''}
-
-        <div id="active-sessions-panel">\${renderActiveSessionsContent()}</div>
-
-        <div class="section-label">Cloud Foundry</div>
-        <div class="cf-info-box">
-          <div class="cf-info-row">
-            <span class="cf-info-label">Region</span>
-            <span class="cf-info-value" title="\${escape(state.apiEndpoint)}">\${escape(getRegionDisplay())}</span>
+        <div class="ready-layout">
+          <div class="step-header">
+            <span class="step-title">Debug Launcher</span>
+            <button class="gear-btn" id="btn-refresh-apps" title="Refresh app list" aria-label="Refresh apps" style="font-size:13px">&#8635;</button>
+            <button class="gear-btn" id="btn-gear" title="Settings" aria-label="Open settings">&#9881;</button>
           </div>
-          <div class="cf-info-row">
-            <span class="cf-info-label">Org</span>
-            <span class="cf-info-value" title="\${escape(state.selectedOrg ?? '')}">\${escape(state.selectedOrg ?? '')}</span>
+          <div class="sr-only" aria-live="polite">\${escape(buildLiveStatus())}</div>
+          \${state.error ? \`
+            <div class="error-box">\${escape(state.error)}</div>
+            <div style="height:6px"></div>
+            <button class="btn btn-secondary" id="btn-retry-apps" style="margin-bottom:4px">&#8635; Retry</button>
+          \` : ''}
+
+          <div id="active-sessions-panel" style="flex-shrink:0">\${renderActiveSessionsContent()}</div>
+
+          <div class="section-label" style="flex-shrink:0">Cloud Foundry</div>
+          <div class="cf-info-box" style="flex-shrink:0">
+            <div class="cf-info-row">
+              <span class="cf-info-label">Region</span>
+              <span class="cf-info-value" title="\${escape(state.apiEndpoint)}">\${escape(getRegionDisplay())}</span>
+            </div>
+            <div class="cf-info-row">
+              <span class="cf-info-label">Org</span>
+              <span class="cf-info-value" title="\${escape(state.selectedOrg ?? '')}">\${escape(state.selectedOrg ?? '')}</span>
+            </div>
           </div>
-        </div>
-        <div style="height:8px"></div>
-        <input class="input" id="search-input" placeholder="Search apps&hellip;"
-          aria-label="Search apps" value="\${escape(state.searchQuery)}" />
-        <div style="height:4px"></div>
-        \${selectAllRow}
+          <div style="height:8px;flex-shrink:0"></div>
+          <input class="input" id="search-input" placeholder="Search apps&hellip;"
+            aria-label="Search apps" value="\${escape(state.searchQuery)}" style="flex-shrink:0" />
+          <div style="height:4px;flex-shrink:0"></div>
+          \${selectAllRow}
 
-        <div class="app-list">
-          \${renderAppSection(started, 'Started')}
-          \${renderAppSection(stopped, 'Stopped')}
-          \${filtered.length === 0 ? '<div style="text-align:center;padding:16px;color:var(--vscode-descriptionForeground)">No apps found</div>' : ''}
-        </div>
+          <div class="app-list">
+            \${renderAppSection(started, 'Started')}
+            \${renderAppSection(stopped, 'Stopped')}
+            \${filtered.length === 0 ? '<div style="text-align:center;padding:16px;color:var(--vscode-descriptionForeground)">No apps found</div>' : ''}
+          </div>
 
-        <div class="footer">
-          <div class="footer-info">\${countLabel}</div>
-          <button class="btn" id="btn-start-debug" aria-label="Start selected debug sessions"
-            \${selectedCount === 0 ? 'disabled' : ''}>
-            &#9654; Start Debug Sessions
-          </button>
-          <div style="height:6px"></div>
-          <button class="btn btn-secondary" id="btn-remap">&#8592; Change Mapping</button>
+          <div class="footer">
+            <div class="footer-info">\${countLabel}</div>
+            <button class="btn" id="btn-start-debug" aria-label="Start selected debug sessions"
+              \${selectedCount === 0 ? 'disabled' : ''}>
+              &#9654; Start Debug Sessions
+            </button>
+            <div style="height:6px"></div>
+            <button class="btn btn-secondary" id="btn-remap">&#8592; Change Mapping</button>
+          </div>
         </div>
       \`;
     }
