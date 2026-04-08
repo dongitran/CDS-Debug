@@ -19,6 +19,7 @@ import {
   getGitRepoRoot,
   hasUncommittedChanges,
   listBranches,
+  pullLatest,
   runPnpmBuild,
   runPnpmInstall,
   stashChanges,
@@ -534,33 +535,45 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       try {
         if (!alreadyProcessedRepo) {
           const currentBranch = info.currentBranch;
-
-          if (currentBranch === info.targetBranch) {
-            // Already on the correct branch — no checkout needed
-            logInfo(`[${info.appName}] Already on branch ${info.targetBranch}, skipping git ops.`);
-            postStatus(info.appName, 'skipped', `Already on branch ${info.targetBranch}`);
-            repoCheckedOut.set(repoRoot, false);
-            successfulTargets.push(target);
-            continue;
-          }
+          let changedWorkingTree = false;
 
           // Stash uncommitted changes if any
           const dirty = await hasUncommittedChanges(repoRoot);
           if (dirty) {
             logInfo(`[${info.appName}] Stashing uncommitted changes in ${repoRoot}`);
             postStatus(info.appName, 'stashing');
-            await stashChanges(repoRoot);
+            const stashed = await stashChanges(repoRoot);
+            if (stashed) changedWorkingTree = true;
           }
 
-          // Checkout target branch
-          logInfo(`[${info.appName}] Checking out branch ${info.targetBranch} in ${repoRoot}`);
-          postStatus(info.appName, 'checking-out');
-          await checkoutBranch(repoRoot, info.targetBranch);
+          if (currentBranch !== info.targetBranch) {
+            logInfo(`[${info.appName}] Checking out branch ${info.targetBranch} in ${repoRoot}`);
+            postStatus(info.appName, 'checking-out');
+            await checkoutBranch(repoRoot, info.targetBranch);
+            changedWorkingTree = true;
+          }
+
+          logInfo(`[${info.appName}] Pulling latest changes for branch ${info.targetBranch} in ${repoRoot}`);
+          postStatus(info.appName, 'pulling');
+          const pullResult = await pullLatest(repoRoot);
+          if (pullResult.changed) {
+            changedWorkingTree = true;
+          }
+
+          if (!changedWorkingTree) {
+            // Already on the correct branch, no local changes stashed, and no remote updates
+            logInfo(`[${info.appName}] Branch ${info.targetBranch} is up to date, skipping install/build.`);
+            postStatus(info.appName, 'skipped', `Up to date`);
+            repoCheckedOut.set(repoRoot, false);
+            successfulTargets.push(target);
+            continue;
+          }
+
           repoCheckedOut.set(repoRoot, true);
         } else if (!repoCheckedOut.get(repoRoot)) {
-          // Shared repo that was already-on-right-branch — skip this service too
-          logInfo(`[${info.appName}] Shared repo already on correct branch, skipping git ops.`);
-          postStatus(info.appName, 'skipped', `Already on branch ${info.targetBranch}`);
+          // Shared repo that was already up to date — skip this service too
+          logInfo(`[${info.appName}] Shared repo already up to date, skipping git ops.`);
+          postStatus(info.appName, 'skipped', `Up to date`);
           successfulTargets.push(target);
           continue;
         }

@@ -13,6 +13,7 @@ export type BranchPrepStep =
   | 'pending'
   | 'stashing'
   | 'checking-out'
+  | 'pulling'
   | 'installing'
   | 'building'
   | 'done'

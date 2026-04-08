@@ -54,6 +54,38 @@ export async function checkoutBranch(repoPath: string, branch: string): Promise<
 }
 
 /**
+ * Pulls latest changes from remote for the current branch.
+ * Returns { success: true, changed: <boolean> } based on whether the working tree was updated.
+ */
+export async function pullLatest(repoPath: string): Promise<{ success: boolean; changed: boolean }> {
+  try {
+    // First, fetch the latest references
+    await run(repoPath, 'git fetch');
+  } catch {
+    // If offline or no remote, we consider it "successful but unchanged" 
+    // because we at least tried and there's nothing to pull.
+    return { success: false, changed: false };
+  }
+
+  try {
+    // Attempt a fast-forward pull
+    const output = await run(repoPath, 'git pull --ff-only');
+    const changed = !output.includes('Already up to date.');
+    return { success: true, changed };
+  } catch {
+    try {
+      // If ff-only fails (divergent), try with rebase
+      const output = await run(repoPath, 'git pull --rebase');
+      const changed = !output.includes('is up to date') && !output.includes('Up to date');
+      return { success: true, changed };
+    } catch {
+      // If rebase fails (e.g. merge conflicts), fail safely
+      return { success: false, changed: false };
+    }
+  }
+}
+
+/**
  * Returns deduplicated, sorted list of branch names (local + remote/origin).
  * Remote branches are returned without the `remotes/origin/` prefix.
  */
