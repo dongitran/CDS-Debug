@@ -444,9 +444,12 @@ export function getRendererScriptContent(): string {
             : 'Initializing...')
         : '';
 
-      const intervalOptions = [1, 2, 4, 8].map(function(h) {
+      const intervalOptions = [12, 24, 48, 96].map(function(h) {
         const sel = c.intervalHours === h ? ' selected' : '';
-        const label = h + ' hour' + (h === 1 ? '' : 's') + (h === 4 ? ' (default)' : '');
+        let label = h + ' hours';
+        if (h === 24) label = '1 day (default)';
+        else if (h === 48) label = '2 days';
+        else if (h === 96) label = '4 days';
         return '<option value="' + h + '"' + sel + '>' + label + '</option>';
       }).join('');
 
@@ -672,7 +675,7 @@ export function getRendererScriptContent(): string {
       $('btn-save-cache-settings')?.addEventListener('click', () => {
         const enabled = !!document.getElementById('chk-cache-enabled')?.checked;
         const selectEl = document.getElementById('select-interval');
-        const intervalHours = parseInt(selectEl?.value || '4', 10);
+        const intervalHours = parseInt(selectEl?.value || '24', 10);
         vscode.postMessage({ type: 'SAVE_CACHE_CONFIG', payload: { enabled, intervalHours } });
         // Optimistic update so the status row reflects the new enabled state immediately.
         state.cacheConfig = { enabled, intervalHours };

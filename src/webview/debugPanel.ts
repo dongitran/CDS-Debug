@@ -166,7 +166,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'SAVE_CACHE_CONFIG': {
-        const VALID_INTERVALS: readonly number[] = [1, 2, 4, 8];
+        const VALID_INTERVALS: readonly number[] = [12, 24, 48, 96];
         const rawInterval = raw.payload.intervalHours;
         const settings: CacheSettings = {
           enabled: raw.payload.enabled,

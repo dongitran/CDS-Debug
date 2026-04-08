@@ -105,7 +105,7 @@ export interface CacheSettings {
 
 export const DEFAULT_CACHE_SETTINGS: CacheSettings = {
   enabled: true,
-  intervalHours: 4,
+  intervalHours: 24,
 };
 
 /** User-facing debug behavior preferences (separate from cache settings). */

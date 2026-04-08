@@ -70,7 +70,7 @@ export function getScript(nonce: string): string {
       error: null,
       activeSessions: {}, // { appName: { status, message, msgPhase, intervalId } }
       syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 14 },
-      cacheConfig: { enabled: true, intervalHours: 4 },
+      cacheConfig: { enabled: true, intervalHours: 24 },
       // Branch preparation state: [{ appName, targetBranch, currentBranch, step, message }]
       branchPrepServices: [],
       // Debug behavior preferences
