@@ -30,7 +30,7 @@ export const CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 
 export const DEBUG_BASE_PORT = 9229;
 
-export type CfAppState = 'started' | 'stopped';
+export type CfAppState = 'started' | 'stopped' | 'empty';
 
 export interface CfApp {
   name: string;

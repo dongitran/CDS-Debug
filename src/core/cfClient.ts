@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { CfApp } from '../types/index';
+import type { CfApp, CfAppState } from '../types/index';
 import { CF_DEFAULT_SPACE } from '../types/index';
 
 const execFileAsync = promisify(execFile);
@@ -101,7 +101,19 @@ export function parseApps(stdout: string): CfApp[] {
       if (maybeUrls?.includes('.')) {
         urls = maybeUrls.split(',').map((u) => u.trim());
       }
-      return [{ name, state: state === 'started' ? 'started' : 'stopped', urls } satisfies CfApp];
+
+      let parsedState: CfAppState = 'stopped';
+      if (state === 'started') {
+        const instancesPart = parts[2]?.trim();
+        let runningCount = 0;
+        if (instancesPart) {
+          const match = /(?:^|\b)(\d+)\/\d+/.exec(instancesPart);
+          if (match) runningCount = parseInt(match[1] ?? '0', 10);
+        }
+        parsedState = runningCount > 0 ? 'started' : 'empty';
+      }
+
+      return [{ name, state: parsedState, urls } satisfies CfApp];
     });
 }
 

@@ -51,9 +51,7 @@ describe('parseApps', () => {
     const apps = parseApps(sampleOutput);
     const started = apps.filter((a) => a.state === 'started');
     expect(started.map((a) => a.name)).toEqual([
-      'myapp-db-one',
       'myapp-svc-one',
-      'myapp-db-two',
     ]);
   });
 
@@ -61,6 +59,15 @@ describe('parseApps', () => {
     const apps = parseApps(sampleOutput);
     const stopped = apps.filter((a) => a.state === 'stopped');
     expect(stopped.map((a) => a.name)).toEqual(['myapp-svc-two']);
+  });
+
+  it('parses empty apps correctly', () => {
+    const apps = parseApps(sampleOutput);
+    const empty = apps.filter((a) => a.state === 'empty');
+    expect(empty.map((a) => a.name)).toEqual([
+      'myapp-db-one',
+      'myapp-db-two',
+    ]);
   });
 
   it('returns all apps with correct count', () => {

@@ -258,7 +258,7 @@ export function getRendererScriptContent(): string {
       const filtered = state.apps.filter(app =>
         !state.searchQuery || app.name.toLowerCase().includes(state.searchQuery.toLowerCase())
       );
-      const started = filtered.filter(a => a.state === 'started').sort((a, b) => a.name.localeCompare(b.name));
+      const started = filtered.filter(a => a.state === 'started' || a.state === 'empty').sort((a, b) => a.name.localeCompare(b.name));
       const stopped = filtered.filter(a => a.state === 'stopped').sort((a, b) => a.name.localeCompare(b.name));
       const startedNonActive = state.apps.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
       const selectedCount = [...state.selectedApps].filter(n =>
@@ -318,12 +318,15 @@ export function getRendererScriptContent(): string {
     function renderAppRow(app) {
       const isActive = !!state.activeSessions[app.name];
       const isStopped = app.state === 'stopped';
-      const isDisabled = isStopped || isActive;
-      const isChecked = state.selectedApps.has(app.name) && !isActive;
-      const rowClass = isActive ? 'in-debug' : (isStopped ? 'stopped' : '');
+      const isEmpty = app.state === 'empty';
+      const isDisabled = isStopped || isEmpty || isActive;
+      const isChecked = state.selectedApps.has(app.name) && !isDisabled;
+      const rowClass = isActive ? 'in-debug' : (isStopped || isEmpty ? 'stopped' : '');
       const badge = isActive
         ? \`<span class="badge badge-debug">debugging</span>\`
-        : \`<span class="badge badge-\${app.state}">\${app.state}</span>\`;
+        : (isEmpty
+            ? \`<span class="badge badge-stopped">started (0)</span>\`
+            : \`<span class="badge badge-\${app.state}">\${app.state}</span>\`);
       return \`
         <label class="app-row \${rowClass}">
           <input type="checkbox" data-app="\${escape(app.name)}"
@@ -348,7 +351,7 @@ export function getRendererScriptContent(): string {
       const filtered = state.apps.filter(app =>
         !state.searchQuery || app.name.toLowerCase().includes(state.searchQuery.toLowerCase())
       );
-      const started = filtered.filter(a => a.state === 'started').sort((a, b) => a.name.localeCompare(b.name));
+      const started = filtered.filter(a => a.state === 'started' || a.state === 'empty').sort((a, b) => a.name.localeCompare(b.name));
       const stopped = filtered.filter(a => a.state === 'stopped').sort((a, b) => a.name.localeCompare(b.name));
 
       const startedNonActive = state.apps.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
