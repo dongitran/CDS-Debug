@@ -107,8 +107,11 @@ export function parseApps(stdout: string): CfApp[] {
         const instancesPart = parts[2]?.trim();
         let runningCount = 0;
         if (instancesPart) {
-          const match = /(?:^|\b)(\d+)\/\d+/.exec(instancesPart);
-          if (match) runningCount = parseInt(match[1] ?? '0', 10);
+          const regex = /(?:^|\b)(\d+)\/\d+/g;
+          let match: RegExpExecArray | null;
+          while ((match = regex.exec(instancesPart)) !== null) {
+            runningCount += parseInt(match[1] ?? '0', 10);
+          }
         }
         parsedState = runningCount > 0 ? 'started' : 'empty';
       }

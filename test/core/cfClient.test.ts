@@ -122,4 +122,36 @@ describe('parseApps', () => {
     const output = 'name  requested state  processes  routes\n\n\n';
     expect(parseApps(output)).toEqual([]);
   });
+
+  it('handles multiple running processes correctly (CF v8 syntax)', () => {
+    // Both web and worker have running instances
+    const output1 = 'name  requested state  processes\nmy-app  started  web:1/1, worker:2/2\n';
+    expect(parseApps(output1)[0]?.state).toBe('started');
+
+    // Only worker has running instances
+    const output2 = 'name  requested state  processes\nmy-app  started  web:0/1, worker:1/1\n';
+    expect(parseApps(output2)[0]?.state).toBe('started');
+
+    // Neither has running instances
+    const output3 = 'name  requested state  processes\nmy-app  started  web:0/1, worker:0/2\n';
+    expect(parseApps(output3)[0]?.state).toBe('empty');
+  });
+
+  it('handles older CF v7 instance format correctly', () => {
+    const output = 'name  requested state  instances\nmy-app  started  1/1\n';
+    expect(parseApps(output)[0]?.state).toBe('started');
+
+    const output2 = 'name  requested state  instances\nmy-app  started  0/1\n';
+    expect(parseApps(output2)[0]?.state).toBe('empty');
+  });
+
+  it('defaults to empty when processes column has unexpected format but state is started', () => {
+    const output = 'name  requested state  processes\nmy-app  started  unexpected_format\n';
+    expect(parseApps(output)[0]?.state).toBe('empty');
+  });
+
+  it('defaults to stopped for unrecognized states', () => {
+    const output = 'name  requested state  processes\nmy-app  crashed  web:0/1\n';
+    expect(parseApps(output)[0]?.state).toBe('stopped');
+  });
 });
