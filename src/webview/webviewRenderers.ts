@@ -258,8 +258,8 @@ export function getRendererScriptContent(): string {
       const filtered = state.apps.filter(app =>
         !state.searchQuery || app.name.toLowerCase().includes(state.searchQuery.toLowerCase())
       );
-      const started = filtered.filter(a => a.state === 'started' || a.state === 'empty').sort((a, b) => a.name.localeCompare(b.name));
-      const stopped = filtered.filter(a => a.state === 'stopped').sort((a, b) => a.name.localeCompare(b.name));
+      const started = filtered.filter(a => a.state === 'started').sort((a, b) => a.name.localeCompare(b.name));
+      const stopped = filtered.filter(a => a.state === 'stopped' || a.state === 'empty').sort((a, b) => a.name.localeCompare(b.name));
       const startedNonActive = state.apps.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
       const selectedCount = [...state.selectedApps].filter(n =>
         state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
@@ -351,8 +351,8 @@ export function getRendererScriptContent(): string {
       const filtered = state.apps.filter(app =>
         !state.searchQuery || app.name.toLowerCase().includes(state.searchQuery.toLowerCase())
       );
-      const started = filtered.filter(a => a.state === 'started' || a.state === 'empty').sort((a, b) => a.name.localeCompare(b.name));
-      const stopped = filtered.filter(a => a.state === 'stopped').sort((a, b) => a.name.localeCompare(b.name));
+      const started = filtered.filter(a => a.state === 'started').sort((a, b) => a.name.localeCompare(b.name));
+      const stopped = filtered.filter(a => a.state === 'stopped' || a.state === 'empty').sort((a, b) => a.name.localeCompare(b.name));
 
       const startedNonActive = state.apps.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
       const selectableStarted = filtered.filter(a => a.state === 'started' && !state.activeSessions[a.name]);
