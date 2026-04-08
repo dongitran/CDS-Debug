@@ -529,16 +529,14 @@ export function getRendererScriptContent(): string {
         </select>
 
         <div style="height:10px"></div>
-        <button class="btn" id="btn-save-cache-settings">Save Settings</button>
+        <button class="btn btn-secondary" id="btn-trigger-sync" \${!c.enabled || s.isRunning ? 'disabled' : ''}>
+          \${c.enabled && s.isRunning ? '&#8987; Syncing\u2026' : '&#8635; Sync Now'}
+        </button>
 
         <div class="divider" style="margin:12px 0"></div>
 
         \${statusRow}
         <div style="height:10px"></div>
-        <button class="btn btn-secondary" id="btn-trigger-sync" \${!c.enabled || s.isRunning ? 'disabled' : ''}>
-          \${c.enabled && s.isRunning ? '&#8987; Syncing\u2026' : '&#8635; Sync Now'}
-        </button>
-        <div style="height:6px"></div>
         <button class="btn btn-secondary" id="btn-back-settings">&#8592; Back to Launcher</button>
         <div style="height:6px"></div>
         <button class="btn btn-secondary" id="btn-logout-settings"
@@ -669,15 +667,18 @@ export function getRendererScriptContent(): string {
 
       $('chk-cache-enabled')?.addEventListener('change', function(e) {
         const selectEl = document.getElementById('select-interval');
-        if (selectEl) selectEl.disabled = !e.target.checked;
-      });
-
-      $('btn-save-cache-settings')?.addEventListener('click', () => {
-        const enabled = !!document.getElementById('chk-cache-enabled')?.checked;
-        const selectEl = document.getElementById('select-interval');
+        const enabled = !!e.target.checked;
+        if (selectEl) selectEl.disabled = !enabled;
         const intervalHours = parseInt(selectEl?.value || '24', 10);
         vscode.postMessage({ type: 'SAVE_CACHE_CONFIG', payload: { enabled, intervalHours } });
-        // Optimistic update so the status row reflects the new enabled state immediately.
+        state.cacheConfig = { enabled, intervalHours };
+        render();
+      });
+
+      $('select-interval')?.addEventListener('change', function(e) {
+        const enabled = !!document.getElementById('chk-cache-enabled')?.checked;
+        const intervalHours = parseInt(e.target.value || '24', 10);
+        vscode.postMessage({ type: 'SAVE_CACHE_CONFIG', payload: { enabled, intervalHours } });
         state.cacheConfig = { enabled, intervalHours };
         render();
       });
