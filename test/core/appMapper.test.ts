@@ -85,12 +85,12 @@ describe('buildDebugTargets', () => {
     expect(targets[0]).toMatchObject({
       appName: 'myapp-svc-one',
       folderPath: '/root/group/sub-a/myapp_svc_one',
-      port: 9229,
+      port: 20000,
     });
     expect(targets[1]).toMatchObject({
       appName: 'myapp-db-one',
       folderPath: '/root/group/sub-a/myapp_db_one',
-      port: 9230,
+      port: 20001,
     });
     expect(unmapped).toHaveLength(0);
   });
@@ -149,12 +149,12 @@ describe('buildDebugTargets', () => {
         ['myapp-svc-one', 'myapp-db-one'],
         allFolderPaths,
         {},
-        new Set([9229, 9231]), // 9229 and 9231 are occupied
+        new Set([20000, 20002]), // 20000 and 20002 are occupied
       );
-      // Should pick 9230 (next available after 9229)
-      expect(targets[0]?.port).toBe(9230);
-      // Should pick 9232 (skips 9231)
-      expect(targets[1]?.port).toBe(9232);
+      // Should pick 20001 (next available after 20000)
+      expect(targets[0]?.port).toBe(20001);
+      // Should pick 20003 (skips 20002)
+      expect(targets[1]?.port).toBe(20003);
     });
 
     it('handles mixed existing and new allocations correctly', () => {
@@ -162,10 +162,10 @@ describe('buildDebugTargets', () => {
         ['app-fixed', 'app-new'],
         ['/root/app_fixed', '/root/app_new'],
         { 'app-fixed': 9500 },
-        new Set([9229]),
+        new Set([20000]),
       );
       expect(targets.find((t) => t.appName === 'app-fixed')?.port).toBe(9500);
-      expect(targets.find((t) => t.appName === 'app-new')?.port).toBe(9230); // 9229 used, so 9230
+      expect(targets.find((t) => t.appName === 'app-new')?.port).toBe(20001); // 20000 used, so 20001
     });
 
     it('marks existingPort as used so other apps do not collide with it', () => {
@@ -174,13 +174,13 @@ describe('buildDebugTargets', () => {
       const { targets } = buildDebugTargets(
         ['app-fixed', 'app-new'],
         ['/root/app_fixed', '/root/app_new'],
-        { 'app-fixed': 9230 },
+        { 'app-fixed': 20001 },
         new Set(),
-        9229,
+        20000,
       );
-      expect(targets.find((t) => t.appName === 'app-fixed')?.port).toBe(9230);
-      // 9229 is the start, 9230 is taken by app-fixed's existingPort → skip to 9231
-      expect(targets.find((t) => t.appName === 'app-new')?.port).toBe(9229);
+      expect(targets.find((t) => t.appName === 'app-fixed')?.port).toBe(20001);
+      // 20000 is the start, 20001 is taken by app-fixed's existingPort → skip to 20002
+      expect(targets.find((t) => t.appName === 'app-new')?.port).toBe(20000);
     });
   });
 });

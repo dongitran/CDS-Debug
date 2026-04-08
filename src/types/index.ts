@@ -28,7 +28,7 @@ export interface BranchPrepService {
 
 export const CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 
-export const DEBUG_BASE_PORT = 9229;
+export const DEBUG_BASE_PORT = 20000;
 
 export type CfAppState = 'started' | 'stopped' | 'empty';
 

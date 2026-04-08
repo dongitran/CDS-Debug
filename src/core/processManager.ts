@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
+import { createConnection } from 'node:net';
 import { logInfo, logWarn, logError } from './logger';
 import { removeLaunchConfigs } from './launchConfigurator';
 
@@ -189,7 +190,7 @@ function stopActiveDebugSessionForApp(appName: string, skipConfigCleanup = false
   }
 }
 
-export async function startTunnelAndAttach(appName: string, folderPath: string, port: number, launchConfigName: string, openBrowser = false): Promise<void> {
+export async function startTunnelAndAttach(appName: string, folderPath: string, port: number, launchConfigName: string): Promise<void> {
   initializeProcessManager();
 
   // Clear any residual stopped state to ensure native termination works on subsequent runs
@@ -201,26 +202,36 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
     channels.set(appName, channel);
   }
   channel.clear();
-  
-  // Pre-flight check: Ensure the requested port is perfectly free
+
+  // Pre-flight: free the local port before binding the SSH tunnel
   channel.appendLine(`[Extension] Ensuring port ${port.toString()} is free...`);
   logInfo(`Ensuring port ${port.toString()} is free before starting...`);
   await killProcessOnPort(port);
-  await new Promise(r => setTimeout(r, 200)); // allow OS buffer time to fully release the socket
+  await new Promise(r => setTimeout(r, 200));
 
-  // When auto-open browser is enabled, omit --no-devtools so the CLI launches
-  // Chrome DevTools itself. Otherwise suppress it to avoid unwanted browser windows.
-  const noDevToolsFlag = openBrowser ? [] : ['--no-devtools'];
-  const cmdStr = `cds debug ${appName} -f${openBrowser ? '' : ' --no-devtools'} -p ${port.toString()}`;
-  channel.appendLine(`[Extension] Starting background process: ${cmdStr}`);
-  logInfo(`[Background] ${cmdStr}`);
+  // Step 1: Send USR1 signal to the remote node process to activate the inspector.
+  // This is a one-shot command — it exits immediately after signalling.
+  const signalCmd = `kill -s USR1 $(pidof node)`;
+  channel.appendLine(`[Extension] Activating Node inspector on ${appName}: cf ssh ${appName} -c "${signalCmd}"`);
+  logInfo(`[Step 1] Activating Node inspector: cf ssh ${appName} -c "${signalCmd}"`);
+
+  await runCfSshSignal(appName, signalCmd, channel);
+
+  // Brief pause to let the inspector socket initialize before we tunnel to it.
+  // Node needs ~300ms to open the WebSocket after receiving USR1.
+  await new Promise(r => setTimeout(r, 300));
+
+  // Step 2: Open a persistent SSH tunnel — remote 9229 → local <port>.
+  // Each app gets its own unique local port so parallel tunnels never conflict.
+  const tunnelArg = `${port.toString()}:localhost:9229`;
+  channel.appendLine(`[Extension] Opening SSH tunnel: cf ssh ${appName} -L ${tunnelArg}`);
+  logInfo(`[Background] cf ssh ${appName} -L ${tunnelArg}`);
 
   const isWindows = process.platform === 'win32';
-  const child = spawn(isWindows ? 'cds.cmd' : 'cds', ['debug', appName, '-f', ...noDevToolsFlag, '-p', port.toString()], {
+  const child = spawn('cf', ['ssh', appName, '-L', tunnelArg], {
     cwd: folderPath,
     shell: isWindows,
-    // On Unix, detached creates a new process group so killProcessGroup(-pid)
-    // terminates cds debug AND any child processes it spawned (e.g. cf ssh).
+    // Detached so killProcessGroup(-pid) terminates the entire cf ssh process tree
     detached: !isWindows,
   });
 
@@ -229,87 +240,37 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
   sessionStates.set(appName, { status: 'TUNNELING' });
   debugProcessEvents.emit('statusChanged', { appName, status: 'TUNNELING' });
 
-  let attached = false;
+  child.stdout.on('data', (data: Buffer | string) => {
+    channels.get(appName)?.append(data.toString());
+  });
 
-  const handleOutput = (data: Buffer | string): void => {
-    const output = data.toString();
-    const ch = channels.get(appName);
-    if (ch) ch.append(output);
-
-    const lowerOutput = output.toLowerCase();
-
-    // Check for SSH port binding failures
-    if (lowerOutput.includes('address already in use') || lowerOutput.includes('permission denied')) {
+  child.stderr.on('data', (data: Buffer | string) => {
+    const text = data.toString();
+    channels.get(appName)?.append(text);
+    // Fatal SSH binding error — report immediately so UI shows ERROR state
+    if (text.toLowerCase().includes('address already in use') || text.toLowerCase().includes('permission denied')) {
       const errMsg = `Port ${port.toString()} is already in use or access was denied.`;
       logError(`[${appName}] ${errMsg}`);
       sessionStates.set(appName, { status: 'ERROR', message: errMsg });
       debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: errMsg });
-      return;
     }
+  });
 
-    // Trigger attach when the tunnel is ready
-    const hasDevToolsMsg = lowerOutput.includes('now attach a debugger to port');
-    const hasTunnelMsg = lowerOutput.includes('opening ssh tunnel');
-
-    if (!attached && (hasDevToolsMsg || hasTunnelMsg)) {
-      attached = true;
-      const delayMs = hasDevToolsMsg ? 0 : 2000;
-      
-      if (ch) ch.appendLine(`\n[Extension] Detected debugger readiness. Waiting ${delayMs.toString()}ms, then attaching VS Code debug config '${launchConfigName}'...`);
-      logInfo(`Tunnel ready for ${appName}, attaching VS Code debugger after ${delayMs.toString()}ms...`);
-      
-      setTimeout(() => {
-        const workspaceFolder = vscode.workspace.workspaceFolders
-          ? vscode.workspace.workspaceFolders[0]
-          : undefined;
-
-        // Enqueue this attach after any in-progress startDebugging call completes.
-        // Concurrent startDebugging calls for different apps cause VS Code to silently
-        // fail the second request — serializing them ensures each app attaches reliably.
-        const currentQueue = debugAttachQueue;
-        debugAttachQueue = currentQueue
-          .then(() => vscode.debug.startDebugging(workspaceFolder, launchConfigName))
-          .then((success) => {
-            if (success) {
-              sessionStates.set(appName, { status: 'ATTACHED' });
-              debugProcessEvents.emit('statusChanged', { appName, status: 'ATTACHED' });
-              void vscode.window.showInformationMessage(`CDS Debug: debugger attached to ${appName}`);
-            } else {
-              sessionStates.set(appName, { status: 'ERROR', message: 'Failed to start VS Code debugging.' });
-              debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: 'Failed to start VS Code debugging.' });
-            }
-          })
-          .catch((err: unknown) => {
-            // Errors must not break the queue chain for subsequent apps
-            const msg = err instanceof Error ? err.message : String(err);
-            logError(`startDebugging error for ${appName}: ${msg}`);
-            sessionStates.set(appName, { status: 'ERROR', message: msg });
-            debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
-          });
-      }, delayMs);
-    }
-  };
-
-
-  child.stdout.on('data', handleOutput);
-  child.stderr.on('data', handleOutput);
+  // `cf ssh -L` does not print a readiness message. TCP-probe the local port
+  // every 250ms until the tunnel accepts connections, then trigger VS Code attach.
+  void probeTunnelAndAttach(appName, port, launchConfigName, channel);
 
   child.on('close', (code) => {
-    const ch = channels.get(appName);
-    if (ch) ch.appendLine(`\n[Extension] Process exited with code ${code?.toString() ?? 'null'}`);
+    channels.get(appName)?.appendLine(`\n[Extension] Process exited with code ${code?.toString() ?? 'null'}`);
     processes.delete(appName);
 
-    // stopProcess() or VS Code native hooks may have already handled cleanup
     if (stoppedApps.has(appName)) return;
 
-    // Only emit EXITED if VS Code debugging has also stopped.
-    // Sometimes 'cds debug' exits but leaves the underlying tunnel active.
     if (!activeVsCodeSessions.has(launchConfigName)) {
-      stoppedApps.add(appName); // Claim token for primitive exit
+      stoppedApps.add(appName);
       sessionStates.delete(appName);
       debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
 
-      // Clean up launch config if the process dies before debugging starts
       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (workspaceRoot) {
         void removeLaunchConfigs(workspaceRoot, [appName]).catch((err: unknown) => {
@@ -318,13 +279,113 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
       }
     }
   });
-  
+
   child.on('error', (err) => {
-    const ch = channels.get(appName);
-    if (ch) ch.appendLine(`\n[Extension] Failed to spawn process: ${err.message}`);
+    channels.get(appName)?.appendLine(`\n[Extension] Failed to spawn cf ssh: ${err.message}`);
     sessionStates.set(appName, { status: 'ERROR', message: err.message });
     debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: err.message });
   });
+}
+
+// Runs `cf ssh <appName> -c <cmd>` as a one-shot command and waits for it to finish.
+// Exit code ≠ 0 is logged as a warning but does not throw — USR1 failures are non-fatal
+// (the inspector may already be active, or pidof node returns empty on a quiet process).
+async function runCfSshSignal(appName: string, cmd: string, channel: vscode.OutputChannel): Promise<void> {
+  return new Promise((resolve) => {
+    const isWindows = process.platform === 'win32';
+    const child = spawn('cf', ['ssh', appName, '-c', cmd], { shell: isWindows });
+
+    child.stdout.on('data', (data: Buffer | string) => { channel.append(data.toString()); });
+    child.stderr.on('data', (data: Buffer | string) => { channel.append(data.toString()); });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        logWarn(`[${appName}] USR1 signal command exited with code ${code?.toString() ?? 'null'} — inspector may already be active.`);
+      }
+      resolve();
+    });
+
+    child.on('error', (err) => {
+      logWarn(`[${appName}] Failed to run USR1 signal: ${err.message}`);
+      resolve(); // non-fatal — proceed to tunnel step
+    });
+  });
+}
+
+// TCP-probes localhost:<port> every 250ms until the tunnel accepts a connection,
+// then enqueues the VS Code attach. Times out after 15 seconds.
+async function probeTunnelAndAttach(
+  appName: string,
+  port: number,
+  launchConfigName: string,
+  channel: vscode.OutputChannel,
+): Promise<void> {
+  const PROBE_INTERVAL_MS = 250;
+  const TIMEOUT_MS = 15_000;
+  const started = Date.now();
+
+  const isReady = await new Promise<boolean>((resolve) => {
+    const attempt = (): void => {
+      if (Date.now() - started > TIMEOUT_MS) {
+        resolve(false);
+        return;
+      }
+
+      // Attempt a TCP connection to the local tunnel port to check readiness
+      const socket = createConnection({ port, host: '127.0.0.1' });
+      socket.setTimeout(200);
+
+      socket.on('connect', () => {
+        socket.destroy();
+        resolve(true);
+      });
+
+      socket.on('error', () => {
+        socket.destroy();
+        setTimeout(attempt, PROBE_INTERVAL_MS);
+      });
+
+      socket.on('timeout', () => {
+        socket.destroy();
+        setTimeout(attempt, PROBE_INTERVAL_MS);
+      });
+    };
+
+    attempt();
+  });
+
+  if (!isReady) {
+    const errMsg = `Tunnel on port ${port.toString()} did not become ready within ${(TIMEOUT_MS / 1000).toString()}s.`;
+    logError(`[${appName}] ${errMsg}`);
+    sessionStates.set(appName, { status: 'ERROR', message: errMsg });
+    debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: errMsg });
+    return;
+  }
+
+  channel.appendLine(`\n[Extension] Tunnel ready on port ${port.toString()}. Attaching VS Code debugger '${launchConfigName}'...`);
+  logInfo(`Tunnel ready for ${appName} on port ${port.toString()}, attaching VS Code debugger...`);
+
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+
+  const currentQueue = debugAttachQueue;
+  debugAttachQueue = currentQueue
+    .then(() => vscode.debug.startDebugging(workspaceFolder, launchConfigName))
+    .then((success) => {
+      if (success) {
+        sessionStates.set(appName, { status: 'ATTACHED' });
+        debugProcessEvents.emit('statusChanged', { appName, status: 'ATTACHED' });
+        void vscode.window.showInformationMessage(`CDS Debug: debugger attached to ${appName}`);
+      } else {
+        sessionStates.set(appName, { status: 'ERROR', message: 'Failed to start VS Code debugging.' });
+        debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: 'Failed to start VS Code debugging.' });
+      }
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      logError(`startDebugging error for ${appName}: ${msg}`);
+      sessionStates.set(appName, { status: 'ERROR', message: msg });
+      debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
+    });
 }
 
 export function stopAllProcesses(): void {
