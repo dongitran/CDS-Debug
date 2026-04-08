@@ -139,22 +139,21 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'REQUEST_CHANGE_MAPPING': {
-        const choice = await vscode.window.showWarningMessage(
-          'You have active debug sessions running. Do you want to stop them before changing the organization mapping?',
+        // "Keep Running & Change" was intentionally removed: switching orgs while
+        // SSH tunnels are active leaves orphaned processes and stale CF targets.
+        // User must explicitly stop all sessions before remapping.
+        const confirmed = await vscode.window.showWarningMessage(
+          'You have active debug sessions running. All sessions will be stopped before changing the organization mapping.',
           { modal: true },
-          'Stop Sessions & Change',
-          'Keep Running & Change'
+          'Stop Sessions & Change'
         );
-        if (choice === 'Stop Sessions & Change') {
+        if (confirmed === 'Stop Sessions & Change') {
           stopAllProcesses();
-          this.post({ type: 'PROCEED_CHANGE_MAPPING' });
-        } else if (choice === 'Keep Running & Change') {
           this.post({ type: 'PROCEED_CHANGE_MAPPING' });
         }
         // Cancel does nothing
         break;
       }
-        break;
 
       case 'GET_DEBUG_PREFS':
         this.post({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
