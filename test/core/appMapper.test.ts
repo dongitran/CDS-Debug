@@ -3,6 +3,7 @@ import {
   getFolderNameCandidates,
   findFolderPath,
   buildDebugTargets,
+  buildFallbackTargets,
 } from '../../src/core/appMapper';
 
 describe('getFolderNameCandidates', () => {
@@ -182,5 +183,50 @@ describe('buildDebugTargets', () => {
       // 20000 is the start, 20001 is taken by app-fixed's existingPort → skip to 20002
       expect(targets.find((t) => t.appName === 'app-new')?.port).toBe(20000);
     });
+  });
+});
+
+describe('buildFallbackTargets', () => {
+  const fallbackRoot = '/workspace/root';
+
+  it('builds targets with noLocalFolder=true for all apps', () => {
+    const targets = buildFallbackTargets(['app-a', 'app-b'], fallbackRoot);
+    expect(targets).toHaveLength(2);
+    expect(targets[0]).toMatchObject({ appName: 'app-a', folderPath: fallbackRoot, noLocalFolder: true });
+    expect(targets[1]).toMatchObject({ appName: 'app-b', folderPath: fallbackRoot, noLocalFolder: true });
+  });
+
+  it('assigns sequential ports starting from DEBUG_BASE_PORT', () => {
+    const targets = buildFallbackTargets(['app-a', 'app-b'], fallbackRoot);
+    expect(targets[0]?.port).toBe(20000);
+    expect(targets[1]?.port).toBe(20001);
+  });
+
+  it('respects existingPorts', () => {
+    const targets = buildFallbackTargets(['app-a'], fallbackRoot, { 'app-a': 9500 });
+    expect(targets[0]?.port).toBe(9500);
+  });
+
+  it('skips usedPorts', () => {
+    const targets = buildFallbackTargets(['app-a', 'app-b'], fallbackRoot, {}, new Set([20000]));
+    expect(targets[0]?.port).toBe(20001);
+    expect(targets[1]?.port).toBe(20002);
+  });
+
+  it('avoids collisions between existingPort and new allocations', () => {
+    // app-a claims 20001 via existingPorts; app-b must not also get 20001
+    const targets = buildFallbackTargets(
+      ['app-a', 'app-b'],
+      fallbackRoot,
+      { 'app-a': 20001 },
+      new Set(),
+      20000,
+    );
+    expect(targets.find((t) => t.appName === 'app-a')?.port).toBe(20001);
+    expect(targets.find((t) => t.appName === 'app-b')?.port).toBe(20000);
+  });
+
+  it('returns empty array for empty input', () => {
+    expect(buildFallbackTargets([], fallbackRoot)).toEqual([]);
   });
 });

@@ -26,6 +26,28 @@ export function findFolderPath(appName: string, allFolderPaths: string[]): strin
 }
 
 /**
+ * Allocates a port for an app, respecting existingPorts and usedPorts.
+ * Mutates usedPorts so subsequent calls in the same batch never collide.
+ */
+function allocatePort(
+  appName: string,
+  existingPorts: Record<string, number>,
+  usedPorts: Set<number>,
+  cursor: { port: number },
+): number {
+  const existing = existingPorts[appName];
+  if (existing !== undefined) {
+    usedPorts.add(existing);
+    return existing;
+  }
+  while (usedPorts.has(cursor.port)) cursor.port++;
+  const assigned = cursor.port;
+  usedPorts.add(assigned);
+  cursor.port++;
+  return assigned;
+}
+
+/**
  * Builds DebugTarget list from selected app names.
  * Considers existing port mappings and prevents overlapping with already used ports.
  * Apps that cannot be mapped to a local folder are included with folderPath = null
@@ -40,28 +62,37 @@ export function buildDebugTargets(
 ): { targets: DebugTarget[]; unmapped: string[] } {
   const targets: DebugTarget[] = [];
   const unmapped: string[] = [];
-  let port = startPort;
+  const cursor = { port: startPort };
 
   for (const appName of selectedAppNames) {
     const folderPath = findFolderPath(appName, allFolderPaths);
-
     if (folderPath !== null) {
-      const existingPort = existingPorts[appName];
-      if (existingPort !== undefined) {
-        targets.push({ appName, folderPath, port: existingPort });
-        usedPorts.add(existingPort);
-      } else {
-        while (usedPorts.has(port)) {
-          port++;
-        }
-        targets.push({ appName, folderPath, port });
-        usedPorts.add(port);
-        port++;
-      }
+      targets.push({ appName, folderPath, port: allocatePort(appName, existingPorts, usedPorts, cursor) });
     } else {
       unmapped.push(appName);
     }
   }
 
   return { targets, unmapped };
+}
+
+/**
+ * Builds fallback DebugTarget list for apps that could not be mapped to a local folder.
+ * Uses the provided folderPath (e.g. workspace root) for all targets and marks each
+ * with noLocalFolder = true so the UI can signal that source maps are unavailable.
+ */
+export function buildFallbackTargets(
+  appNames: string[],
+  folderPath: string,
+  existingPorts: Record<string, number> = {},
+  usedPorts = new Set<number>(),
+  startPort = DEBUG_BASE_PORT,
+): DebugTarget[] {
+  const cursor = { port: startPort };
+  return appNames.map((appName) => ({
+    appName,
+    folderPath,
+    port: allocatePort(appName, existingPorts, usedPorts, cursor),
+    noLocalFolder: true,
+  }));
 }
