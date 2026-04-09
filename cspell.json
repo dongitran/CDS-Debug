@@ -110,6 +110,20 @@
     "debugattach",
     "vscodenotebox",
     "vscodenoteicon",
-    "notebox"
+    "notebox",
+    "creds",
+    "keychain",
+    "keychains",
+    "mypassword",
+    "newpw",
+    "notanemail",
+    "secretstorage",
+    "credstatus",
+    "setupcred",
+    "credinfo",
+    "credbtn",
+    "credenv",
+    "credential",
+    "credentials"
   ]
 }

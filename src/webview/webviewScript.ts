@@ -13,6 +13,7 @@ export function getScript(nonce: string): string {
     // === CONSTANTS ===
 
     const SCREENS = {
+      SETUP_CREDENTIALS: 'setup-credentials',
       REGION: 'region',
       LOGGING_IN: 'logging-in',
       SELECT_ORG: 'select-org',
@@ -80,6 +81,11 @@ export function getScript(nonce: string): string {
       isRestoringSession: false,
       // True when auto-reconnect was triggered (shows different spinner message).
       isReconnecting: false,
+      // Credential setup screen state
+      credentialStatus: { hasCredentials: false, maskedEmail: '', source: 'none' },
+      setupCredEmail: '',
+      credError: null,
+      isSavingCreds: false,
     };
 
     // === UTILS ===
@@ -134,6 +140,7 @@ export function getScript(nonce: string): string {
 
     function renderScreen() {
       switch (state.screen) {
+        case SCREENS.SETUP_CREDENTIALS:   return renderSetupCredentials();
         case SCREENS.REGION:              return renderRegion();
         case SCREENS.LOGGING_IN:          return renderLoggingIn();
         case SCREENS.SELECT_ORG:          return renderSelectOrg();
@@ -317,6 +324,8 @@ export function getScript(nonce: string): string {
 
       // Settings screen listeners (defined in webviewRenderers.ts content)
       attachSettingsListeners();
+      // Credential setup screen listeners (defined in webviewRenderers.ts content)
+      attachCredentialListeners();
     }
 
     // === MESSAGE HANDLER ===
@@ -464,6 +473,11 @@ export function getScript(nonce: string): string {
           // on every subsequent toggle.
           return;
         case 'CONFIG_LOADED': {
+          // Always update credential status first — used to decide initial screen.
+          if (msg.payload.credentialStatus) {
+            state.credentialStatus = msg.payload.credentialStatus;
+          }
+
           const cfg = msg.payload.config;
           if (cfg) {
             state.apiEndpoint = cfg.apiEndpoint;
@@ -491,19 +505,82 @@ export function getScript(nonce: string): string {
             state.activeSessions = restoredSessions;
             state.orgs = cfg.orgs ?? [];
             state.mappings = cfg.orgGroupMappings;
-            if (state.mappings.length > 0) {
+          }
+
+          // Gate: require credentials before proceeding with any other screen.
+          if (!state.credentialStatus.hasCredentials) {
+            state.screen = SCREENS.SETUP_CREDENTIALS;
+            break;
+          }
+
+          if (cfg && state.mappings.length > 0) {
+            state.selectedOrg = state.mappings[0].cfOrg;
+            state.selectedFolder = state.mappings[0].groupFolderPath;
+            // Mark as restoring so APPS_ERROR can trigger auto-reconnect instead
+            // of leaving the user stuck on a broken READY screen.
+            state.isRestoringSession = true;
+            state.screen = SCREENS.LOADING_APPS;
+            render();
+            vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
+            return;
+          }
+
+          state.screen = SCREENS.REGION;
+          break;
+        }
+
+        case 'CREDENTIALS_SAVED': {
+          state.isSavingCreds = false;
+          state.credError = null;
+          state.credentialStatus = {
+            hasCredentials: true,
+            maskedEmail: msg.payload.maskedEmail,
+            source: msg.payload.source,
+          };
+          if (state.screen === SCREENS.SETUP_CREDENTIALS) {
+            // If saved config had mappings, restore the session; else go to REGION.
+            if (state.mappings && state.mappings.length > 0) {
               state.selectedOrg = state.mappings[0].cfOrg;
               state.selectedFolder = state.mappings[0].groupFolderPath;
-              // Mark as restoring so APPS_ERROR can trigger auto-reconnect instead
-              // of leaving the user stuck on a broken READY screen.
               state.isRestoringSession = true;
               state.screen = SCREENS.LOADING_APPS;
               render();
               vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
               return;
             }
+            state.screen = SCREENS.REGION;
           }
-          state.screen = SCREENS.REGION;
+          break;
+        }
+
+        case 'CREDENTIALS_ERROR': {
+          state.isSavingCreds = false;
+          state.credError = msg.payload.message;
+          if (state.screen !== SCREENS.SETUP_CREDENTIALS) return;
+          break;
+        }
+
+        case 'CREDENTIALS_STATUS': {
+          const prevHad = state.credentialStatus.hasCredentials;
+          state.credentialStatus = msg.payload;
+          // After clearing credentials: if no credentials remain, redirect to setup.
+          if (prevHad && !msg.payload.hasCredentials) {
+            state.credError = null;
+            state.isSavingCreds = false;
+            state.screen = SCREENS.SETUP_CREDENTIALS;
+            break;
+          }
+          if (state.screen === SCREENS.SETTINGS) render();
+          return;
+        }
+
+        case 'CREDENTIALS_REVOKED': {
+          // Auth failure with keychain creds — extension already cleared them.
+          // Redirect to setup screen so user can enter updated credentials.
+          state.credError = msg.payload.message;
+          state.isSavingCreds = false;
+          state.credentialStatus = { hasCredentials: false, maskedEmail: '', source: 'none' };
+          state.screen = SCREENS.SETUP_CREDENTIALS;
           break;
         }
       }

@@ -244,6 +244,23 @@ export function getStyles(): string {
       margin-bottom: 10px;
     }
 
+    .warning-box {
+      background: var(--vscode-inputValidation-warningBackground, rgba(204,153,0,0.1));
+      border: 1px solid var(--vscode-inputValidation-warningBorder, #cca700);
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      line-height: 1.5;
+      margin-bottom: 10px;
+    }
+    .warning-box code {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 10.5px;
+      background: var(--vscode-textCodeBlock-background);
+      padding: 0 3px;
+      border-radius: 2px;
+    }
+
     .spinner {
       display: inline-block;
       width: 14px;
@@ -699,6 +716,103 @@ export function getStyles(): string {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    /* ── Credential setup screen ── */
+
+    /* Relative wrapper so the eye-toggle button can be inset */
+    .input-password-wrap {
+      position: relative;
+    }
+    .input-password-wrap .input {
+      padding-right: 34px;
+    }
+    .btn-toggle-visibility {
+      position: absolute;
+      right: 6px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: transparent;
+      border: none;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      padding: 2px;
+      transition: color 0.2s;
+    }
+    .btn-toggle-visibility:hover { color: var(--vscode-foreground); }
+
+    /* Keychain/source badge shown in settings */
+    .cred-source-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 99px;
+      letter-spacing: 0.03em;
+    }
+    .cred-source-badge.env {
+      background: transparent;
+      border: 1px solid var(--vscode-testing-iconPassed);
+      color: var(--vscode-testing-iconPassed);
+    }
+    .cred-source-badge.keychain {
+      background: transparent;
+      border: 1px solid var(--vscode-focusBorder);
+      color: var(--vscode-focusBorder);
+    }
+    .cred-source-badge.none {
+      background: transparent;
+      border: 1px solid var(--vscode-descriptionForeground);
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.7;
+    }
+
+    /* Row used inside the Settings credential section */
+    .cred-info-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      font-size: 12px;
+    }
+    .cred-info-email {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Two equal-width side-by-side buttons for Update / Clear */
+    .cred-btn-row {
+      display: flex;
+      gap: 6px;
+    }
+    .cred-btn-row .btn,
+    .cred-btn-row .btn-secondary {
+      flex: 1;
+      font-size: 12px;
+      padding: 5px 6px;
+    }
+
+    /* Subtle env-var hint at the bottom of the setup screen */
+    .cred-env-hint {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      text-align: center;
+      line-height: 1.5;
+    }
+    .cred-env-hint code {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 10.5px;
+      background: var(--vscode-textCodeBlock-background);
+      padding: 0 3px;
+      border-radius: 2px;
     }
   `;
 }

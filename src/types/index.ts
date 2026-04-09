@@ -1,5 +1,12 @@
 export const CF_DEFAULT_SPACE = 'app';
 
+export interface CredentialStatus {
+  hasCredentials: boolean;
+  maskedEmail: string;
+  /** 'env' = process.env or login-shell, 'keychain' = VS Code SecretStorage, 'none' = not set */
+  source: 'env' | 'keychain' | 'none';
+}
+
 // Schema for the optional per-project config file (cap-debug-config.json).
 export interface CapDebugConfig {
   remoteRoot?: string;
@@ -147,7 +154,10 @@ export type WebviewMessage =
   | { type: 'SAVE_CACHE_CONFIG'; payload: CacheSettings }
   | { type: 'GET_DEBUG_PREFS' }
   | { type: 'SAVE_DEBUG_PREFS'; payload: DebugPreferences }
-  | { type: 'REQUEST_CHANGE_MAPPING' };
+  | { type: 'REQUEST_CHANGE_MAPPING' }
+  | { type: 'SAVE_CREDENTIALS'; payload: { email: string; password: string } }
+  | { type: 'GET_CREDENTIALS_STATUS' }
+  | { type: 'CLEAR_CREDENTIALS' };
 
 // Messages from extension → webview
 export type ExtensionMessage =
@@ -160,10 +170,14 @@ export type ExtensionMessage =
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[]; ports: Record<string, number> } }
   | { type: 'APP_DEBUG_STATUS'; payload: { appName: string; status: string; message?: string } }
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
-  | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }> } }
+  | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }>; credentialStatus: CredentialStatus } }
   | { type: 'SYNC_STATUS'; payload: SyncProgress }
   | { type: 'CACHE_CONFIG'; payload: CacheSettings }
   | { type: 'DEBUG_PREFS'; payload: DebugPreferences }
   | { type: 'BRANCH_PREP_START'; payload: { services: { appName: string; currentBranch: string; targetBranch: string }[] } }
   | { type: 'BRANCH_PREP_STATUS'; payload: { appName: string; step: BranchPrepStep; message?: string } }
-  | { type: 'PROCEED_CHANGE_MAPPING' };
+  | { type: 'PROCEED_CHANGE_MAPPING' }
+  | { type: 'CREDENTIALS_SAVED'; payload: { maskedEmail: string; source: 'env' | 'keychain' | 'none' } }
+  | { type: 'CREDENTIALS_ERROR'; payload: { message: string } }
+  | { type: 'CREDENTIALS_STATUS'; payload: CredentialStatus }
+  | { type: 'CREDENTIALS_REVOKED'; payload: { message: string } };

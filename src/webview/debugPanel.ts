@@ -1,13 +1,19 @@
 import * as vscode from 'vscode';
 import { join } from 'node:path';
-import type { BranchPrepService, BranchPrepStep, CacheSettings, CapDebugConfig, DebugTarget, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
+import type { BranchPrepService, BranchPrepStep, CacheSettings, CapDebugConfig, CredentialStatus, DebugTarget, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
 import { DEFAULT_CACHE_SETTINGS } from '../types/index';
-import { cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
+import { CfCliError, cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
 import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig } from '../core/launchConfigurator';
 import { getConfig, saveConfig } from '../storage/configStore';
-import { getCredentials } from '../core/shellEnv';
+import {
+  clearCredentialsFromSecretStorage,
+  getCredentialSource,
+  getCredentials,
+  maskEmail,
+  saveCredentialsToSecretStorage,
+} from '../core/shellEnv';
 import { getCachedApps, getCacheSettings, getDebugPreferences, saveCacheSettings, saveDebugPreferences } from '../storage/cacheStore';
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { logError, logInfo, logWarn } from '../core/logger';
@@ -76,11 +82,13 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     switch (raw.type) {
       case 'LOAD_CONFIG': {
         const config = getConfig();
+        const credentialStatus = await this.buildCredentialStatus();
         this.post({
           type: 'CONFIG_LOADED',
           payload: {
             config: config ?? null,
             activeSessions: getActiveSessions(),
+            credentialStatus,
           },
         });
         // Push current debug preferences immediately so the webview's in-memory
@@ -89,6 +97,20 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
         break;
       }
+
+      case 'SAVE_CREDENTIALS':
+        await this.handleSaveCredentials(raw.payload.email, raw.payload.password);
+        break;
+
+      case 'GET_CREDENTIALS_STATUS': {
+        const status = await this.buildCredentialStatus();
+        this.post({ type: 'CREDENTIALS_STATUS', payload: status });
+        break;
+      }
+
+      case 'CLEAR_CREDENTIALS':
+        await this.handleClearCredentials();
+        break;
 
       case 'SELECT_GROUP_FOLDER':
         await this.handleSelectGroupFolder();
@@ -200,7 +222,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const { email, password } = await getCredentials();
 
     if (!email || !password) {
-      const msg = 'SAP_EMAIL or SAP_PASSWORD environment variable is not set.';
+      const msg = 'No SAP credentials found. Please set your credentials in the extension setup screen.';
       logError(msg);
       this.post({ type: 'LOGIN_ERROR', payload: { message: msg } });
       return;
@@ -248,7 +270,13 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Login failed: ${msg}`);
-      this.post({ type: 'LOGIN_ERROR', payload: { message: msg } });
+      // Auth failure with keychain credentials → clear stale creds and redirect
+      // to SETUP_CREDENTIALS (posting CREDENTIALS_REVOKED). Skip LOGIN_ERROR to
+      // avoid a conflicting screen transition.
+      const revoked = await this.handleAuthFailure(err);
+      if (!revoked) {
+        this.post({ type: 'LOGIN_ERROR', payload: { message: msg } });
+      }
     }
   }
 
@@ -330,7 +358,11 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       } catch (retryErr: unknown) {
         const msg = extractErrorMessage(retryErr);
         logError(`Failed to target org ${org} after re-login: ${msg}`);
-        this.post({ type: 'DEBUG_ERROR', payload: { message: `CF target failed: ${msg}` } });
+        // Auth failure → clear stale keychain creds and redirect to credential setup.
+        const revoked = await this.handleAuthFailure(retryErr);
+        if (!revoked) {
+          this.post({ type: 'DEBUG_ERROR', payload: { message: `CF target failed: ${msg}` } });
+        }
         return;
       }
     }
@@ -653,6 +685,72 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     void vscode.env.openExternal(safeUri);
   }
 
+  /** Builds a CredentialStatus snapshot for the current session. */
+  private async buildCredentialStatus(): Promise<CredentialStatus> {
+    const { email } = await getCredentials();
+    const source = await getCredentialSource();
+    return {
+      hasCredentials: !!(email),
+      maskedEmail: maskEmail(email),
+      source,
+    };
+  }
+
+  private async handleSaveCredentials(email: string, password: string): Promise<void> {
+    const trimmedEmail = email.trim();
+    if (trimmedEmail.length === 0 || !trimmedEmail.includes('@')) {
+      this.post({ type: 'CREDENTIALS_ERROR', payload: { message: 'Please enter a valid email address.' } });
+      return;
+    }
+    if (!password) {
+      this.post({ type: 'CREDENTIALS_ERROR', payload: { message: 'Password is required.' } });
+      return;
+    }
+    try {
+      await saveCredentialsToSecretStorage(trimmedEmail, password);
+      logInfo(`[Credentials] Saved credentials for ${maskEmail(trimmedEmail)} to SecretStorage.`);
+      this.post({
+        type: 'CREDENTIALS_SAVED',
+        payload: { maskedEmail: maskEmail(trimmedEmail), source: 'keychain' },
+      });
+    } catch (err: unknown) {
+      const msg = extractErrorMessage(err);
+      logError(`[Credentials] Failed to save credentials: ${msg}`);
+      this.post({ type: 'CREDENTIALS_ERROR', payload: { message: `Could not save credentials: ${msg}` } });
+    }
+  }
+
+  private async handleClearCredentials(): Promise<void> {
+    await clearCredentialsFromSecretStorage();
+    const status = await this.buildCredentialStatus();
+    logInfo('[Credentials] Credentials cleared from SecretStorage.');
+    this.post({ type: 'CREDENTIALS_STATUS', payload: status });
+  }
+
+  /**
+   * Called when a CF authentication error is detected (wrong/expired credentials).
+   * If the active credential source is 'keychain', clears the stale stored credentials
+   * and sends CREDENTIALS_REVOKED to the webview so the user is redirected to the
+   * Setup Credentials screen immediately.
+   *
+   * Returns true if credentials were revoked (keychain source), false otherwise.
+   * Callers should skip posting their own error message when this returns true,
+   * as the redirect to SETUP_CREDENTIALS replaces the normal error flow.
+   */
+  private async handleAuthFailure(err: unknown): Promise<boolean> {
+    if (!isAuthError(err)) return false;
+    const source = await getCredentialSource();
+    if (source !== 'keychain') return false;
+    // Only auto-revoke keychain credentials — env-var credentials are managed externally.
+    await clearCredentialsFromSecretStorage();
+    logInfo('[Credentials] Auth failure with keychain credentials — cleared and prompting for new credentials.');
+    this.post({
+      type: 'CREDENTIALS_REVOKED',
+      payload: { message: 'Credentials rejected by Cloud Foundry. Please enter your updated credentials.' },
+    });
+    return true;
+  }
+
   /**
    * Re-authenticates against the CF API using stored credentials.
    * Used as a recovery path when a cached app list is loaded and the
@@ -661,7 +759,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   private async reLogin(apiEndpoint: string): Promise<void> {
     const { email, password } = await getCredentials();
     if (!email || !password) {
-      throw new Error('SAP_EMAIL or SAP_PASSWORD not set — cannot re-authenticate.');
+      throw new Error('No credentials available — cannot re-authenticate. Please set credentials in the extension.');
     }
     logInfo(`Re-authenticating to ${apiEndpoint} after token expiry…`);
     try {
@@ -689,8 +787,11 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         await cfTarget(org);
         logInfo(`[Session] Silent re-login successful — org ${org} targeted.`);
       } catch (err: unknown) {
-        // Non-fatal: the user will get a clear error if they then try to start a debug session.
         logWarn(`[Session] Silent re-login failed: ${err instanceof Error ? err.message : String(err)}`);
+        // Proactively clear stale keychain credentials so the user is redirected to
+        // the setup screen before they attempt to start a debug session and hit the
+        // same auth failure again.
+        await this.handleAuthFailure(err);
       }
     }
   }
@@ -708,6 +809,26 @@ function isWebviewMessage(value: unknown): value is WebviewMessage {
 function extractErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/**
+ * Returns true when the error looks like a CF authentication failure
+ * (wrong credentials, expired password, etc.) rather than a network or
+ * server-side issue.  Checks both the Node.js error message and, when the
+ * error is a CfCliError, the raw CF CLI stderr output.
+ */
+function isAuthError(err: unknown): boolean {
+  const message = extractErrorMessage(err).toLowerCase();
+  const stderr = err instanceof CfCliError ? err.stderr.toLowerCase() : '';
+  const combined = `${message} ${stderr}`;
+  return (
+    combined.includes('authentication failed') ||
+    combined.includes('credentials were rejected') ||
+    combined.includes('invalid credentials') ||
+    combined.includes('unauthorized') ||
+    combined.includes('not authorized') ||
+    combined.includes('invalid_grant')
+  );
 }
 
 function toSafeHttpUri(rawUrl: string): vscode.Uri | null {

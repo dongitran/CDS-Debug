@@ -4,8 +4,38 @@ import { logInfo, logWarn } from './logger';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Minimal interface for VS Code's SecretStorage so this module does not
+ * need to import 'vscode' directly (which would break unit tests that run
+ * outside the VS Code Extension Host environment).
+ *
+ * Uses PromiseLike<T> (standard TypeScript) instead of Promise<T> because
+ * VS Code's SecretStorage methods return Thenable<T>, which satisfies
+ * PromiseLike<T> but not the full Promise<T> shape.
+ */
+export interface SecretStorageLike {
+  get(key: string): PromiseLike<string | undefined>;
+  store(key: string, value: string): PromiseLike<void>;
+  delete(key: string): PromiseLike<void>;
+}
+
+const SECRET_KEY_EMAIL = 'cds-debug.credentials.email';
+const SECRET_KEY_PASSWORD = 'cds-debug.credentials.password';
+
 // Cache the result so subsequent calls are instant.
 let _cachedShellEnv: NodeJS.ProcessEnv | null = null;
+
+// Injected by extension.ts once context is available.
+let _secretStorage: SecretStorageLike | undefined;
+
+/**
+ * Registers the VS Code SecretStorage instance used as a third-priority
+ * credential source (after process.env and login-shell env).
+ * Called once from extension.ts activate().
+ */
+export function setSecretStorage(storage: SecretStorageLike | undefined): void {
+  _secretStorage = storage;
+}
 
 /**
  * Spawns the user's login shell and reads its full environment.
@@ -69,10 +99,12 @@ async function readLoginShellEnv(): Promise<NodeJS.ProcessEnv> {
 }
 
 /**
- * Returns SAP credentials with a two-step fallback:
+ * Returns SAP credentials with a three-step priority:
  *   1. process.env — works when VS Code is launched from a terminal.
  *   2. Login-shell env — covers launching VS Code from the macOS Dock or
  *      Spotlight where the Extension Host has no shell dotfiles.
+ *   3. VS Code SecretStorage — covers users who have not set env vars but
+ *      have stored credentials via the extension's Setup Credentials UI.
  */
 export async function getCredentials(): Promise<{ email: string; password: string }> {
   const e1 = process.env.SAP_EMAIL;
@@ -90,7 +122,81 @@ export async function getCredentials(): Promise<{ email: string; password: strin
     return { email: e2, password: p2 };
   }
 
+  if (_secretStorage) {
+    const e3 = await _secretStorage.get(SECRET_KEY_EMAIL);
+    const p3 = await _secretStorage.get(SECRET_KEY_PASSWORD);
+    if (e3 && p3) {
+      logInfo('[ShellEnv] Credentials resolved from SecretStorage (system keychain).');
+      return { email: e3, password: p3 };
+    }
+  }
+
   return { email: '', password: '' };
+}
+
+/**
+ * Returns the source of the currently active credentials.
+ * 'env'     = process.env or login-shell dotfiles
+ * 'keychain' = VS Code SecretStorage (system keychain)
+ * 'none'    = no credentials found
+ */
+export async function getCredentialSource(): Promise<'env' | 'keychain' | 'none'> {
+  const e1 = process.env.SAP_EMAIL;
+  const p1 = process.env.SAP_PASSWORD;
+  if (e1 && p1) return 'env';
+
+  const shellEnv = await readLoginShellEnv();
+  if (shellEnv.SAP_EMAIL && shellEnv.SAP_PASSWORD) return 'env';
+
+  if (_secretStorage) {
+    const e3 = await _secretStorage.get(SECRET_KEY_EMAIL);
+    const p3 = await _secretStorage.get(SECRET_KEY_PASSWORD);
+    if (e3 && p3) return 'keychain';
+  }
+
+  return 'none';
+}
+
+/**
+ * Persists email and password in the VS Code SecretStorage (system keychain).
+ * Clears the login-shell env cache so the next getCredentials() call will
+ * re-evaluate priority order and pick up the newly saved values.
+ */
+export async function saveCredentialsToSecretStorage(email: string, password: string): Promise<void> {
+  if (!_secretStorage) {
+    throw new Error('SecretStorage is not available — extension context not yet initialized.');
+  }
+  await _secretStorage.store(SECRET_KEY_EMAIL, email);
+  await _secretStorage.store(SECRET_KEY_PASSWORD, password);
+  _cachedShellEnv = null; // Invalidate cache so priority re-evaluation is fresh.
+  logInfo('[ShellEnv] Credentials saved to SecretStorage.');
+}
+
+/**
+ * Removes the saved credentials from VS Code SecretStorage (system keychain).
+ * Does nothing if no credentials are stored or SecretStorage is unavailable.
+ */
+export async function clearCredentialsFromSecretStorage(): Promise<void> {
+  if (!_secretStorage) return;
+  await _secretStorage.delete(SECRET_KEY_EMAIL);
+  await _secretStorage.delete(SECRET_KEY_PASSWORD);
+  logInfo('[ShellEnv] Credentials cleared from SecretStorage.');
+}
+
+/**
+ * Returns a display-safe masked version of an email address.
+ * Example: "dongtran@sap.com" → "d***n@sap.com"
+ */
+export function maskEmail(email: string): string {
+  if (!email) return '';
+  const atIdx = email.indexOf('@');
+  if (atIdx <= 0) return '***';
+  const local = email.slice(0, atIdx);
+  const domain = email.slice(atIdx);
+  if (local.length <= 2) {
+    return `${local.charAt(0)}***${domain}`;
+  }
+  return `${local.charAt(0)}***${local.charAt(local.length - 1)}${domain}`;
 }
 
 /** Clears the login-shell env cache (e.g. after the user updates dotfiles). */
