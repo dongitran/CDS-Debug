@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import type { CapDebugConfig, DebugTarget, LaunchConfiguration, LaunchJson } from '../types/index';
 
@@ -51,8 +51,9 @@ export async function readCapDebugConfig(folderPath: string): Promise<CapDebugCo
 export function buildLaunchConfiguration(
   target: DebugTarget,
   remoteRoot: string | undefined,
+  localRootOverride?: string,
 ): LaunchConfiguration {
-  const localRoot = join(target.folderPath, GEN_SRV_SUFFIX);
+  const localRoot = localRootOverride ?? join(target.folderPath, GEN_SRV_SUFFIX);
   const config: LaunchConfiguration = {
     type: 'node',
     request: 'attach',
@@ -75,6 +76,18 @@ export function buildLaunchConfiguration(
   return config;
 }
 
+async function resolveLocalRoot(folderPath: string): Promise<string> {
+  const generatedSrvPath = join(folderPath, GEN_SRV_SUFFIX);
+  try {
+    await access(generatedSrvPath);
+    return generatedSrvPath;
+  } catch {
+    // When `gen/srv` is missing (project not built yet), fall back to the app
+    // source root to avoid debugger source-map path errors.
+    return folderPath;
+  }
+}
+
 export async function generateLaunchConfigurations(
   targets: DebugTarget[],
   fallbackConfig: CapDebugConfig | null = null,
@@ -84,7 +97,8 @@ export async function generateLaunchConfigurations(
     const appConfig = await readCapDebugConfig(target.folderPath);
     // Per-app config takes priority; workspace-level .vscode/cap-debug-config.json is the fallback
     const remoteRoot = appConfig?.remoteRoot ?? fallbackConfig?.remoteRoot;
-    configs.push(buildLaunchConfiguration(target, remoteRoot));
+    const localRoot = await resolveLocalRoot(target.folderPath);
+    configs.push(buildLaunchConfiguration(target, remoteRoot, localRoot));
   }
   return configs;
 }
