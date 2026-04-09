@@ -292,8 +292,7 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
 // (the inspector may already be active, or pidof node returns empty on a quiet process).
 async function runCfSshSignal(appName: string, cmd: string, channel: vscode.OutputChannel): Promise<void> {
   return new Promise((resolve) => {
-    const isWindows = process.platform === 'win32';
-    const child = spawn('cf', ['ssh', appName, '-c', cmd], { shell: isWindows });
+    const child = spawn('cf', ['ssh', appName, '-c', cmd]);
 
     child.stdout.on('data', (data: Buffer | string) => { channel.append(data.toString()); });
     child.stderr.on('data', (data: Buffer | string) => { channel.append(data.toString()); });
