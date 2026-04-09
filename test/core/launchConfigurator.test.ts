@@ -20,6 +20,7 @@ const TARGETS: DebugTarget[] = [
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(fs.access).mockResolvedValue(undefined);
 });
 
 describe('readCapDebugConfig', () => {
@@ -146,6 +147,18 @@ describe('generateLaunchConfigurations', () => {
   it('returns empty array for empty targets list', async () => {
     const configs = await generateLaunchConfigurations([]);
     expect(configs).toEqual([]);
+  });
+
+  it('falls back to app root when gen/srv does not exist', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    vi.mocked(fs.access).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget]);
+
+    expect(configs[0]?.localRoot).toBe('/group/sub-a/myapp_svc_one');
+    expect(configs[0]?.outFiles).toContain('/group/sub-a/myapp_svc_one/**/*.js');
   });
 
   it('uses workspace-level fallback remoteRoot when app config is absent', async () => {
