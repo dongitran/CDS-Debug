@@ -475,6 +475,22 @@ export function getStyles(): string {
       margin-left: 4px;
     }
 
+    .active-card-no-src {
+      display: inline-block;
+      font-size: 9px;
+      font-weight: 500;
+      font-family: var(--vscode-font-family);
+      color: var(--vscode-inputValidation-warningForeground, #cc9b00);
+      background: var(--vscode-inputValidation-warningBackground, rgba(204, 153, 0, 0.1));
+      border: 1px solid var(--vscode-inputValidation-warningBorder, #cca700);
+      border-radius: 3px;
+      padding: 0 3px;
+      margin-left: 5px;
+      vertical-align: middle;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
     .select-all-row {
       display: flex;
       align-items: center;

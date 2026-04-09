@@ -401,9 +401,10 @@ export function getScript(nonce: string): string {
             state.branchPrepServices = [];
             needFullRender = true;
           }
+          const noLocalFolderSet = new Set(msg.payload.unmappedApps || []);
           msg.payload.appNames.forEach(appName => {
             const port = (msg.payload.ports || {})[appName];
-            state.activeSessions[appName] = { status: 'TUNNELING', msgPhase: 0, port };
+            state.activeSessions[appName] = { status: 'TUNNELING', msgPhase: 0, port, noLocalFolder: noLocalFolderSet.has(appName) };
             const tId = setInterval(() => {
               if (state.activeSessions[appName]?.status === 'TUNNELING') {
                 state.activeSessions[appName].msgPhase =

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { join } from 'node:path';
 import type { BranchPrepService, BranchPrepStep, CacheSettings, CapDebugConfig, CredentialStatus, DebugTarget, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
-import { DEFAULT_CACHE_SETTINGS } from '../types/index';
+import { DEBUG_BASE_PORT, DEFAULT_CACHE_SETTINGS } from '../types/index';
 import { CfCliError, cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, getFolderNameCandidates } from '../core/appMapper';
@@ -404,9 +404,24 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const { targets, unmapped } = buildDebugTargets(appNames, resolvedPaths, existingPorts, usedPorts);
 
     if (targets.length === 0) {
-      const msg = `Could not map any app to a local folder. Unmapped: ${unmapped.join(', ')}`;
-      logError(msg);
-      this.post({ type: 'DEBUG_ERROR', payload: { message: msg } });
+      // All apps unmapped — build fallback targets using workspaceRoot so debug can still proceed.
+      // Source maps won't resolve, but the SSH tunnel and debug console will work.
+      logWarn(`No local folder found for any selected app. Starting debug in console-only mode (no source maps).`);
+      let port = DEBUG_BASE_PORT;
+      const fallbackTargets: DebugTarget[] = [];
+      for (const appName of unmapped) {
+        const existingPort = existingPorts[appName];
+        if (existingPort !== undefined) {
+          fallbackTargets.push({ appName, folderPath: workspaceRoot, port: existingPort, noLocalFolder: true });
+          usedPorts.add(existingPort);
+        } else {
+          while (usedPorts.has(port)) port++;
+          fallbackTargets.push({ appName, folderPath: workspaceRoot, port, noLocalFolder: true });
+          usedPorts.add(port);
+          port++;
+        }
+      }
+      await this.launchDebugSessions(fallbackTargets, workspaceRoot, []);
       return;
     }
 
@@ -651,7 +666,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     for (const target of targets) {
       ports[target.appName] = target.port;
     }
-    this.post({ type: 'DEBUG_CONNECTING', payload: { appNames: targets.map((t) => t.appName), ports } });
+    const noLocalFolderApps = targets.filter((t) => t.noLocalFolder).map((t) => t.appName);
+    this.post({
+      type: 'DEBUG_CONNECTING',
+      payload: {
+        appNames: targets.map((t) => t.appName),
+        ports,
+        ...(noLocalFolderApps.length > 0 ? { unmappedApps: noLocalFolderApps } : {}),
+      },
+    });
 
     for (const target of targets) {
       const launchConfigName = `Debug: ${target.appName}`;

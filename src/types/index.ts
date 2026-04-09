@@ -54,6 +54,8 @@ export interface DebugTarget {
   appName: string;
   folderPath: string;
   port: number;
+  /** True when folderPath is a workspace fallback — no matching local source folder was found. */
+  noLocalFolder?: boolean;
 }
 
 export interface LaunchConfiguration {
@@ -167,7 +169,7 @@ export type ExtensionMessage =
   | { type: 'APPS_LOADED'; payload: { apps: CfApp[] } }
   | { type: 'APPS_ERROR'; payload: { message: string } }
   | { type: 'DEBUG_STARTED'; payload: { count: number } }
-  | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[]; ports: Record<string, number> } }
+  | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[]; ports: Record<string, number>; unmappedApps?: string[] } }
   | { type: 'APP_DEBUG_STATUS'; payload: { appName: string; status: string; message?: string } }
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
   | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }>; credentialStatus: CredentialStatus } }
