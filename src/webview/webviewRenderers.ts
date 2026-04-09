@@ -136,8 +136,12 @@ export function getRendererScriptContent(): string {
           + '<span class="status-text-anim">' + escape(text) + '</span>';
       }
       if (session.status === 'ATTACHED') {
+        const noSrc = session.noLocalFolder
+          ? '<span class="active-card-no-src" title="No local source folder found — debug console only">no src</span>'
+          : '';
         return '<span style="color:var(--vscode-testing-iconPassed);margin-right:6px">&#9679;</span>'
-          + '<span class="status-text-anim">Debugger Attached</span>';
+          + '<span class="status-text-anim">Debugger Attached</span>'
+          + noSrc;
       }
       if (session.status === 'ERROR') {
         return '<span style="color:var(--vscode-testing-iconFailed);margin-right:6px">&#10006;</span>'
@@ -157,9 +161,6 @@ export function getRendererScriptContent(): string {
       const rawUrl = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
       const appUrl = normalizeUrl(rawUrl);
       const portText = session.port ? '<span class="active-card-port">:' + session.port + '</span>' : '';
-      const noSrcBadge = session.noLocalFolder
-        ? '<span class="active-card-no-src" title="No local source folder found — debug console only">no src</span>'
-        : '';
 
       const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
         <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
@@ -171,7 +172,7 @@ export function getRendererScriptContent(): string {
       return \`
         <div class="active-card" data-app-name="\${escape(appName)}">
           <div class="active-card-main">
-            <div class="active-card-title" title="\${escape(appName)}">\${escape(appName)}\${portText}\${noSrcBadge}</div>
+            <div class="active-card-title" title="\${escape(appName)}">\${escape(appName)}\${portText}</div>
             <div class="active-card-status">\${getStatusInnerHtml(session)}</div>
           </div>
           \${openBtn}
