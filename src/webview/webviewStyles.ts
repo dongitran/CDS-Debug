@@ -511,50 +511,6 @@ export function getStyles(): string {
       flex-shrink: 0;
     }
 
-    .quick-start-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 6px;
-      margin-bottom: 4px;
-      background: var(--vscode-textBlockQuote-background);
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 4px;
-    }
-    .quick-start-label {
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--vscode-descriptionForeground);
-      flex-shrink: 0;
-    }
-    .quick-start-apps {
-      flex: 1;
-      font-size: 11px;
-      font-family: var(--vscode-editor-font-family);
-      color: var(--vscode-foreground);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      min-width: 0;
-    }
-    .quick-start-btn {
-      flex-shrink: 0;
-      height: 22px;
-      padding: 0 8px;
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      border-radius: 3px;
-      cursor: pointer;
-      font-size: 11px;
-      font-family: var(--vscode-font-family);
-      white-space: nowrap;
-      transition: background 0.2s;
-    }
-    .quick-start-btn:hover { background: var(--vscode-button-hoverBackground); }
-
     .select-all-row {
       display: flex;
       align-items: center;

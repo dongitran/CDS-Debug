@@ -224,8 +224,6 @@ export function getRendererScriptContent(): string {
 
       if (activeAppNames.length === 0) {
         panel.innerHTML = '';
-        // All sessions ended — Quick Start may need to re-appear for now-available apps.
-        refreshQuickStartRow();
         return;
       }
 
@@ -237,8 +235,6 @@ export function getRendererScriptContent(): string {
       if (!sameSet) {
         // Session added or removed — full rebuild with slide-in animation
         panel.innerHTML = renderActiveSessionsContent();
-        // Session count changed — Quick Start count/visibility must update.
-        refreshQuickStartRow();
         return;
       }
 
@@ -284,46 +280,6 @@ export function getRendererScriptContent(): string {
         } else if (session.status !== 'ERROR' && existingRetryBtn) {
           existingRetryBtn.remove();
         }
-      }
-      // Status-only update path — Quick Start doesn't change on a pure status transition,
-      // but keep it in sync defensively (cost is one getElementById per poll cycle).
-      refreshQuickStartRow();
-    }
-
-    // Updates the Quick Start row in-place without a full render().
-    // Called from refreshActiveSessionsPanel() so that changes to activeSessions
-    // (DEBUG_CONNECTING, APP_DEBUG_STATUS) are always reflected immediately.
-    function refreshQuickStartRow() {
-      var container = document.getElementById('quick-start-container');
-      if (!container) return;
-
-      var availableLastApps = state.lastDebuggedApps.filter(function(n) {
-        return state.apps.find(function(a) { return a.name === n && a.state === 'started'; }) && !state.activeSessions[n];
-      });
-
-      if (availableLastApps.length === 0) {
-        container.innerHTML = '';
-        return;
-      }
-
-      var labelText = availableLastApps.length === 1
-        ? escape(availableLastApps[0])
-        : escape(availableLastApps[0]) + ' +' + (availableLastApps.length - 1);
-
-      var newHtml = '<div class="quick-start-row">'
-        + '<span class="quick-start-label">Last:</span>'
-        + '<span class="quick-start-apps" title="' + availableLastApps.map(escape).join(', ') + '">' + labelText + '</span>'
-        + '<button class="quick-start-btn" id="btn-quick-start" aria-label="Quick start last debug session">'
-        + '&#9654; Start (' + availableLastApps.length + ')'
-        + '</button>'
-        + '</div>';
-
-      // Only replace DOM if content actually changed — avoids thrashing the layout.
-      if (container.innerHTML !== newHtml) {
-        container.innerHTML = newHtml;
-        // Re-attach click handler because innerHTML replacement destroys the old element.
-        var btn = document.getElementById('btn-quick-start');
-        if (btn) btn.addEventListener('click', handleQuickStart);
       }
     }
 
@@ -473,22 +429,6 @@ export function getRendererScriptContent(): string {
             </div>
           </div>
           <div style="height:8px;flex-shrink:0"></div>
-          <div id="quick-start-container" style="flex-shrink:0">\${(function() {
-            var availableLastApps = state.lastDebuggedApps.filter(function(n) {
-              return state.apps.find(function(a) { return a.name === n && a.state === 'started'; }) && !state.activeSessions[n];
-            });
-            if (availableLastApps.length === 0) return '';
-            var labelText = availableLastApps.length === 1
-              ? escape(availableLastApps[0])
-              : escape(availableLastApps[0]) + ' +' + (availableLastApps.length - 1);
-            return \`<div class="quick-start-row">
-              <span class="quick-start-label">Last:</span>
-              <span class="quick-start-apps" title="\${availableLastApps.map(escape).join(', ')}">\${labelText}</span>
-              <button class="quick-start-btn" id="btn-quick-start" aria-label="Quick start last debug session">
-                &#9654; Start (\${availableLastApps.length})
-              </button>
-            </div>\`;
-          })()}</div>
           <input class="input" id="search-input" placeholder="Search apps&hellip;"
             aria-label="Search apps" value="\${escape(state.searchQuery)}" style="flex-shrink:0" />
           <div style="height:4px;flex-shrink:0"></div>

@@ -37,16 +37,43 @@ const reconnecting = new Set<string>();
 // How many consecutive reconnect attempts each app has made since last ATTACHED.
 const reconnectAttempts = new Map<string, number>();
 const MAX_RECONNECT_ATTEMPTS = 3;
+const TERMINATE_RECONNECT_GRACE_MS = 350;
 // Maps appName → the VS Code DebugSession.id that is currently active for that app.
 // Used to ignore late-arriving onDidTerminateDebugSession events that belong to a
 // previous (old) session after a successful reconnect has already started a new one.
 const currentSessionIds = new Map<string, string>();
+// Monotonic lifecycle version per app. Any async callback from an older lifecycle
+// must be ignored to prevent stale reconnect timers/events from mutating new sessions.
+const lifecycleVersions = new Map<string, number>();
+const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 // Serializes concurrent vscode.debug.startDebugging() calls.
 // VS Code's debug API is not safe for simultaneous attach requests — the second
 // call can silently fail (return false) if it arrives before the first resolves.
 // This queue ensures each app attaches only after the previous attach completes.
 let debugAttachQueue = Promise.resolve();
+
+function bumpLifecycleVersion(appName: string): number {
+  const next = (lifecycleVersions.get(appName) ?? 0) + 1;
+  lifecycleVersions.set(appName, next);
+  return next;
+}
+
+function getLifecycleVersion(appName: string): number {
+  return lifecycleVersions.get(appName) ?? 0;
+}
+
+function isCurrentLifecycle(appName: string, lifecycleVersion: number): boolean {
+  return getLifecycleVersion(appName) === lifecycleVersion;
+}
+
+function clearReconnectTimer(appName: string): void {
+  const timer = reconnectTimers.get(appName);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    reconnectTimers.delete(appName);
+  }
+}
 
 // Kills a child process and its entire process group on Unix (SIGTERM → process group),
 // ensuring sub-processes like `cf ssh` are also terminated.
@@ -115,6 +142,91 @@ export function getSessionParams(appName: string): { folderPath: string; port: n
   return sessionParams.get(appName);
 }
 
+function emitExitedAndCleanup(appName: string, sessionName: string): void {
+  const p = processes.get(appName);
+  if (p) {
+    logInfo(`Debug session ${sessionName} stopped. Cleaning up SSH tunnel process...`);
+    killProcessGroup(p);
+    processes.delete(appName);
+    channels.get(appName)?.appendLine('[Extension] Debug session terminated. Process killed.');
+  }
+
+  // Always kill by port: cds-debug may have already exited (process map entry gone)
+  // while cf ssh tunnel still runs as a separate process.
+  const port = debugPorts.get(appName);
+  if (port !== undefined) {
+    debugPorts.delete(appName);
+    setTimeout(() => void killProcessOnPort(port), 600);
+  }
+
+  stoppedApps.add(appName);
+  sessionStates.delete(appName);
+  debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
+
+  // Clean up launch config automatically when VS Code debugging stops natively
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (workspaceRoot) {
+    void removeLaunchConfigs(workspaceRoot, [appName]).catch((err: unknown) => {
+      logWarn(`Failed to clean launch config for ${appName}: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
+}
+
+function scheduleReconnect(
+  appName: string,
+  lifecycleVersion: number,
+  trigger: 'session terminate' | 'child close',
+): boolean {
+  if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return false;
+
+  const attempts = (reconnectAttempts.get(appName) ?? 0) + 1;
+  if (attempts > MAX_RECONNECT_ATTEMPTS) {
+    reconnectAttempts.delete(appName);
+    const limitMsg = `Reconnect limit reached (${MAX_RECONNECT_ATTEMPTS.toString()} attempts). Stopping.`;
+    channels.get(appName)?.appendLine(`[Extension] ${limitMsg}`);
+    logWarn(`[${appName}] Auto-reconnect exhausted after ${MAX_RECONNECT_ATTEMPTS.toString()} attempts.`);
+    return false;
+  }
+
+  reconnectAttempts.set(appName, attempts);
+  reconnecting.add(appName);
+  const delayMs = 1500 * attempts;
+  const reconnectMsg = trigger === 'session terminate'
+    ? `Tunnel dropped (detected via session terminate). Reconnecting (${attempts.toString()}/${MAX_RECONNECT_ATTEMPTS.toString()})…`
+    : `Tunnel dropped unexpectedly. Reconnecting (${attempts.toString()}/${MAX_RECONNECT_ATTEMPTS.toString()})…`;
+  channels.get(appName)?.appendLine(`[Extension] ${reconnectMsg}`);
+  logInfo(`[${appName}] ${reconnectMsg}`);
+  sessionStates.set(appName, { status: 'TUNNELING' });
+  debugProcessEvents.emit('statusChanged', { appName, status: 'TUNNELING' });
+
+  clearReconnectTimer(appName);
+  const timer = setTimeout(() => {
+    reconnectTimers.delete(appName);
+    if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) {
+      reconnecting.delete(appName);
+      return;
+    }
+    const params = sessionParams.get(appName);
+    if (!params) {
+      reconnecting.delete(appName);
+      return;
+    }
+    // reconnecting stays set until ATTACHED/ERROR in probeTunnelAndAttach.
+    void startTunnelAndAttach(appName, params.folderPath, params.port, params.launchConfigName)
+      .catch((err: unknown) => {
+        // Safety net: if startTunnelAndAttach rejects before any internal cleanup
+        // path runs, release the reconnect guard so the state machine is not stuck.
+        reconnecting.delete(appName);
+        const msg = err instanceof Error ? err.message : String(err);
+        logError(`[${appName}] Auto-reconnect (${trigger}) failed unexpectedly: ${msg}`);
+        sessionStates.set(appName, { status: 'ERROR', message: msg });
+        debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
+      });
+  }, delayMs);
+  reconnectTimers.set(appName, timer);
+  return true;
+}
+
 export function initializeProcessManager(): void {
   startListener ??= vscode.debug.onDidStartDebugSession((session) => {
     activeVsCodeSessions.add(session.name);
@@ -157,82 +269,36 @@ export function initializeProcessManager(): void {
     if (stoppedApps.has(appName)) return;
 
     // --- Guard / reconnect initiator ---
-    // Two cases here:
-    // (a) child.on('close') already ran first → reconnecting is set → just skip
-    // (b) This event fired before child.on('close') (VS Code detected DAP loss first)
-    //     → initiate the reconnect here so the reconnect is not lost
+    // child.on('close') may run first and schedule reconnect.
     if (reconnecting.has(appName)) {
-      // Case (a): child.on('close') beat us, reconnect is already scheduled.
       return;
     }
 
     const prevStatus = sessionStates.get(appName)?.status;
     if (prevStatus === 'ATTACHED') {
-      // Case (b): tunnel dropped while session was live, child.on('close') hasn't fired yet.
-      // Initiate reconnect from here to avoid the race.
-      const attempts = (reconnectAttempts.get(appName) ?? 0) + 1;
-      if (attempts <= MAX_RECONNECT_ATTEMPTS) {
-        reconnectAttempts.set(appName, attempts);
-        reconnecting.add(appName);
-        const delayMs = 1500 * attempts;
-        const reconnectMsg = `Tunnel dropped (detected via session terminate). Reconnecting (${attempts.toString()}/${MAX_RECONNECT_ATTEMPTS.toString()})…`;
-        channels.get(appName)?.appendLine(`[Extension] ${reconnectMsg}`);
-        logInfo(`[${appName}] ${reconnectMsg}`);
-        sessionStates.set(appName, { status: 'TUNNELING' });
-        debugProcessEvents.emit('statusChanged', { appName, status: 'TUNNELING' });
-        setTimeout(() => {
-          if (stoppedApps.has(appName)) { reconnecting.delete(appName); return; }
-          const params = sessionParams.get(appName);
-          if (!params) { reconnecting.delete(appName); return; }
-          void startTunnelAndAttach(appName, params.folderPath, params.port, params.launchConfigName)
-            .catch((err: unknown) => {
-              // Safety net: if startTunnelAndAttach rejects before any internal cleanup
-              // path runs, release the reconnect guard so the state machine is not stuck.
-              reconnecting.delete(appName);
-              const msg = err instanceof Error ? err.message : String(err);
-              logError(`[${appName}] Auto-reconnect (session terminate) failed unexpectedly: ${msg}`);
-              sessionStates.set(appName, { status: 'ERROR', message: msg });
-              debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
-            });
-        }, delayMs);
-        return;
-      }
-      // Exhausted attempts from this path too.
-      reconnectAttempts.delete(appName);
+      const lifecycleVersion = getLifecycleVersion(appName);
+      // Give child.on('close') a short window to run first. If the tunnel process is still
+      // alive after this grace period, treat as manual debugger stop (no reconnect).
+      setTimeout(() => {
+        if (!isCurrentLifecycle(appName, lifecycleVersion)) return;
+        if (stoppedApps.has(appName) || reconnecting.has(appName)) return;
+        if (!processes.has(appName)) {
+          if (scheduleReconnect(appName, lifecycleVersion, 'session terminate')) return;
+        }
+        emitExitedAndCleanup(appName, session.name);
+      }, TERMINATE_RECONNECT_GRACE_MS);
+      return;
     }
 
-    // --- Normal EXITED path: tunnel/session ended cleanly or attempts exhausted ---
-    // All destructive cleanup happens HERE, after all guards, never before.
-    const p = processes.get(appName);
-    if (p) {
-      logInfo(`Debug session ${session.name} stopped. Cleaning up SSH tunnel process...`);
-      killProcessGroup(p);
-      processes.delete(appName);
-      channels.get(appName)?.appendLine('[Extension] Debug session terminated. Process killed.');
-    }
-    // Always kill by port: cds-debug may have already exited (process map entry gone)
-    // while cf ssh tunnel still runs as a separate process.
-    const port = debugPorts.get(appName);
-    if (port !== undefined) {
-      debugPorts.delete(appName);
-      setTimeout(() => void killProcessOnPort(port), 600);
-    }
-
-    stoppedApps.add(appName);
-    sessionStates.delete(appName);
-    debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
-
-    // Clean up launch config automatically when VS Code debugging stops natively
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (workspaceRoot) {
-      void removeLaunchConfigs(workspaceRoot, [appName]).catch((err: unknown) => {
-        logWarn(`Failed to clean launch config for ${appName}: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
+    // --- Normal EXITED path ---
+    emitExitedAndCleanup(appName, session.name);
   });
 }
 
 export function stopProcess(appName: string, skipConfigCleanup = false, silent = false): void {
+  // Invalidate all pending async callbacks/timers from the current lifecycle first.
+  bumpLifecycleVersion(appName);
+  clearReconnectTimer(appName);
   const p = processes.get(appName);
   if (p) {
     logInfo(`Killing process group for ${appName} explicitly.`);
@@ -286,6 +352,8 @@ function stopActiveDebugSessionForApp(appName: string, skipConfigCleanup = false
 
 export async function startTunnelAndAttach(appName: string, folderPath: string, port: number, launchConfigName: string): Promise<void> {
   initializeProcessManager();
+  const lifecycleVersion = bumpLifecycleVersion(appName);
+  clearReconnectTimer(appName);
 
   // Clear any residual stopped state so native termination works on subsequent runs.
   // NOTE: reconnecting is NOT cleared here — it stays set until we reach a terminal
@@ -306,6 +374,7 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
   logInfo(`Ensuring port ${port.toString()} is free before starting...`);
   await killProcessOnPort(port);
   await new Promise(r => setTimeout(r, 200));
+  if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
 
   // Store params so Retry and auto-reconnect can call back without re-doing CF login/folder resolution.
   sessionParams.set(appName, { folderPath, port, launchConfigName });
@@ -329,20 +398,23 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
       reconnecting.delete(appName);
       return;
     }
+    if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
 
     // Retry Step 1 after SSH was enabled and app restarted
     channel.appendLine(`[Extension] Retrying Node inspector activation after SSH enable...`);
     logInfo(`[${appName}] Retrying USR1 signal after SSH enable/restart.`);
     await runCfSshSignal(appName, signalCmd, channel);
+    if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
   }
 
   // Brief pause to let the inspector socket initialize before we tunnel to it.
   // Node needs ~300ms to open the WebSocket after receiving USR1.
   await new Promise(r => setTimeout(r, 300));
+  if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
 
   // Step 2: Open a persistent SSH tunnel — remote 9229 → local <port>.
   // Each app gets its own unique local port so parallel tunnels never conflict.
-  spawnSshTunnel(appName, folderPath, port, launchConfigName, channel);
+  spawnSshTunnel(appName, folderPath, port, launchConfigName, channel, lifecycleVersion);
 }
 
 function isSshDisabledError(stderr: string): boolean {
@@ -400,6 +472,7 @@ function spawnSshTunnel(
   port: number,
   launchConfigName: string,
   channel: vscode.OutputChannel,
+  lifecycleVersion: number,
 ): void {
   const tunnelArg = `${port.toString()}:localhost:9229`;
   channel.appendLine(`[Extension] Opening SSH tunnel: cf ssh ${appName} -L ${tunnelArg}`);
@@ -436,12 +509,14 @@ function spawnSshTunnel(
 
   // `cf ssh -L` does not print a readiness message. TCP-probe the local port
   // every 250ms until the tunnel accepts connections, then trigger VS Code attach.
-  void probeTunnelAndAttach(appName, port, launchConfigName, channel);
+  void probeTunnelAndAttach(appName, port, launchConfigName, channel, lifecycleVersion);
 
   child.on('close', (code) => {
     channels.get(appName)?.appendLine(`\n[Extension] Process exited with code ${code?.toString() ?? 'null'}`);
-    processes.delete(appName);
-
+    if (!isCurrentLifecycle(appName, lifecycleVersion)) return;
+    if (processes.get(appName) === child) {
+      processes.delete(appName);
+    }
     if (stoppedApps.has(appName)) return;
 
     // Guard: onDidTerminateDebugSession may have already initiated reconnect (it fires
@@ -455,64 +530,16 @@ function spawnSshTunnel(
     // linear back-off (1.5 s, 3 s, 4.5 s) before giving up and emitting EXITED.
     const prevStatus = sessionStates.get(appName)?.status;
     if (prevStatus === 'ATTACHED') {
-      const attempts = (reconnectAttempts.get(appName) ?? 0) + 1;
-      if (attempts <= MAX_RECONNECT_ATTEMPTS) {
-        reconnectAttempts.set(appName, attempts);
-        // Add to reconnecting set so onDidTerminateDebugSession doesn't emit EXITED
-        // while the new tunnel is being established.
-        reconnecting.add(appName);
-        const delayMs = 1500 * attempts;
-        const reconnectMsg = `Tunnel dropped unexpectedly. Reconnecting (${attempts.toString()}/${MAX_RECONNECT_ATTEMPTS.toString()})…`;
-        channels.get(appName)?.appendLine(`[Extension] ${reconnectMsg}`);
-        logInfo(`[${appName}] ${reconnectMsg}`);
-        sessionStates.set(appName, { status: 'TUNNELING' });
-        debugProcessEvents.emit('statusChanged', { appName, status: 'TUNNELING' });
-        setTimeout(() => {
-          // User may have explicitly stopped the session during the delay.
-          if (stoppedApps.has(appName)) {
-            reconnecting.delete(appName);
-            return;
-          }
-          const params = sessionParams.get(appName);
-          if (!params) {
-            reconnecting.delete(appName);
-            return;
-          }
-          // reconnecting stays set until ATTACHED/ERROR in probeTunnelAndAttach.
-          void startTunnelAndAttach(appName, params.folderPath, params.port, params.launchConfigName)
-            .catch((err: unknown) => {
-              // Safety net: if startTunnelAndAttach rejects before any internal cleanup
-              // path runs, release the reconnect guard so the state machine is not stuck.
-              reconnecting.delete(appName);
-              const msg = err instanceof Error ? err.message : String(err);
-              logError(`[${appName}] Auto-reconnect (child close) failed unexpectedly: ${msg}`);
-              sessionStates.set(appName, { status: 'ERROR', message: msg });
-              debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
-            });
-        }, delayMs);
-        return;
-      }
-      // Exhausted all reconnect attempts — fall through to normal EXITED path.
-      reconnectAttempts.delete(appName);
-      channels.get(appName)?.appendLine(`[Extension] Reconnect limit reached (${MAX_RECONNECT_ATTEMPTS.toString()} attempts). Stopping.`);
-      logWarn(`[${appName}] Auto-reconnect exhausted after ${MAX_RECONNECT_ATTEMPTS.toString()} attempts.`);
+      if (scheduleReconnect(appName, lifecycleVersion, 'child close')) return;
     }
 
     if (!activeVsCodeSessions.has(launchConfigName)) {
-      stoppedApps.add(appName);
-      sessionStates.delete(appName);
-      debugProcessEvents.emit('statusChanged', { appName, status: 'EXITED' });
-
-      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (workspaceRoot) {
-        void removeLaunchConfigs(workspaceRoot, [appName]).catch((err: unknown) => {
-          logWarn(`Failed to clean launch config for ${appName} on process exit: ${err instanceof Error ? err.message : String(err)}`);
-        });
-      }
+      emitExitedAndCleanup(appName, launchConfigName);
     }
   });
 
   child.on('error', (err) => {
+    if (!isCurrentLifecycle(appName, lifecycleVersion)) return;
     channels.get(appName)?.appendLine(`\n[Extension] Failed to spawn cf ssh: ${err.message}`);
     // Clear reconnect guard so the state machine does not get stuck in TUNNELING
     // when the process fails to spawn (e.g. `cf` binary not found on PATH).
@@ -566,7 +593,9 @@ async function probeTunnelAndAttach(
   port: number,
   launchConfigName: string,
   channel: vscode.OutputChannel,
+  lifecycleVersion: number,
 ): Promise<void> {
+  if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
   const PROBE_INTERVAL_MS = 250;
   const configuredSecs = vscode.workspace.getConfiguration('cdsDebug').get('tunnelReadyTimeoutSeconds', 30);
   // Clamp to sane bounds matching the package.json schema (10–120 s).
@@ -575,6 +604,10 @@ async function probeTunnelAndAttach(
 
   const isReady = await new Promise<boolean>((resolve) => {
     const attempt = (): void => {
+      if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) {
+        resolve(false);
+        return;
+      }
       if (Date.now() - started > TIMEOUT_MS) {
         resolve(false);
         return;
@@ -603,6 +636,8 @@ async function probeTunnelAndAttach(
     attempt();
   });
 
+  if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
+
   if (!isReady) {
     const errMsg = `Tunnel on port ${port.toString()} did not become ready within ${(TIMEOUT_MS / 1000).toString()}s. Try increasing cdsDebug.tunnelReadyTimeoutSeconds in VS Code settings.`;
     logError(`[${appName}] ${errMsg}`);
@@ -620,8 +655,12 @@ async function probeTunnelAndAttach(
 
   const currentQueue = debugAttachQueue;
   debugAttachQueue = currentQueue
-    .then(() => vscode.debug.startDebugging(workspaceFolder, launchConfigName))
+    .then(async () => {
+      if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return null;
+      return vscode.debug.startDebugging(workspaceFolder, launchConfigName);
+    })
     .then((success) => {
+      if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
       if (success) {
         // Successful attach — reset reconnect counter and clear the reconnect guard.
         reconnectAttempts.delete(appName);
@@ -637,6 +676,7 @@ async function probeTunnelAndAttach(
       }
     })
     .catch((err: unknown) => {
+      if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
       const msg = err instanceof Error ? err.message : String(err);
       logError(`startDebugging error for ${appName}: ${msg}`);
       // Terminal ERROR — reconnect guard no longer needed.
@@ -663,6 +703,10 @@ export function stopAllProcesses(): void {
 }
 
 export function disposeAllProcesses(): void {
+  for (const timer of reconnectTimers.values()) {
+    clearTimeout(timer);
+  }
+  reconnectTimers.clear();
   for (const p of processes.values()) {
     killProcessGroup(p);
   }
@@ -678,6 +722,7 @@ export function disposeAllProcesses(): void {
   reconnecting.clear();
   reconnectAttempts.clear();
   currentSessionIds.clear();
+  lifecycleVersions.clear();
 
   // Reset the attach queue so stale promise chains from a previous session
   // do not interfere after the extension is deactivated and re-activated.

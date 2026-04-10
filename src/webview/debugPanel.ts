@@ -14,7 +14,7 @@ import {
   maskEmail,
   saveCredentialsToSecretStorage,
 } from '../core/shellEnv';
-import { getCachedApps, getCacheSettings, getDebugPreferences, getLastDebuggedApps, saveCacheSettings, saveDebugPreferences, setLastDebuggedApps } from '../storage/cacheStore';
+import { getCachedApps, getCacheSettings, getDebugPreferences, saveCacheSettings, saveDebugPreferences } from '../storage/cacheStore';
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
@@ -150,7 +150,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'RESET_LOGIN':
-        // State reset handled on frontend; no server-side action needed.
+        stopAllProcesses();
         break;
 
       case 'GET_SYNC_STATUS':
@@ -166,19 +166,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'REQUEST_CHANGE_MAPPING': {
-        // "Keep Running & Change" was intentionally removed: switching orgs while
-        // SSH tunnels are active leaves orphaned processes and stale CF targets.
-        // User must explicitly stop all sessions before remapping.
-        const confirmed = await vscode.window.showWarningMessage(
-          'You have active debug sessions running. All sessions will be stopped before changing the organization mapping.',
-          { modal: true },
-          'Stop Sessions & Change'
-        );
-        if (confirmed === 'Stop Sessions & Change') {
-          stopAllProcesses();
-          this.post({ type: 'PROCEED_CHANGE_MAPPING' });
-        }
-        // Cancel does nothing
+        stopAllProcesses();
+        this.post({ type: 'PROCEED_CHANGE_MAPPING' });
         break;
       }
 
@@ -336,7 +325,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         const ttlMs = cacheSettings.intervalHours * 60 * 60 * 1000;
         if (ageMs < ttlMs) {
           logInfo(`Apps served from cache for org: ${org} (${Math.floor(ageMs / 60_000).toString()}m old).`);
-          this.post({ type: 'APPS_LOADED', payload: { apps: cached.apps, lastDebuggedApps: getLastDebuggedApps(config.apiEndpoint, org) } });
+          this.post({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
           // Warm up the CF session in the background so that handleStartDebug
           // never hits an expired token when the app list came from cache.
           // Failures are silently retried with a full re-login.
@@ -351,7 +340,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const apps = await cfTargetAndApps(org);
       const started = apps.filter((a) => a.state === 'started').length;
       logInfo(`Apps loaded: ${apps.length.toString()} total, ${started.toString()} started.`);
-      this.post({ type: 'APPS_LOADED', payload: { apps, lastDebuggedApps: getLastDebuggedApps(config.apiEndpoint, org) } });
+      this.post({ type: 'APPS_LOADED', payload: { apps } });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Failed to load apps for ${org}: ${msg}`);
@@ -436,7 +425,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       // Source maps won't resolve, but the SSH tunnel and debug console will work.
       logWarn(`No local folder found for any selected app. Starting debug in console-only mode (no source maps).`);
       const fallbackTargets = buildFallbackTargets(unmapped, workspaceRoot, existingPorts, usedPorts);
-      await this.launchDebugSessions(fallbackTargets, workspaceRoot, [], config.apiEndpoint, org);
+      await this.launchDebugSessions(fallbackTargets, workspaceRoot, []);
       return;
     }
 
@@ -477,7 +466,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped, config.apiEndpoint, org);
+    await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped);
   }
 
   /**
@@ -673,19 +662,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Merges launch.json, posts DEBUG_CONNECTING, and starts tunnel processes. */
-  private async launchDebugSessions(targets: DebugTarget[], workspaceRoot: string, unmapped: string[], apiEndpoint?: string, org?: string): Promise<void> {
+  private async launchDebugSessions(targets: DebugTarget[], workspaceRoot: string, unmapped: string[]): Promise<void> {
     await mergeLaunchJson(workspaceRoot, targets);
     logInfo(`Updated .vscode/launch.json with ${targets.length.toString()} config(s).`);
-
-    // Persist the app names so the webview can offer a Quick Start next session.
-    // Non-critical: a failure here must never block the tunnel from starting.
-    if (apiEndpoint && org && targets.length > 0) {
-      try {
-        await setLastDebuggedApps(apiEndpoint, org, targets.map((t) => t.appName));
-      } catch (err: unknown) {
-        logWarn(`Failed to persist last debugged apps (Quick Start history): ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
 
     const ports: Record<string, number> = {};
     for (const target of targets) {

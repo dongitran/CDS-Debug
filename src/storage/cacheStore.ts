@@ -6,7 +6,6 @@ const CACHE_KEY = 'cds-debug.appCache';
 const SYNC_KEY = 'cds-debug.syncProgress';
 const SETTINGS_KEY = 'cds-debug.cacheSettings';
 const DEBUG_PREFS_KEY = 'cds-debug.debugPrefs';
-const LAST_APPS_KEY = 'cds-debug.lastDebuggedApps';
 
 let _context: vscode.ExtensionContext | undefined;
 
@@ -70,22 +69,4 @@ export function getDebugPreferences(): DebugPreferences {
 
 export async function saveDebugPreferences(prefs: DebugPreferences): Promise<void> {
   await ctx().globalState.update(DEBUG_PREFS_KEY, prefs);
-}
-
-// Keyed by "<apiEndpoint>::<org>" so different regions/orgs don't share history.
-type LastAppsMap = Record<string, string[]>;
-
-function makeLastAppsKey(apiEndpoint: string, org: string): string {
-  return `${apiEndpoint}::${org}`;
-}
-
-export function getLastDebuggedApps(apiEndpoint: string, org: string): string[] {
-  const map = ctx().globalState.get<LastAppsMap>(LAST_APPS_KEY) ?? {};
-  return map[makeLastAppsKey(apiEndpoint, org)] ?? [];
-}
-
-export async function setLastDebuggedApps(apiEndpoint: string, org: string, apps: string[]): Promise<void> {
-  const map = ctx().globalState.get<LastAppsMap>(LAST_APPS_KEY) ?? {};
-  map[makeLastAppsKey(apiEndpoint, org)] = apps;
-  await ctx().globalState.update(LAST_APPS_KEY, map);
 }

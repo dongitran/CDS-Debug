@@ -167,7 +167,7 @@ export type ExtensionMessage =
   | { type: 'GROUP_FOLDER_SELECTED'; payload: { path: string } }
   | { type: 'LOGIN_SUCCESS'; payload: { orgs: string[] } }
   | { type: 'LOGIN_ERROR'; payload: { message: string } }
-  | { type: 'APPS_LOADED'; payload: { apps: CfApp[]; lastDebuggedApps?: string[] } }
+  | { type: 'APPS_LOADED'; payload: { apps: CfApp[] } }
   | { type: 'APPS_ERROR'; payload: { message: string } }
   | { type: 'DEBUG_STARTED'; payload: { count: number } }
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[]; ports: Record<string, number>; unmappedApps?: string[] } }

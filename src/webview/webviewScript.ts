@@ -74,8 +74,6 @@ export function getScript(nonce: string): string {
       cacheConfig: { enabled: true, intervalHours: 24 },
       // Branch preparation state: [{ appName, targetBranch, currentBranch, step, message }]
       branchPrepServices: [],
-      // Last successfully debugged apps for the current org — used for Quick Start.
-      lastDebuggedApps: [],
       // Debug behavior preferences
       debugPrefs: { openBrowserOnAttach: false, enableBranchPrep: false },
       // True when the current LOAD_APPS was triggered automatically by session restore
@@ -156,17 +154,6 @@ export function getScript(nonce: string): string {
     }
 
     // === LISTENERS ===
-
-    // Named function so refreshQuickStartRow() can re-attach it after replacing DOM.
-    function handleQuickStart() {
-      const available = state.lastDebuggedApps.filter(
-        n => state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
-      );
-      if (available.length === 0) return;
-      available.forEach(n => state.selectedApps.delete(n));
-      vscode.postMessage({ type: 'START_DEBUG', payload: { appNames: available, org: state.selectedOrg } });
-      render();
-    }
 
     function attachListeners() {
       const $ = id => document.getElementById(id);
@@ -320,8 +307,6 @@ export function getScript(nonce: string): string {
         }
       });
 
-      $('btn-quick-start')?.addEventListener('click', handleQuickStart);
-
       $('btn-retry-apps')?.addEventListener('click', () => {
         if (!state.selectedOrg) return;
         state.error = null;
@@ -376,7 +361,6 @@ export function getScript(nonce: string): string {
         case 'APPS_LOADED':
           state.apps = msg.payload.apps;
           state.selectedApps = new Set();
-          state.lastDebuggedApps = msg.payload.lastDebuggedApps || [];
           state.isRestoringSession = false;
           state.screen = SCREENS.READY;
           state.error = null;
