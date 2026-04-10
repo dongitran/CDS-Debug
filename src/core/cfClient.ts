@@ -129,3 +129,38 @@ export async function cfTargetAndApps(org: string, cfHome?: string): Promise<CfA
   await cfTarget(org, undefined, cfHome);
   return cfApps(cfHome);
 }
+
+export async function cfSshEnabled(appName: string, cfHome?: string): Promise<boolean> {
+  try {
+    const stdout = await runCf(['ssh-enabled', appName], cfHome);
+    // Must check for the full phrase — 'disabled' contains 'enabled' as a substring
+    return stdout.toLowerCase().includes('ssh support is enabled');
+  } catch {
+    // cf ssh-enabled exits non-zero when disabled
+    return false;
+  }
+}
+
+export async function cfEnableSsh(appName: string, cfHome?: string): Promise<void> {
+  await runCf(['enable-ssh', appName], cfHome);
+}
+
+const RESTART_TIMEOUT_MS = 120_000;
+
+export async function cfRestartApp(appName: string, cfHome?: string): Promise<void> {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (cfHome) env.CF_HOME = cfHome;
+  try {
+    await execFileAsync('cf', ['restart', appName], {
+      env,
+      maxBuffer: MAX_BUFFER,
+      timeout: RESTART_TIMEOUT_MS,
+    });
+  } catch (err: unknown) {
+    const error = err as NodeJS.ErrnoException & { stderr?: string };
+    throw new CfCliError(
+      error.message,
+      error.stderr?.trim() ?? '',
+    );
+  }
+}

@@ -12,7 +12,7 @@ vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
 
-import { cfApps, cfLogin, cfOrgs, cfTarget, cfTargetAndApps } from '../../src/core/cfClient';
+import { cfApps, cfLogin, cfOrgs, cfTarget, cfTargetAndApps, cfSshEnabled, cfEnableSsh, cfRestartApp } from '../../src/core/cfClient';
 import type { CfCliError } from '../../src/core/cfClient';
 
 describe('cfClient command wrappers', () => {
@@ -166,6 +166,73 @@ describe('cfClient command wrappers', () => {
         name: 'CfCliError',
         message: 'cf failed',
         stderr: 'permission denied',
+      }),
+    );
+  });
+
+  it('cfSshEnabled returns true when SSH is enabled', async () => {
+    execFileAsyncMock.mockResolvedValue({
+      stdout: "ssh support is enabled for app 'my-app'.\n",
+    });
+
+    await expect(cfSshEnabled('my-app')).resolves.toBe(true);
+    expect(execFileAsyncMock).toHaveBeenCalledWith(
+      'cf',
+      ['ssh-enabled', 'my-app'],
+      expect.any(Object),
+    );
+  });
+
+  it('cfSshEnabled returns false when SSH is disabled', async () => {
+    execFileAsyncMock.mockResolvedValue({
+      stdout: "ssh support is disabled for app 'my-app'.\nssh is disabled for app\n",
+    });
+
+    await expect(cfSshEnabled('my-app')).resolves.toBe(false);
+  });
+
+  it('cfSshEnabled returns false when CLI errors', async () => {
+    execFileAsyncMock.mockRejectedValue({
+      message: 'cf failed',
+      stderr: 'FAILED',
+    });
+
+    await expect(cfSshEnabled('my-app')).resolves.toBe(false);
+  });
+
+  it('cfEnableSsh calls cf enable-ssh with app name', async () => {
+    execFileAsyncMock.mockResolvedValue({ stdout: 'OK\n' });
+
+    await cfEnableSsh('my-app');
+    expect(execFileAsyncMock).toHaveBeenCalledWith(
+      'cf',
+      ['enable-ssh', 'my-app'],
+      expect.any(Object),
+    );
+  });
+
+  it('cfRestartApp calls cf restart with app name and timeout', async () => {
+    execFileAsyncMock.mockResolvedValue({ stdout: 'OK\n' });
+
+    await cfRestartApp('my-app');
+    expect(execFileAsyncMock).toHaveBeenCalledWith(
+      'cf',
+      ['restart', 'my-app'],
+      expect.objectContaining({ timeout: 120_000 }),
+    );
+  });
+
+  it('cfRestartApp throws CfCliError on failure', async () => {
+    execFileAsyncMock.mockRejectedValue({
+      message: 'restart timed out',
+      stderr: 'FAILED\n',
+    });
+
+    await expect(cfRestartApp('my-app')).rejects.toEqual(
+      expect.objectContaining<CfCliError>({
+        name: 'CfCliError',
+        message: 'restart timed out',
+        stderr: 'FAILED',
       }),
     );
   });

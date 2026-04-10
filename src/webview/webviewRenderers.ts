@@ -130,6 +130,14 @@ export function getRendererScriptContent(): string {
     }
 
     function getStatusInnerHtml(session) {
+      if (session.status === 'SSH_ENABLING') {
+        return '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>'
+          + '<span class="status-text-anim">Enabling SSH\u2026</span>';
+      }
+      if (session.status === 'SSH_RESTARTING') {
+        return '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>'
+          + '<span class="status-text-anim">Restarting app\u2026</span>';
+      }
       if (session.status === 'TUNNELING') {
         const text = LOADING_MESSAGES[session.msgPhase] || 'Connecting...';
         return '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>'
@@ -137,7 +145,7 @@ export function getRendererScriptContent(): string {
       }
       if (session.status === 'ATTACHED') {
         const noSrc = session.noLocalFolder
-          ? '<span class="active-card-no-src" title="No local source folder found — debug console only">no src</span>'
+          ? '<span class="active-card-no-src" title="No local source folder found \u2014 debug console only">no src</span>'
           : '';
         return '<span style="color:var(--vscode-testing-iconPassed);margin-right:6px">&#9679;</span>'
           + '<span class="status-text-anim">Debugger Attached</span>'

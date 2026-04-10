@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import { createConnection } from 'node:net';
 import { logInfo, logWarn, logError } from './logger';
 import { removeLaunchConfigs } from './launchConfigurator';
+import { cfSshEnabled, cfEnableSsh, cfRestartApp } from './cfClient';
 
 const execFileAsync = promisify(execFile);
 
@@ -215,7 +216,20 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
   channel.appendLine(`[Extension] Activating Node inspector on ${appName}: cf ssh ${appName} -c "${signalCmd}"`);
   logInfo(`[Step 1] Activating Node inspector: cf ssh ${appName} -c "${signalCmd}"`);
 
-  await runCfSshSignal(appName, signalCmd, channel);
+  const signalResult = await runCfSshSignal(appName, signalCmd, channel);
+
+  // Detect SSH disabled: cf ssh fails with "not authorized" when SSH is not enabled
+  if (isSshDisabledError(signalResult.stderr)) {
+    channel.appendLine(`[Extension] SSH is disabled for ${appName}. Attempting to enable...`);
+    logInfo(`[${appName}] SSH disabled — starting enable/restart flow.`);
+    const enabled = await ensureSshEnabled(appName, channel);
+    if (!enabled) return;
+
+    // Retry Step 1 after SSH was enabled and app restarted
+    channel.appendLine(`[Extension] Retrying Node inspector activation after SSH enable...`);
+    logInfo(`[${appName}] Retrying USR1 signal after SSH enable/restart.`);
+    await runCfSshSignal(appName, signalCmd, channel);
+  }
 
   // Brief pause to let the inspector socket initialize before we tunnel to it.
   // Node needs ~300ms to open the WebSocket after receiving USR1.
@@ -223,6 +237,82 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
 
   // Step 2: Open a persistent SSH tunnel — remote 9229 → local <port>.
   // Each app gets its own unique local port so parallel tunnels never conflict.
+  spawnSshTunnel(appName, folderPath, port, launchConfigName, channel);
+}
+
+function isSshDisabledError(stderr: string): boolean {
+  const lower = stderr.toLowerCase();
+  return lower.includes('not authorized') || lower.includes('ssh support is disabled');
+}
+
+// Checks SSH status, enables SSH, prompts user to confirm restart, then restarts.
+// Returns true if SSH is ready, false if user cancelled or an error occurred.
+async function ensureSshEnabled(appName: string, channel: vscode.OutputChannel): Promise<boolean> {
+  const alreadyEnabled = await cfSshEnabled(appName);
+  if (alreadyEnabled) {
+    channel.appendLine(`[Extension] SSH is already enabled for ${appName} — may need a restart.`);
+  } else {
+    sessionStates.set(appName, { status: 'SSH_ENABLING' });
+    debugProcessEvents.emit('statusChanged', { appName, status: 'SSH_ENABLING' });
+    try {
+      await cfEnableSsh(appName);
+      channel.appendLine(`[Extension] SSH enabled for ${appName}. App restart required.`);
+      logInfo(`[${appName}] SSH enabled successfully.`);
+    } catch (err: unknown) {
+      const msg = `Failed to enable SSH: ${err instanceof Error ? err.message : String(err)}`;
+      channel.appendLine(`[Extension] ${msg}`);
+      logError(`[${appName}] ${msg}`);
+      sessionStates.set(appName, { status: 'ERROR', message: msg });
+      debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
+      return false;
+    }
+  }
+
+  // Confirm with user before restarting (causes brief downtime)
+  const dialogMsg = alreadyEnabled
+    ? `SSH is enabled for '${appName}' but the app may need a restart for SSH to work. This will cause a brief downtime.`
+    : `SSH has been enabled for '${appName}'. The app must be restarted to apply the change. This will cause a brief downtime.`;
+  const confirm = await vscode.window.showWarningMessage(
+    dialogMsg,
+    { modal: true },
+    'Restart & Continue',
+  );
+  if (confirm !== 'Restart & Continue') {
+    const msg = 'Debug cancelled — user declined app restart.';
+    channel.appendLine(`[Extension] ${msg}`);
+    sessionStates.set(appName, { status: 'ERROR', message: msg });
+    debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
+    return false;
+  }
+
+  sessionStates.set(appName, { status: 'SSH_RESTARTING' });
+  debugProcessEvents.emit('statusChanged', { appName, status: 'SSH_RESTARTING' });
+  channel.appendLine(`[Extension] Restarting ${appName}... This may take up to 2 minutes.`);
+  logInfo(`[${appName}] Restarting app after enabling SSH...`);
+
+  try {
+    await cfRestartApp(appName);
+    channel.appendLine(`[Extension] ${appName} restarted successfully.`);
+    logInfo(`[${appName}] App restarted — SSH should now be available.`);
+    return true;
+  } catch (err: unknown) {
+    const msg = `App restart failed: ${err instanceof Error ? err.message : String(err)}`;
+    channel.appendLine(`[Extension] ${msg}`);
+    logError(`[${appName}] ${msg}`);
+    sessionStates.set(appName, { status: 'ERROR', message: msg });
+    debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
+    return false;
+  }
+}
+
+// Spawns the persistent SSH tunnel and wires up stdout/stderr/close/error handlers.
+function spawnSshTunnel(
+  appName: string,
+  folderPath: string,
+  port: number,
+  launchConfigName: string,
+  channel: vscode.OutputChannel,
+): void {
   const tunnelArg = `${port.toString()}:localhost:9229`;
   channel.appendLine(`[Extension] Opening SSH tunnel: cf ssh ${appName} -L ${tunnelArg}`);
   logInfo(`[Background] cf ssh ${appName} -L ${tunnelArg}`);
@@ -287,26 +377,37 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
   });
 }
 
+interface SshSignalResult {
+  exitCode: number | null;
+  stderr: string;
+}
+
 // Runs `cf ssh <appName> -c <cmd>` as a one-shot command and waits for it to finish.
+// Returns the exit code and accumulated stderr so callers can detect SSH-disabled errors.
 // Exit code ≠ 0 is logged as a warning but does not throw — USR1 failures are non-fatal
 // (the inspector may already be active, or pidof node returns empty on a quiet process).
-async function runCfSshSignal(appName: string, cmd: string, channel: vscode.OutputChannel): Promise<void> {
+async function runCfSshSignal(appName: string, cmd: string, channel: vscode.OutputChannel): Promise<SshSignalResult> {
   return new Promise((resolve) => {
     const child = spawn('cf', ['ssh', appName, '-c', cmd]);
+    let stderrBuf = '';
 
     child.stdout.on('data', (data: Buffer | string) => { channel.append(data.toString()); });
-    child.stderr.on('data', (data: Buffer | string) => { channel.append(data.toString()); });
+    child.stderr.on('data', (data: Buffer | string) => {
+      const text = data.toString();
+      stderrBuf += text;
+      channel.append(text);
+    });
 
     child.on('close', (code) => {
       if (code !== 0) {
         logWarn(`[${appName}] USR1 signal command exited with code ${code?.toString() ?? 'null'} — inspector may already be active.`);
       }
-      resolve();
+      resolve({ exitCode: code, stderr: stderrBuf });
     });
 
     child.on('error', (err) => {
       logWarn(`[${appName}] Failed to run USR1 signal: ${err.message}`);
-      resolve(); // non-fatal — proceed to tunnel step
+      resolve({ exitCode: null, stderr: err.message }); // non-fatal — proceed to tunnel step
     });
   });
 }
