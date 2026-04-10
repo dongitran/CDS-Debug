@@ -245,8 +245,8 @@ function isSshDisabledError(stderr: string): boolean {
   return lower.includes('not authorized') || lower.includes('ssh support is disabled');
 }
 
-// Checks SSH status, enables SSH, prompts user to confirm restart, then restarts.
-// Returns true if SSH is ready, false if user cancelled or an error occurred.
+// Checks SSH status, enables SSH, then automatically restarts the app.
+// Returns true if SSH is ready, false if an error occurred.
 async function ensureSshEnabled(appName: string, channel: vscode.OutputChannel): Promise<boolean> {
   const alreadyEnabled = await cfSshEnabled(appName);
   if (alreadyEnabled) {
@@ -266,23 +266,6 @@ async function ensureSshEnabled(appName: string, channel: vscode.OutputChannel):
       debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
       return false;
     }
-  }
-
-  // Confirm with user before restarting (causes brief downtime)
-  const dialogMsg = alreadyEnabled
-    ? `SSH is enabled for '${appName}' but the app may need a restart for SSH to work. This will cause a brief downtime.`
-    : `SSH has been enabled for '${appName}'. The app must be restarted to apply the change. This will cause a brief downtime.`;
-  const confirm = await vscode.window.showWarningMessage(
-    dialogMsg,
-    { modal: true },
-    'Restart & Continue',
-  );
-  if (confirm !== 'Restart & Continue') {
-    const msg = 'Debug cancelled — user declined app restart.';
-    channel.appendLine(`[Extension] ${msg}`);
-    sessionStates.set(appName, { status: 'ERROR', message: msg });
-    debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
-    return false;
   }
 
   sessionStates.set(appName, { status: 'SSH_RESTARTING' });
