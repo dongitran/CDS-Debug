@@ -804,6 +804,52 @@ export function getStyles(): string {
       white-space: nowrap;
     }
 
+    /* Compact info icon with hover tooltip for env-var credential notice */
+    .cred-info-icon {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--vscode-descriptionForeground);
+      border: 1px solid var(--vscode-descriptionForeground);
+      border-radius: 50%;
+      cursor: help;
+      line-height: 1;
+    }
+    .cred-info-icon:hover,
+    .cred-info-icon:focus {
+      color: var(--vscode-foreground);
+      border-color: var(--vscode-foreground);
+    }
+    .cred-info-tooltip {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      right: -4px;
+      width: 220px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
+      border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-panel-border));
+      color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+      font-size: 11px;
+      font-weight: 400;
+      line-height: 1.45;
+      white-space: normal;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      pointer-events: none;
+    }
+    .cred-info-icon:hover .cred-info-tooltip,
+    .cred-info-icon:focus .cred-info-tooltip {
+      display: block;
+    }
+
     /* Two equal-width side-by-side buttons for Update / Clear */
     .cred-btn-row {
       display: flex;

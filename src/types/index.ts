@@ -2,7 +2,7 @@ export const CF_DEFAULT_SPACE = 'app';
 
 export interface CredentialStatus {
   hasCredentials: boolean;
-  maskedEmail: string;
+  email: string;
   /** 'env' = process.env or login-shell, 'keychain' = VS Code SecretStorage, 'none' = not set */
   source: 'env' | 'keychain' | 'none';
 }
@@ -179,7 +179,7 @@ export type ExtensionMessage =
   | { type: 'BRANCH_PREP_START'; payload: { services: { appName: string; currentBranch: string; targetBranch: string }[] } }
   | { type: 'BRANCH_PREP_STATUS'; payload: { appName: string; step: BranchPrepStep; message?: string } }
   | { type: 'PROCEED_CHANGE_MAPPING' }
-  | { type: 'CREDENTIALS_SAVED'; payload: { maskedEmail: string; source: 'env' | 'keychain' | 'none' } }
+  | { type: 'CREDENTIALS_SAVED'; payload: { email: string; source: 'env' | 'keychain' | 'none' } }
   | { type: 'CREDENTIALS_ERROR'; payload: { message: string } }
   | { type: 'CREDENTIALS_STATUS'; payload: CredentialStatus }
   | { type: 'CREDENTIALS_REVOKED'; payload: { message: string } };

@@ -495,21 +495,18 @@ export function getRendererScriptContent(): string {
         credSection = \`
           <div class="cred-info-row">
             <span class="cred-source-badge env">&#127981; env var</span>
-            <span class="cred-info-email" title="\${escape(credStatus.maskedEmail)}">\${escape(credStatus.maskedEmail)}</span>
-          </div>
-          <div class="warning-box">
-            &#9888;&nbsp;Credentials are set via <code>SAP_EMAIL</code> / <code>SAP_PASSWORD</code>
-            environment variables and will override any keychain entry.
-            To use the credentials form instead, remove those variables from
-            your shell profile (<code>~/.zshrc</code>, <code>~/.bashrc</code>, etc.)
-            and restart VS Code.
+            <span class="cred-info-email" title="\${escape(credStatus.email)}">\${escape(credStatus.email)}</span>
+            <span class="cred-info-icon" tabindex="0" aria-label="Environment variable info">
+              &#8505;
+              <span class="cred-info-tooltip">Credentials are set via SAP_EMAIL / SAP_PASSWORD environment variables and will override any keychain entry. To use the credentials form instead, remove those variables from your shell profile (~/.zshrc, ~/.bashrc, etc.) and restart VS Code.</span>
+            </span>
           </div>
         \`;
       } else if (credStatus.source === 'keychain') {
         credSection = \`
           <div class="cred-info-row">
             <span class="cred-source-badge keychain">&#128273; keychain</span>
-            <span class="cred-info-email" title="\${escape(credStatus.maskedEmail)}">\${escape(credStatus.maskedEmail)}</span>
+            <span class="cred-info-email" title="\${escape(credStatus.email)}">\${escape(credStatus.email)}</span>
           </div>
           <div class="cred-btn-row">
             <button class="btn btn-secondary" id="btn-update-credentials">&#9998; Update</button>

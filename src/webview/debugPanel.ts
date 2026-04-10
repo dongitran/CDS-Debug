@@ -701,7 +701,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const source = await getCredentialSource();
     return {
       hasCredentials: !!(email),
-      maskedEmail: maskEmail(email),
+      email,
       source,
     };
   }
@@ -721,7 +721,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       logInfo(`[Credentials] Saved credentials for ${maskEmail(trimmedEmail)} to SecretStorage.`);
       this.post({
         type: 'CREDENTIALS_SAVED',
-        payload: { maskedEmail: maskEmail(trimmedEmail), source: 'keychain' },
+        payload: { email: trimmedEmail, source: 'keychain' },
       });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);

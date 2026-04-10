@@ -82,7 +82,7 @@ export function getScript(nonce: string): string {
       // True when auto-reconnect was triggered (shows different spinner message).
       isReconnecting: false,
       // Credential setup screen state
-      credentialStatus: { hasCredentials: false, maskedEmail: '', source: 'none' },
+      credentialStatus: { hasCredentials: false, email: '', source: 'none' },
       setupCredEmail: '',
       credError: null,
       isSavingCreds: false,
@@ -535,7 +535,7 @@ export function getScript(nonce: string): string {
           state.credError = null;
           state.credentialStatus = {
             hasCredentials: true,
-            maskedEmail: msg.payload.maskedEmail,
+            email: msg.payload.email,
             source: msg.payload.source,
           };
           if (state.screen === SCREENS.SETUP_CREDENTIALS) {
@@ -580,7 +580,7 @@ export function getScript(nonce: string): string {
           // Redirect to setup screen so user can enter updated credentials.
           state.credError = msg.payload.message;
           state.isSavingCreds = false;
-          state.credentialStatus = { hasCredentials: false, maskedEmail: '', source: 'none' };
+          state.credentialStatus = { hasCredentials: false, email: '', source: 'none' };
           state.screen = SCREENS.SETUP_CREDENTIALS;
           break;
         }
