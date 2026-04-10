@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.2.32",
+  "version": "0.2.33",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -40,6 +40,18 @@
           "name": "Debug Launcher"
         }
       ]
+    },
+    "configuration": {
+      "title": "CDS Debug",
+      "properties": {
+        "cdsDebug.tunnelReadyTimeoutSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 10,
+          "maximum": 120,
+          "markdownDescription": "How long (in seconds) to wait for the SSH debug tunnel to become ready before reporting a connection error. Increase this value for high-latency CF regions (e.g. `ap10`, `jp10`) or slow app start-ups. Default: `30`."
+        }
+      }
     },
     "commands": [
       {

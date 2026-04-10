@@ -159,14 +159,15 @@ export type WebviewMessage =
   | { type: 'REQUEST_CHANGE_MAPPING' }
   | { type: 'SAVE_CREDENTIALS'; payload: { email: string; password: string } }
   | { type: 'GET_CREDENTIALS_STATUS' }
-  | { type: 'CLEAR_CREDENTIALS' };
+  | { type: 'CLEAR_CREDENTIALS' }
+  | { type: 'RETRY_DEBUG'; payload: { appName: string } };
 
 // Messages from extension → webview
 export type ExtensionMessage =
   | { type: 'GROUP_FOLDER_SELECTED'; payload: { path: string } }
   | { type: 'LOGIN_SUCCESS'; payload: { orgs: string[] } }
   | { type: 'LOGIN_ERROR'; payload: { message: string } }
-  | { type: 'APPS_LOADED'; payload: { apps: CfApp[] } }
+  | { type: 'APPS_LOADED'; payload: { apps: CfApp[]; lastDebuggedApps?: string[] } }
   | { type: 'APPS_ERROR'; payload: { message: string } }
   | { type: 'DEBUG_STARTED'; payload: { count: number } }
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[]; ports: Record<string, number>; unmappedApps?: string[] } }

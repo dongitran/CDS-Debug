@@ -14,11 +14,11 @@ import {
   maskEmail,
   saveCredentialsToSecretStorage,
 } from '../core/shellEnv';
-import { getCachedApps, getCacheSettings, getDebugPreferences, saveCacheSettings, saveDebugPreferences } from '../storage/cacheStore';
+import { getCachedApps, getCacheSettings, getDebugPreferences, getLastDebuggedApps, saveCacheSettings, saveDebugPreferences, setLastDebuggedApps } from '../storage/cacheStore';
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
-import { startTunnelAndAttach, stopProcess, stopAllProcesses, debugProcessEvents, getActiveSessions } from '../core/processManager';
+import { startTunnelAndAttach, stopProcess, stopAllProcesses, debugProcessEvents, getActiveSessions, getSessionParams } from '../core/processManager';
 import {
   checkoutBranch,
   getCurrentBranch,
@@ -136,6 +136,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         stopProcess(raw.payload.appName);
         break;
 
+      case 'RETRY_DEBUG':
+        await this.handleRetryDebug(raw.payload.appName);
+        break;
+
       case 'STOP_ALL_DEBUG': {
         stopAllProcesses();
         break;
@@ -202,6 +206,30 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
       }
     }
+  }
+
+  private async handleRetryDebug(appName: string): Promise<void> {
+    const params = getSessionParams(appName);
+    if (!params) {
+      // Params cleared (e.g. extension restarted) — cannot retry automatically.
+      this.post({ type: 'DEBUG_ERROR', payload: { message: `Cannot retry ${appName}: session parameters lost. Please start the debug session again.` } });
+      return;
+    }
+    logInfo(`[Retry] Restarting tunnel for ${appName} on port ${params.port.toString()}`);
+    // Kill any lingering process without touching launch.json (config is still valid).
+    // `silent = true` suppresses the EXITED broadcast so the active-session card stays
+    // visible on screen — the card transitions directly from ERROR → TUNNELING with no
+    // intermediate disappear/re-appear flash.
+    stopProcess(appName, /* skipConfigCleanup */ true, /* silent */ true);
+    // Brief pause so the OS releases the port before we re-bind.
+    // startTunnelAndAttach also calls killProcessOnPort, so this is belt-and-suspenders.
+    await new Promise(r => setTimeout(r, 300));
+    // No manual DEBUG_CONNECTING post needed: spawnSshTunnel will emit TUNNELING via
+    // debugProcessEvents which reaches the webview as APP_DEBUG_STATUS, updating the
+    // card that is still visible from the silent stop above.
+    void startTunnelAndAttach(appName, params.folderPath, params.port, params.launchConfigName).catch((err: unknown) => {
+      logError(`[Retry] Tunnel restart failed for ${appName}: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   private async handleSelectGroupFolder(): Promise<void> {
@@ -308,7 +336,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         const ttlMs = cacheSettings.intervalHours * 60 * 60 * 1000;
         if (ageMs < ttlMs) {
           logInfo(`Apps served from cache for org: ${org} (${Math.floor(ageMs / 60_000).toString()}m old).`);
-          this.post({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
+          this.post({ type: 'APPS_LOADED', payload: { apps: cached.apps, lastDebuggedApps: getLastDebuggedApps(config.apiEndpoint, org) } });
           // Warm up the CF session in the background so that handleStartDebug
           // never hits an expired token when the app list came from cache.
           // Failures are silently retried with a full re-login.
@@ -323,7 +351,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const apps = await cfTargetAndApps(org);
       const started = apps.filter((a) => a.state === 'started').length;
       logInfo(`Apps loaded: ${apps.length.toString()} total, ${started.toString()} started.`);
-      this.post({ type: 'APPS_LOADED', payload: { apps } });
+      this.post({ type: 'APPS_LOADED', payload: { apps, lastDebuggedApps: getLastDebuggedApps(config.apiEndpoint, org) } });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Failed to load apps for ${org}: ${msg}`);
@@ -408,7 +436,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       // Source maps won't resolve, but the SSH tunnel and debug console will work.
       logWarn(`No local folder found for any selected app. Starting debug in console-only mode (no source maps).`);
       const fallbackTargets = buildFallbackTargets(unmapped, workspaceRoot, existingPorts, usedPorts);
-      await this.launchDebugSessions(fallbackTargets, workspaceRoot, []);
+      await this.launchDebugSessions(fallbackTargets, workspaceRoot, [], config.apiEndpoint, org);
       return;
     }
 
@@ -449,7 +477,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped);
+    await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped, config.apiEndpoint, org);
   }
 
   /**
@@ -645,9 +673,19 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Merges launch.json, posts DEBUG_CONNECTING, and starts tunnel processes. */
-  private async launchDebugSessions(targets: DebugTarget[], workspaceRoot: string, unmapped: string[]): Promise<void> {
+  private async launchDebugSessions(targets: DebugTarget[], workspaceRoot: string, unmapped: string[], apiEndpoint?: string, org?: string): Promise<void> {
     await mergeLaunchJson(workspaceRoot, targets);
     logInfo(`Updated .vscode/launch.json with ${targets.length.toString()} config(s).`);
+
+    // Persist the app names so the webview can offer a Quick Start next session.
+    // Non-critical: a failure here must never block the tunnel from starting.
+    if (apiEndpoint && org && targets.length > 0) {
+      try {
+        await setLastDebuggedApps(apiEndpoint, org, targets.map((t) => t.appName));
+      } catch (err: unknown) {
+        logWarn(`Failed to persist last debugged apps (Quick Start history): ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
 
     const ports: Record<string, number> = {};
     for (const target of targets) {
