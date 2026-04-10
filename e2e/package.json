@@ -1,0 +1,16 @@
+{
+  "name": "cds-debug-e2e",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Independent E2E test harness for CDS Debug extension",
+  "scripts": {
+    "test": "pnpm --dir .. build && playwright test",
+    "test:headed": "pnpm --dir .. build && playwright test --headed",
+    "test:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.53.0",
+    "@types/node": "^25.5.2",
+    "typescript": "^5.9.3"
+  }
+}
