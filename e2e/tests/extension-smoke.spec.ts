@@ -1055,17 +1055,38 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
 
     test('Cancel app loading returns to Ready screen when apps were previously loaded', async () => {
-      // Uses success scenario so completeMappingToReady reaches READY naturally with
-      // state.apps populated. Refresh triggers LOADING_APPS via client-side render
-      // (synchronous), so the cancel button is guaranteed in the DOM immediately after
-      // the click, before the extension can respond with APPS_LOADED.
-      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+      // Uses slow-target so cfTarget blocks for 30 s on every LOAD_APPS call.
+      // This gives a stable 30 s LOADING_APPS window after the refresh click,
+      // long enough to assert all screen elements and click cancel before either
+      // the first or second cfTarget process can complete and send APPS_LOADED.
+      // force:true on the refresh click bypasses Playwright actionability checks
+      // that can hang indefinitely when the webview DOM is briefly re-rendering.
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-target' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
-        await completeMappingToReady(webview);
+        await goToFolderSelection(webview);
+        await injectSelectedFolder(webview, MOCK_GROUP_FOLDER);
 
-        // Trigger refresh — client-side render is synchronous so LOADING_APPS elements
-        // appear in the DOM before the extension can respond with APPS_LOADED.
-        await webview.locator('#btn-refresh-apps').click();
+        // Kick off the save (goes to LOADING_APPS; first cfTarget sleeps 30 s)
+        await webview.locator('#btn-save-mapping').click();
+        await expect(webview.locator('#btn-cancel-load-apps')).toBeVisible();
+
+        // Seed state.apps by injecting APPS_LOADED — bypasses the slow cfTarget
+        await injectMessage(webview, {
+          type: 'APPS_LOADED',
+          payload: {
+            apps: [
+              { name: 'mock-service-a', state: 'started', urls: ['mock-service-a.cfapps.example.com'] },
+              { name: 'mock-service-b', state: 'stopped', urls: [] },
+              { name: 'mock-service-c', state: 'started', urls: ['mock-service-c.cfapps.example.com'] },
+            ],
+          },
+        });
+        await expect(webview.getByText('Debug Launcher')).toBeVisible();
+
+        // Refresh — second cfTarget also sleeps 30 s, keeping LOADING_APPS stable.
+        // force:true avoids an indefinite actionability-check hang caused by rapid
+        // DOM replacement when the extension's success response races with the click.
+        await webview.locator('#btn-refresh-apps').click({ force: true });
         await expect(webview.getByText(/Loading apps for/i)).toBeVisible({ timeout: 5_000 });
         await expect(webview.locator('.spinner')).toBeVisible({ timeout: 5_000 });
         await expect(webview.locator('#btn-cancel-load-apps')).toBeVisible({ timeout: 5_000 });
