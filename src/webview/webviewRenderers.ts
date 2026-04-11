@@ -130,6 +130,10 @@ export function getRendererScriptContent(): string {
     }
 
     function getStatusInnerHtml(session) {
+      if (session.status === 'PENDING') {
+        return '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>'
+          + '<span class="status-text-anim">Preparing\u2026</span>';
+      }
       if (session.status === 'SSH_ENABLING') {
         return '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>'
           + '<span class="status-text-anim">Enabling SSH\u2026</span>';

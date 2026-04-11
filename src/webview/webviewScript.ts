@@ -291,10 +291,16 @@ export function getScript(nonce: string): string {
           n => state.apps.find(a => a.name === n && a.state === 'started') && !state.activeSessions[n]
         );
         if (appNames.length === 0) return;
-        // Remove from selection so UI checkbox unchecks while tunneling
-        appNames.forEach(n => state.selectedApps.delete(n));
+        // Optimistic update: immediately disable selected apps and show pending
+        // active-session cards so the UI responds instantly even on slow networks
+        // (cfTarget() and folder resolution in handleStartDebug can take seconds).
+        appNames.forEach(n => {
+          state.selectedApps.delete(n);
+          state.activeSessions[n] = { status: 'PENDING', msgPhase: 0 };
+        });
+        refreshActiveSessionsPanel();
+        refreshAppListSection();
         vscode.postMessage({ type: 'START_DEBUG', payload: { appNames, org: state.selectedOrg } });
-        render();
       });
 
       $('btn-remap')?.addEventListener('click', () => {
@@ -454,6 +460,13 @@ export function getScript(nonce: string): string {
           return;
         }
         case 'DEBUG_ERROR':
+          // Clear any optimistically-added PENDING sessions — the start request
+          // failed before any tunnel was established (e.g. cfTarget network error).
+          for (const appName of Object.keys(state.activeSessions)) {
+            if (state.activeSessions[appName].status === 'PENDING') {
+              delete state.activeSessions[appName];
+            }
+          }
           state.error = msg.payload.message;
           state.screen = SCREENS.READY;
           break;
