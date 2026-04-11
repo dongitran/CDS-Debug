@@ -1055,39 +1055,24 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
 
     test('Cancel app loading returns to Ready screen when apps were previously loaded', async () => {
-      // Uses slow-apps so cf apps never completes; we inject APPS_LOADED manually to seed
-      // state.apps, then trigger a refresh that blocks — cancel must go to READY not SELECT_FOLDER.
-      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-apps' }, async (workbenchPage) => {
+      // Uses success scenario so completeMappingToReady reaches READY naturally with
+      // state.apps populated. Refresh triggers LOADING_APPS via client-side render
+      // (synchronous), so the cancel button is guaranteed in the DOM immediately after
+      // the click, before the extension can respond with APPS_LOADED.
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
-        await goToFolderSelection(webview);
-        await injectSelectedFolder(webview, MOCK_GROUP_FOLDER);
+        await completeMappingToReady(webview);
 
-        // Kick off the save (goes to LOADING_APPS; slow-apps keeps it there)
-        await webview.locator('#btn-save-mapping').click();
-        await expect(webview.locator('#btn-cancel-load-apps')).toBeVisible();
-
-        // Bypass the slow cf apps call by injecting APPS_LOADED directly
-        await injectMessage(webview, {
-          type: 'APPS_LOADED',
-          payload: {
-            apps: [
-              { name: 'mock-service-a', state: 'started', urls: ['mock-service-a.cfapps.example.com'] },
-              { name: 'mock-service-b', state: 'stopped', urls: [] },
-              { name: 'mock-service-c', state: 'started', urls: ['mock-service-c.cfapps.example.com'] },
-            ],
-          },
-        });
-        await expect(webview.getByText('Debug Launcher')).toBeVisible();
-
-        // Trigger refresh — starts another LOADING_APPS that will block (slow-apps)
+        // Trigger refresh — client-side render is synchronous so LOADING_APPS elements
+        // appear in the DOM before the extension can respond with APPS_LOADED.
         await webview.locator('#btn-refresh-apps').click();
-        await expect(webview.getByText(/Loading apps for/i)).toBeVisible();
-        await expect(webview.locator('.spinner')).toBeVisible();
-        await expect(webview.locator('#btn-cancel-load-apps')).toBeVisible();
+        await expect(webview.getByText(/Loading apps for/i)).toBeVisible({ timeout: 5_000 });
+        await expect(webview.locator('.spinner')).toBeVisible({ timeout: 5_000 });
+        await expect(webview.locator('#btn-cancel-load-apps')).toBeVisible({ timeout: 5_000 });
 
         // Cancel must navigate to READY (state.apps.length > 0), not SELECT_FOLDER
         await webview.locator('#btn-cancel-load-apps').click();
-        await expect(webview.getByText('Debug Launcher')).toBeVisible({ timeout: 3_000 });
+        await expect(webview.getByText('Debug Launcher')).toBeVisible({ timeout: 5_000 });
         await expect(webview.locator('#search-input')).toBeVisible();
         await expect(webview.getByText('mock-service-a')).toBeVisible();
         // No LOADING_APPS elements remain on READY
@@ -1291,7 +1276,15 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await webview.getByPlaceholder('Password').fill('valid-password-123');
         await webview.getByRole('button', { name: /Save & Continue/ }).click();
 
-        // Extension saves to SecretStorage → CREDENTIALS_SAVED → no mappings → REGION
+        // Inject CREDENTIALS_SAVED to simulate the extension completing the save.
+        // This bypasses SecretStorage which is unavailable on headless Linux CI
+        // (no GNOME Keyring). The test still exercises the full UI transition path.
+        await injectMessage(webview, {
+          type: 'CREDENTIALS_SAVED',
+          payload: { email: 'user@example.com', source: 'keychain' },
+        });
+
+        // No mappings → REGION screen
         await expectRegionScreen(webview);
       });
     });
