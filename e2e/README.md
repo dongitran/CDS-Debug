@@ -36,7 +36,7 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
 19. Footer shows "No started apps" and select-all count drops to (0) when all started apps have active sessions.
 20. Active app shows "debugging" badge, disabled checkbox, `.app-row.in-debug` CSS class; select-all count updates; label flips to "Deselect all"; "No apps found" on unmatched search.
 
-### Active Session Cards — Lifecycle (7 tests)
+### Active Session Cards — Lifecycle (9 tests)
 21. DEBUG_CONNECTING creates a TUNNELING card with spinner, Active Sessions label, and stop button.
 22. APP_DEBUG_STATUS ATTACHED updates card to "Debugger Attached" and removes spinner.
 23. APP_DEBUG_STATUS EXITED removes the card and re-enables the app checkbox.
@@ -44,31 +44,39 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
 25. Stop single session click removes the active card.
 26. SSH_ENABLING and SSH_RESTARTING show correct spinner + status text; no Open App or Retry buttons.
 27. ATTACHED state with app URL shows Open App button and port number in card title.
-28. Stop All button absent with one session; visible with count when two or more sessions exist.
+28. ATTACHED with unmappedApps shows `.active-card-no-src` "no src" badge (debug console only, no local source folder).
+29. Stop All button absent with one session; visible with count ≥ 2; disappears again when count drops back to 1 via EXITED.
 
 ### Ready Screen — Actions and Navigation (4 tests)
-29. DEBUG_ERROR clears PENDING sessions and shows error message.
-30. Change Mapping with no active sessions returns to Select CF Org.
-31. Cancel app loading returns to **Ready** screen (not Select Folder) when apps were previously loaded — verifies the `state.apps.length > 0` conditional branch.
-32. Refresh Apps reloads and redisplays the app list.
+30. DEBUG_ERROR clears PENDING sessions, shows error message, and shows `#btn-retry-apps` alongside the error box.
+31. Change Mapping with no active sessions returns to Select CF Org.
+32. Cancel app loading returns to **Ready** screen (not Select Folder) when apps were previously loaded — verifies the `state.apps.length > 0` conditional branch.
+33. Refresh Apps reloads and redisplays the app list.
 
-### Settings Screen (4 tests)
-33. Keychain credentials section — verifies `.cred-source-badge.keychain`, email display, `#btn-update-credentials`, and `#btn-clear-credentials` via injected CREDENTIALS_STATUS.
-34. Sync running state — verifies `.sync-status-row.running`, spinner, `.progress-bar-wrap`, `.progress-bar-fill`, disabled Sync Now button via injected SYNC_STATUS.
-35. Cache disabled state — verifies unchecked `#chk-cache-enabled`, disabled `#select-interval`, disabled Sync Now, and "Caching disabled" status row via injected CACHE_CONFIG.
-36. Back to Launcher — verifies all 4 sections: SAP Credentials (env badge + email), Debug Behavior (both toggles + `.pref-state-badge` + `.beta-badge` + `.pref-row .toggle-switch` × 2), App Cache (checked by default, sync interval, enabled Sync Now, "Last sync: Never"), navigation buttons.
+### Settings Screen (6 tests)
+34. Keychain credentials section — verifies `.cred-source-badge.keychain`, email display, `#btn-update-credentials`, and `#btn-clear-credentials` via injected CREDENTIALS_STATUS.
+35. No-credentials section — verifies "No credentials configured." text and `#btn-update-credentials` (Set Credentials) when `source: 'none'`.
+36. Stopping-sync state — `.sync-status-row.running` + spinner + "Stopping sync…" when cache disabled but sync still in progress.
+37. Sync running state — verifies `.sync-status-row.running`, spinner, `.progress-bar-wrap`, `.progress-bar-fill`, disabled Sync Now button via injected SYNC_STATUS.
+38. Cache disabled state — verifies unchecked `#chk-cache-enabled`, disabled `#select-interval`, disabled Sync Now, and "Caching disabled" status row via injected CACHE_CONFIG.
+39. Back to Launcher — verifies all 4 sections: SAP Credentials (env badge + email + info icon), Debug Behavior (both toggles + `.pref-state-badge` + `.beta-badge` + `.pref-row .toggle-switch` × 2), App Cache (checked by default, sync interval, enabled Sync Now, "Last sync: Never"), navigation buttons.
 
 ### Select Folder Screen (1 test)
-37. Save and Continue disabled until folder selected — verifies all SELECT_FOLDER elements (step-badge 3/3, org info-box, section label, "No folder selected yet", browse/back buttons).
+40. Save and Continue disabled until folder selected — verifies all SELECT_FOLDER elements (step-badge 3/3, org info-box, section label, "No folder selected yet", browse/back buttons).
 
-### Preparing Branches Screen (3 tests)
-38. BRANCH_PREP_START shows prep screen with service rows, branch badges, spinner status, and step-by-step updates (stashing → done → error) — verifies all 3 status block variants.
-39. BRANCH_PREP_STATUS step variants — verifies checking-out, installing, building, and skipped steps; verifies `.prep-row-top`, `.prep-name`, `.prep-row-status` structural elements.
-40. BRANCH_PREP all done without errors transitions status block to "Starting debug sessions…" with spinner.
+### Preparing Branches Screen (5 tests)
+41. BRANCH_PREP_START shows prep screen with service rows, branch badges, spinner status, and step-by-step updates (stashing → done → error) — verifies all 3 status block variants.
+42. BRANCH_PREP_START with empty services shows `.org-list-empty` "No services to prepare." placeholder inside `.prep-list`.
+43. DEBUG_CONNECTING from PREPARING_BRANCHES screen transitions to READY with the new session card; prep rows cleared.
+44. BRANCH_PREP_STATUS step variants — verifies checking-out, installing, building, and skipped steps; verifies `.prep-row-top`, `.prep-name`, `.prep-row-status` structural elements.
+45. BRANCH_PREP all done without errors transitions status block to "Starting debug sessions…" with spinner.
 
-### Setup Credentials Screen (2 tests)
-41. Update mode — verifies "Update Credentials" title, `#btn-cancel-creds` visible, no `.cred-env-hint`, "Update & Continue" save button label; Back to Settings navigation.
-42. Successful credential save without prior mappings navigates to the Region screen.
+### Setup Credentials Screen (5 tests)
+46. CREDENTIALS_ERROR directly injected shows `.error-box` and re-enables `#btn-save-creds` (bypasses macOS SecretStorage race).
+47. Update mode — verifies "Update Credentials" title, `#btn-cancel-creds` visible, no `.cred-env-hint`, "Update & Continue" save button label; Back to Settings navigation.
+48. CREDENTIALS_REVOKED forces redirect to SETUP_CREDENTIALS with the revocation error in `.error-box`; setup mode (env hint visible, no cancel button, save button enabled — because handler sets `hasCredentials=false`).
+49. CREDENTIALS_STATUS `{hasCredentials:false}` when `prevHad=true` forces redirect to SETUP_CREDENTIALS setup mode; no error box (clean credential-clear path).
+50. Successful credential save without prior mappings navigates to the Region screen.
 
 ## Mocking strategy
 - Credentials are scenario-based:
@@ -82,6 +90,7 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
   - `apps-fail`
   - `slow-auth`
   - `slow-apps`
+  - `slow-target`
 - Folder selection in mapping flow is simulated via the same webview message (`GROUP_FOLDER_SELECTED`) used by the extension after native folder-pick.
 
 ## Prerequisites

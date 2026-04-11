@@ -126,6 +126,7 @@
     "credbtn",
     "credenv",
     "credential",
-    "credentials"
+    "credentials",
+    "requestfailed"
   ]
 }

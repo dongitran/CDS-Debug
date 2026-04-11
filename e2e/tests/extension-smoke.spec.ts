@@ -33,11 +33,50 @@ interface SessionArtifacts {
   mockBinDir: string;
 }
 
+interface SessionDiagnostics {
+  vscodeStdout: string[];
+  vscodeStderr: string[];
+  browserConsole: string[];
+  pageErrors: string[];
+  requestFailures: string[];
+}
+
 const MOCK_ENV_EMAIL = 'e2e.mock.user@example.com';
 const MOCK_ENV_PASSWORD = 'e2e-mock-password';
 const MOCK_GROUP_FOLDER = '/tmp/cds-debug-e2e-group';
 const WEBSOCKET_TIMEOUT_MS = 90_000;
 const FRAME_TIMEOUT_MS = 90_000;
+const DIAGNOSTIC_TAIL_SIZE = 120;
+
+function appendDiagnostic(target: string[], raw: string): void {
+  const normalized = raw.replaceAll('\r', '').split('\n').map((line) => line.trim()).filter(Boolean);
+  for (const line of normalized) {
+    target.push(line);
+  }
+  if (target.length > DIAGNOSTIC_TAIL_SIZE) {
+    target.splice(0, target.length - DIAGNOSTIC_TAIL_SIZE);
+  }
+}
+
+function formatDiagnosticSection(label: string, lines: string[]): string {
+  if (lines.length === 0) {
+    return `${label}: <empty>`;
+  }
+  return `${label}:\n${lines.map((line) => `  ${line}`).join('\n')}`;
+}
+
+function buildFailureError(error: unknown, diagnostics: SessionDiagnostics): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  const report = [
+    `Original error: ${message}`,
+    formatDiagnosticSection('VS Code stdout (tail)', diagnostics.vscodeStdout),
+    formatDiagnosticSection('VS Code stderr (tail)', diagnostics.vscodeStderr),
+    formatDiagnosticSection('Browser console (tail)', diagnostics.browserConsole),
+    formatDiagnosticSection('Page errors (tail)', diagnostics.pageErrors),
+    formatDiagnosticSection('Request failures (tail)', diagnostics.requestFailures),
+  ].join('\n\n');
+  return new Error(`E2E failure with diagnostics\n\n${report}`);
+}
 
 function buildMockCfScript(scenario: CfScenario): string {
   return `#!/usr/bin/env bash
@@ -234,7 +273,16 @@ async function openExtensionView(workbenchPage: Page): Promise<void> {
 }
 
 async function waitForExtensionWebviewFrame(workbenchPage: Page): Promise<Frame> {
-  const markers = ['CF Region', 'Login to Cloud Foundry', 'Setup Credentials'];
+  const markers = [
+    'CF Region',
+    'Login to Cloud Foundry',
+    'Setup Credentials',
+    'Select CF Org',
+    'Select Local Folder',
+    'Debug Launcher',
+    'Settings',
+    'Preparing Branches',
+  ];
   const deadline = Date.now() + FRAME_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
@@ -333,6 +381,13 @@ async function withVsCodeSession(
   const repoRoot = resolve(process.cwd(), '..');
   const cdpPort = await allocatePort();
   const artifacts = await createSessionArtifacts(options);
+  const diagnostics: SessionDiagnostics = {
+    vscodeStdout: [],
+    vscodeStderr: [],
+    browserConsole: [],
+    pageErrors: [],
+    requestFailures: [],
+  };
 
   try {
     const env = buildVsCodeEnv(artifacts.mockBinDir, options.credentialMode);
@@ -343,6 +398,12 @@ async function withVsCodeSession(
       cdpPort,
       env,
     );
+    artifacts.appProcess.stdout.on('data', (chunk: Buffer | string) => {
+      appendDiagnostic(diagnostics.vscodeStdout, chunk.toString());
+    });
+    artifacts.appProcess.stderr.on('data', (chunk: Buffer | string) => {
+      appendDiagnostic(diagnostics.vscodeStderr, chunk.toString());
+    });
 
     await waitForCdpEndpoint(cdpPort, WEBSOCKET_TIMEOUT_MS);
     artifacts.browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort.toString()}`);
@@ -353,8 +414,25 @@ async function withVsCodeSession(
     }
 
     artifacts.workbenchPage = await waitForWorkbenchPage(context);
+    artifacts.workbenchPage.on('console', (msg) => {
+      appendDiagnostic(
+        diagnostics.browserConsole,
+        `[${msg.type()}] ${msg.text()}`,
+      );
+    });
+    artifacts.workbenchPage.on('pageerror', (err) => {
+      appendDiagnostic(diagnostics.pageErrors, err.message);
+    });
+    artifacts.workbenchPage.on('requestfailed', (request) => {
+      appendDiagnostic(
+        diagnostics.requestFailures,
+        `${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? 'unknown error'}`,
+      );
+    });
     await artifacts.workbenchPage.bringToFront();
     await run(artifacts.workbenchPage);
+  } catch (error: unknown) {
+    throw buildFailureError(error, diagnostics);
   } finally {
     if (artifacts.appProcess) {
       await terminateProcess(artifacts.appProcess, artifacts.browser, artifacts.workbenchPage);
@@ -390,6 +468,11 @@ async function expectRegionScreen(webview: Frame): Promise<void> {
   await expect(webview.locator('input[name="cf-region"][value="us10"]')).toBeAttached();
   // Custom endpoint card is always present
   await expect(webview.locator('input[name="cf-region"][value="custom"]')).toBeAttached();
+  // Region screen must not leak launcher/setup controls
+  await expect(webview.locator('#search-input')).toHaveCount(0);
+  await expect(webview.locator('#btn-start-debug')).toHaveCount(0);
+  await expect(webview.locator('#btn-save-mapping')).toHaveCount(0);
+  await expect(webview.locator('#cred-email')).toHaveCount(0);
 }
 
 async function expectSetupCredentialsScreen(webview: Frame): Promise<void> {
@@ -404,6 +487,25 @@ async function expectSetupCredentialsScreen(webview: Frame): Promise<void> {
   // Password visibility toggle and save/continue button must always be present
   await expect(webview.locator('#btn-toggle-pwd')).toBeVisible();
   await expect(webview.locator('#btn-save-creds')).toBeVisible();
+  // Setup screen must not leak launcher/region controls
+  await expect(webview.locator('#search-input')).toHaveCount(0);
+  await expect(webview.locator('#btn-start-debug')).toHaveCount(0);
+  await expect(webview.locator('#btn-login')).toHaveCount(0);
+}
+
+async function expectReadyScreen(webview: Frame): Promise<void> {
+  await expect(webview.getByText('Debug Launcher')).toBeVisible();
+  await expect(webview.locator('#search-input')).toBeVisible();
+  await expect(webview.locator('#btn-start-debug')).toBeVisible();
+  await expect(webview.locator('#btn-refresh-apps')).toBeVisible();
+  await expect(webview.locator('#btn-gear')).toBeVisible();
+  // Ready screen must not leak login/setup/folder loading controls
+  await expect(webview.locator('#btn-login')).toHaveCount(0);
+  await expect(webview.locator('#btn-cancel-login')).toHaveCount(0);
+  await expect(webview.locator('#btn-save-mapping')).toHaveCount(0);
+  await expect(webview.locator('#btn-cancel-load-apps')).toHaveCount(0);
+  await expect(webview.locator('#cred-email')).toHaveCount(0);
+  await expect(webview.locator('#cred-password')).toHaveCount(0);
 }
 
 async function goToOrgSelection(webview: Frame): Promise<void> {
@@ -438,8 +540,7 @@ async function completeMappingToReady(webview: Frame): Promise<void> {
   await injectSelectedFolder(webview, MOCK_GROUP_FOLDER);
   await expect(webview.getByText(MOCK_GROUP_FOLDER)).toBeVisible();
   await webview.locator('#btn-save-mapping').click();
-  await expect(webview.getByText('Debug Launcher')).toBeVisible();
-  await expect(webview.locator('#search-input')).toBeVisible();
+  await expectReadyScreen(webview);
 }
 
 async function expectButtonDisabled(button: Locator): Promise<void> {
@@ -511,7 +612,13 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await expectRegionScreen(webview);
 
+      // Select the custom endpoint card — UI swaps endpoint radio-desc for a text input
       await webview.locator('input[name="cf-region"][value="custom"]').check({ force: true });
+      await expect(webview.locator('#api-endpoint-custom')).toBeVisible();
+      await expect(webview.locator('.radio-desc', { hasText: 'Enter your full CF API URL' })).toBeVisible();
+      // Standard eu10 endpoint text is gone when custom is selected
+      await expect(webview.locator('.radio-desc', { hasText: 'api.cf.eu10.hana.ondemand.com' })).toHaveCount(0);
+
       await webview.locator('#api-endpoint-custom').fill('http://api.cf.invalid.hana.ondemand.com');
 
       await loginFromRegionScreen(webview);
@@ -624,6 +731,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.getByText('Select CF Org')).toBeVisible();
 
       await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
+      // Surgical DOM update: selected org gets the "selected" CSS class on its label
+      await expect(webview.locator('.org-item.selected', { hasText: 'mock-org-beta' })).toBeVisible();
+      // Next button becomes enabled after an org is selected
+      await expect(webview.locator('#btn-next-org')).toBeEnabled();
       await webview.locator('#btn-next-org').click();
 
       await expect(webview.getByText('Select Local Folder')).toBeVisible();
@@ -688,6 +799,17 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       // Search for a name that matches no app → "No apps found" empty state
       await webview.locator('#search-input').fill('zzz-nonexistent-app');
       await expect(webview.locator('.app-list')).toContainText('No apps found');
+
+      // Individual checkbox selection (not via select-all)
+      await webview.locator('#search-input').fill('');
+      await webview.locator('input[type="checkbox"][data-app="mock-service-a"]').check();
+      await expect(webview.locator('.footer-info')).toContainText('1 / 2 selected');
+      await expectButtonEnabled(startButton);
+      await webview.locator('input[type="checkbox"][data-app="mock-service-a"]').uncheck();
+      await expect(webview.locator('.footer-info')).toContainText('0 / 2 selected');
+      await expectButtonDisabled(startButton);
+      // Active sessions panel is present (empty by default)
+      await expect(webview.locator('#active-sessions-panel')).toBeAttached();
     });
   });
 
@@ -714,6 +836,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.getByText(/Loading apps for/i)).toBeVisible();
       // Verify all LOADING_APPS screen elements: spinner and cancel button
       await expect(webview.locator('.spinner')).toBeVisible();
+      // Org name is rendered in bold inside the loading message
+      await expect(webview.locator('strong', { hasText: 'mock-org-alpha' })).toBeVisible();
       await expect(webview.locator('#btn-cancel-load-apps')).toBeVisible();
       await webview.locator('#btn-cancel-load-apps').click();
 
@@ -753,6 +877,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.locator('.active-card')).toHaveCount(2, { timeout: 3_000 });
       await expect(webview.locator('.active-card', { hasText: 'mock-service-a' })).toBeVisible();
       await expect(webview.locator('.active-card', { hasText: 'mock-service-c' })).toBeVisible();
+      // PENDING state shows "Preparing…" spinner text
+      await expect(
+        webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.status-text-anim')
+      ).toContainText('Preparing');
 
       // Apps should now be shown as disabled in the started list (no longer selectable)
       const serviceACheckbox = webview.locator('input[type="checkbox"][data-app="mock-service-a"]');
@@ -878,7 +1006,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.active-card')).toHaveCount(1, { timeout: 3_000 });
         const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
         await expect(activeCard).toBeVisible();
-        await expect(activeCard.locator('.spinner')).toBeVisible();
+        // Card internal structure: .active-card-main > .active-card-title + .active-card-status
+        await expect(activeCard.locator('.active-card-main')).toBeVisible();
+        await expect(activeCard.locator('.active-card-title')).toContainText('mock-service-a');
+        await expect(activeCard.locator('.active-card-status')).toBeVisible();
+        await expect(activeCard.locator('.active-card-status .spinner')).toBeVisible();
+        await expect(activeCard.locator('.active-card-status .status-text-anim')).toBeVisible();
         // "Active Sessions" header label is shown above the cards
         await expect(webview.locator('.section-label', { hasText: 'Active Sessions' })).toBeVisible();
         // The stop button is always present on every card
@@ -1043,6 +1176,39 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       });
     });
 
+    test('ATTACHED with unmappedApps shows "no src" badge on the session card', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        // Inject DEBUG_CONNECTING with mock-service-a in unmappedApps (no local folder)
+        await injectMessage(webview, {
+          type: 'DEBUG_CONNECTING',
+          payload: {
+            appNames: ['mock-service-a'],
+            ports: { 'mock-service-a': 20000 },
+            unmappedApps: ['mock-service-a'],
+          },
+        });
+        await expect(webview.locator('.active-card', { hasText: 'mock-service-a' })).toBeVisible();
+
+        // In TUNNELING state the "no src" badge is not yet shown
+        await expect(webview.locator('.active-card-no-src')).toHaveCount(0);
+
+        // Attach the debugger — "no src" badge should now appear alongside "Debugger Attached"
+        await injectMessage(webview, {
+          type: 'APP_DEBUG_STATUS',
+          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
+        });
+
+        const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
+        await expect(activeCard.getByText('Debugger Attached')).toBeVisible({ timeout: 3_000 });
+        // "no src" badge is shown because the app has no mapped local source folder
+        await expect(activeCard.locator('.active-card-no-src')).toBeVisible({ timeout: 3_000 });
+        await expect(activeCard.locator('.active-card-no-src')).toContainText('no src');
+      });
+    });
+
     test('Stop All button absent with one session, visible and shows count with two or more', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
@@ -1064,6 +1230,16 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.active-card')).toHaveCount(2, { timeout: 3_000 });
         await expect(webview.locator('#btn-stop-all-sessions')).toBeVisible({ timeout: 3_000 });
         await expect(webview.locator('#btn-stop-all-sessions')).toContainText('2');
+
+        // After one session exits (count drops to 1): Stop All must disappear
+        await injectMessage(webview, {
+          type: 'APP_DEBUG_STATUS',
+          payload: { appName: 'mock-service-a', status: 'EXITED' },
+        });
+        await expect(webview.locator('.active-card')).toHaveCount(1, { timeout: 3_000 });
+        await expect(webview.locator('#btn-stop-all-sessions')).toHaveCount(0, { timeout: 3_000 });
+        // Remaining card (mock-service-c) is still shown
+        await expect(webview.locator('.active-card', { hasText: 'mock-service-c' })).toBeVisible();
       });
     });
   });
@@ -1093,6 +1269,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.active-card')).toHaveCount(0, { timeout: 3_000 });
         // Error message must be visible in the ready screen
         await expect(webview.locator('.error-box')).toContainText('CF target failed: network timeout', { timeout: 3_000 });
+        // Retry button (#btn-retry-apps) must appear alongside the error box on the ready screen
+        await expect(webview.locator('#btn-retry-apps')).toBeVisible({ timeout: 3_000 });
       });
     });
 
@@ -1105,7 +1283,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
         // Org list is rendered (previously logged-in orgs are preserved in state)
-        await expect(webview.locator('input[name="cf-org"]')).not.toHaveCount(0);
+        await expect(webview.locator('input[name="cf-org"]')).toHaveCount(2);
       });
     });
 
@@ -1136,7 +1314,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
             ],
           },
         });
-        await expect(webview.getByText('Debug Launcher')).toBeVisible();
+        await expectReadyScreen(webview);
 
         // Refresh — second cfTarget also sleeps 30 s, keeping LOADING_APPS stable.
         // force:true avoids an indefinite actionability-check hang caused by rapid
@@ -1148,11 +1326,11 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         // Cancel must navigate to READY (state.apps.length > 0), not SELECT_FOLDER
         await webview.locator('#btn-cancel-load-apps').click();
-        await expect(webview.getByText('Debug Launcher')).toBeVisible({ timeout: 5_000 });
-        await expect(webview.locator('#search-input')).toBeVisible();
+        await expectReadyScreen(webview);
         await expect(webview.getByText('mock-service-a')).toBeVisible();
         // No LOADING_APPS elements remain on READY
         await expect(webview.locator('#btn-cancel-load-apps')).toHaveCount(0);
+        await expect(webview.locator('.spinner')).toHaveCount(0);
       });
     });
 
@@ -1165,8 +1343,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await webview.locator('#btn-refresh-apps').click();
 
         // After reload, the ready screen returns with the same app list
-        await expect(webview.getByText('Debug Launcher')).toBeVisible({ timeout: 10_000 });
-        await expect(webview.locator('#search-input')).toBeVisible();
+        await expectReadyScreen(webview);
         await expect(webview.getByText('mock-service-a')).toBeVisible();
         await expect(webview.getByText('mock-service-b')).toBeVisible();
         await expect(webview.getByText('mock-service-c')).toBeVisible();
@@ -1196,6 +1373,50 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.cred-info-email')).toContainText('keychain.user@example.com');
         await expect(webview.locator('#btn-update-credentials')).toBeVisible();
         await expect(webview.locator('#btn-clear-credentials')).toBeVisible();
+      });
+    });
+
+    test('Settings shows no-credential state when source is none', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await webview.locator('#btn-gear').click();
+        await expect(webview.getByText('Settings')).toBeVisible();
+
+        await injectMessage(webview, {
+          type: 'CREDENTIALS_STATUS',
+          payload: { hasCredentials: true, email: '', source: 'none' },
+        });
+
+        await expect(webview.getByText('No credentials configured.')).toBeVisible();
+        await expect(webview.locator('#btn-update-credentials')).toBeVisible();
+        await expect(webview.locator('#btn-clear-credentials')).toHaveCount(0);
+      });
+    });
+
+    test('Settings shows "Stopping sync" when cache disabled while sync is still running', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await webview.locator('#btn-gear').click();
+        await expect(webview.getByText('Settings')).toBeVisible();
+
+        // Inject cache disabled AND sync still running — brief "Stopping sync…" transition state
+        await injectMessage(webview, {
+          type: 'CACHE_CONFIG',
+          payload: { enabled: false, intervalHours: 24 },
+        });
+        await injectMessage(webview, {
+          type: 'SYNC_STATUS',
+          payload: { isRunning: true, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 14 },
+        });
+
+        // Should show spinner + "Stopping sync…" (not "Caching disabled" static row)
+        await expect(webview.locator('.sync-status-row.running')).toBeVisible();
+        await expect(webview.locator('.sync-status-row.running .spinner')).toBeVisible();
+        await expect(webview.locator('.sync-status-row.running')).toContainText('Stopping sync');
       });
     });
 
@@ -1265,6 +1486,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.section-label', { hasText: 'SAP Credentials' })).toBeVisible();
         await expect(webview.locator('.cred-source-badge.env')).toBeVisible();
         await expect(webview.locator('.cred-info-email')).toContainText(MOCK_ENV_EMAIL);
+        await expect(webview.locator('.cred-info-icon[aria-label="Environment variable info"]')).toBeVisible();
+        await expect(webview.locator('#btn-update-credentials')).toHaveCount(0);
         // Debug Behavior section with both preference toggles
         await expect(webview.locator('.section-label', { hasText: 'Debug Behavior' })).toBeVisible();
         await expect(webview.getByText(/Auto-open browser on attach/)).toBeVisible();
@@ -1278,8 +1501,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('#select-interval')).toBeVisible();
         // Sync Now button is enabled when cache is enabled and not running
         await expect(webview.locator('#btn-trigger-sync')).toBeEnabled();
-        // Sync status row shows "Last sync" with "Never" as the initial value
+        await expect(webview.locator('#btn-trigger-sync')).toContainText('Sync Now');
+        // Sync status row shows "Last sync: Never" as the initial value
         await expect(webview.locator('.sync-status-row')).toContainText('Last sync');
+        await expect(webview.locator('.sync-status-row')).toContainText('Never');
         // Auto-open browser pref badge shows "off by default" (disabled by default)
         await expect(webview.locator('.pref-state-badge.pref-state-off')).toContainText('off by default');
         // Branch auto-checkout carries an "experimental" badge
@@ -1292,8 +1517,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('#btn-back-settings').click();
 
-        await expect(webview.getByText('Debug Launcher')).toBeVisible({ timeout: 5_000 });
-        await expect(webview.locator('#search-input')).toBeVisible();
+        await expectReadyScreen(webview);
         await expect(webview.getByText('mock-service-a')).toBeVisible();
       });
     });
@@ -1391,6 +1615,55 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       });
     });
 
+    test('BRANCH_PREP_START with empty services shows "No services to prepare" placeholder', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        // Empty services array — edge case that should render the empty-list placeholder
+        await injectMessage(webview, {
+          type: 'BRANCH_PREP_START',
+          payload: { services: [] },
+        });
+
+        await expect(webview.getByText('Preparing Branches')).toBeVisible({ timeout: 3_000 });
+        // Empty prep list shows placeholder inside .prep-list container
+        await expect(webview.locator('.prep-list')).toBeVisible();
+        await expect(webview.locator('.org-list-empty', { hasText: 'No services to prepare.' })).toBeVisible();
+        // Status block still shows "Preparing" (allDone is false when services is empty)
+        await expect(webview.locator('.info-box', { hasText: 'Preparing branch environment' })).toBeVisible();
+      });
+    });
+
+    test('DEBUG_CONNECTING from PREPARING_BRANCHES screen transitions to READY with session card', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await injectMessage(webview, {
+          type: 'BRANCH_PREP_START',
+          payload: {
+            services: [
+              { appName: 'mock-service-a', targetBranch: 'main', currentBranch: 'feature/x' },
+            ],
+          },
+        });
+        await expect(webview.getByText('Preparing Branches')).toBeVisible({ timeout: 3_000 });
+
+        // DEBUG_CONNECTING from prep screen: state changes to READY and session card appears
+        await injectMessage(webview, {
+          type: 'DEBUG_CONNECTING',
+          payload: { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } },
+        });
+
+        await expectReadyScreen(webview);
+        await expect(webview.locator('.active-card', { hasText: 'mock-service-a' })).toBeVisible({ timeout: 3_000 });
+        // Prep screen elements are cleared
+        await expect(webview.locator('.prep-row')).toHaveCount(0);
+        await expect(webview.getByText('Preparing Branches')).toHaveCount(0);
+      });
+    });
+
     test('BRANCH_PREP_STATUS checking-out, installing, building, and skipped steps render correctly', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
@@ -1478,6 +1751,27 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
   // ─── Setup Credentials Screen ──────────────────────────────────────────────
 
   test.describe('Setup Credentials Screen', () => {
+    test('CREDENTIALS_ERROR shows error box and re-enables save button', async () => {
+      await withVsCodeSession({ credentialMode: 'none', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await expectSetupCredentialsScreen(webview);
+
+        // Inject CREDENTIALS_ERROR directly — simulates keychain storage failure
+        // (no save click needed: screen check passes since we're already on SETUP_CREDENTIALS)
+        await injectMessage(webview, {
+          type: 'CREDENTIALS_ERROR',
+          payload: { message: 'Keychain access denied — please unlock your keychain' },
+        });
+
+        // Error box appears with the message
+        await expect(webview.locator('.error-box')).toContainText('Keychain access denied');
+        // Save button is re-enabled after error (isSavingCreds=false)
+        await expect(webview.locator('#btn-save-creds')).toBeEnabled();
+        // Still on credentials screen — all form elements remain
+        await expectSetupCredentialsScreen(webview);
+      });
+    });
+
     test('Update mode shows "Update Credentials" title, cancel button, and no env hint', async () => {
       // Navigate: READY → Settings → inject keychain status → click Update Credentials
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
@@ -1486,6 +1780,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
+        // Wait for extension's own GET_CREDENTIALS_STATUS response (env mode) to avoid race
+        await expect(webview.locator('.cred-source-badge.env')).toBeVisible();
 
         // Switch credential display to keychain so #btn-update-credentials is rendered
         await injectMessage(webview, {
@@ -1509,11 +1805,69 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.getByPlaceholder('Password')).toBeVisible();
         await expect(webview.locator('#btn-toggle-pwd')).toBeVisible();
         // Save button says "Update & Continue"
-        await expect(webview.locator('#btn-save-creds')).toContainText('Update');
+        await expect(webview.getByRole('button', { name: 'Update & Continue' })).toBeVisible();
 
         // Cancel returns to Settings
         await webview.locator('#btn-cancel-creds').click();
         await expect(webview.getByText('Settings')).toBeVisible();
+      });
+    });
+
+    test('CREDENTIALS_REVOKED forces setup screen with the revocation error message', async () => {
+      // Scenario: extension detects that keychain credentials are revoked during a login attempt
+      // and clears them, then sends CREDENTIALS_REVOKED to force the user to re-enter creds.
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        // Inject CREDENTIALS_REVOKED — extension has already cleared the stored creds
+        await injectMessage(webview, {
+          type: 'CREDENTIALS_REVOKED',
+          payload: { message: 'SAP credentials are no longer valid. Please update them.' },
+        });
+
+        // Must redirect to SETUP_CREDENTIALS screen regardless of current screen
+        await expectSetupCredentialsScreen(webview);
+        // Error message from the revocation event must appear in the error box
+        await expect(webview.locator('.error-box')).toContainText('SAP credentials are no longer valid');
+        // Handler sets hasCredentials=false → isUpdate=false → setup mode (not update mode)
+        // Heading must be "Setup Credentials" (not "Update Credentials")
+        await expect(webview.getByText('Setup Credentials')).toBeVisible();
+        // Setup mode: env hint IS visible, no cancel button
+        await expect(webview.locator('.cred-env-hint')).toBeVisible();
+        await expect(webview.locator('#btn-cancel-creds')).toHaveCount(0);
+        await expect(webview.locator('#btn-save-creds')).toBeEnabled();
+      });
+    });
+
+    test('CREDENTIALS_STATUS with hasCredentials=false forces redirect to setup screen', async () => {
+      // Scenario: extension sends CREDENTIALS_STATUS after the user clears credentials via
+      // #btn-clear-credentials in Settings. The webview must redirect to SETUP_CREDENTIALS
+      // because prevHad=true and new hasCredentials=false.
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await webview.locator('#btn-gear').click();
+        await expect(webview.getByText('Settings')).toBeVisible();
+        // Wait for the extension's own credential status push (env mode) — establishes prevHad=true
+        await expect(webview.locator('.cred-source-badge.env')).toBeVisible();
+
+        // Extension clears credentials → sends CREDENTIALS_STATUS { hasCredentials: false }
+        // prevHad=true + new=false triggers the forced SETUP_CREDENTIALS redirect path
+        await injectMessage(webview, {
+          type: 'CREDENTIALS_STATUS',
+          payload: { hasCredentials: false, email: '', source: 'none' },
+        });
+
+        // Should redirect to SETUP_CREDENTIALS setup mode (not stay on Settings)
+        await expectSetupCredentialsScreen(webview);
+        await expect(webview.getByText('Setup Credentials')).toBeVisible();
+        // Setup mode: env hint visible, no cancel button (fresh setup, no prior creds)
+        await expect(webview.locator('.cred-env-hint')).toBeVisible();
+        await expect(webview.locator('#btn-cancel-creds')).toHaveCount(0);
+        // No error box — this is a clean credential-clear, not an error
+        await expect(webview.locator('.error-box')).toHaveCount(0);
       });
     });
 
@@ -1526,14 +1880,29 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await webview.getByPlaceholder('your.name@company.com').fill('user@example.com');
         await webview.getByPlaceholder('Password').fill('valid-password-123');
         await webview.getByRole('button', { name: /Save & Continue/ }).click();
+        const saveButton = webview.locator('#btn-save-creds');
+        const regionHeading = webview.getByText('CF Region');
+        // Two valid paths:
+        // 1) UI stays in setup briefly with Saving state.
+        // 2) Extension saves instantly and transitions to Region before the check.
+        await Promise.any([
+          (async () => {
+            await expect(saveButton).toBeVisible({ timeout: 2_500 });
+            await expect(saveButton).toBeDisabled({ timeout: 2_500 });
+            await expect(saveButton).toContainText('Saving', { timeout: 2_500 });
+          })(),
+          expect(regionHeading).toBeVisible({ timeout: 2_500 }),
+        ]).catch(() => undefined);
 
         // Inject CREDENTIALS_SAVED to simulate the extension completing the save.
         // This bypasses SecretStorage which is unavailable on headless Linux CI
         // (no GNOME Keyring). The test still exercises the full UI transition path.
-        await injectMessage(webview, {
-          type: 'CREDENTIALS_SAVED',
-          payload: { email: 'user@example.com', source: 'keychain' },
-        });
+        if (!(await regionHeading.isVisible())) {
+          await injectMessage(webview, {
+            type: 'CREDENTIALS_SAVED',
+            payload: { email: 'user@example.com', source: 'keychain' },
+          });
+        }
 
         // No mappings → REGION screen
         await expectRegionScreen(webview);

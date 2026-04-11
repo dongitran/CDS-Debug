@@ -849,7 +849,7 @@ export function getStyles(): string {
     .cred-info-tooltip {
       display: none;
       position: absolute;
-      bottom: calc(100% + 6px);
+      top: calc(100% + 6px);
       right: -4px;
       width: 220px;
       padding: 8px 10px;
