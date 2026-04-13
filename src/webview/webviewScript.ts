@@ -65,6 +65,11 @@ export function getScript(nonce: string): string {
       mappings: [],
       selectedOrg: null,
       selectedFolder: null,
+      // Per-org folder cache: { [cfOrg]: groupFolderPath }
+      // Populated from saved orgGroupMappings on CONFIG_LOADED and updated whenever the
+      // user confirms a folder. Enables auto-restoring the previously selected folder
+      // when the user switches back to an org they have used before.
+      foldersByOrg: {},
       apps: [],
       selectedApps: new Set(),
       searchQuery: '',
@@ -198,6 +203,11 @@ export function getScript(nonce: string): string {
 
       $('btn-next-org')?.addEventListener('click', () => {
         state.error = null;
+        // Auto-restore the folder previously used with this org (if any).
+        // The user can still override by clicking "Browse…" on the next screen.
+        state.selectedFolder = (state.selectedOrg && state.foldersByOrg[state.selectedOrg])
+          ? state.foldersByOrg[state.selectedOrg]
+          : null;
         state.screen = SCREENS.SELECT_FOLDER;
         render();
       });
@@ -208,6 +218,9 @@ export function getScript(nonce: string): string {
 
       $('btn-save-mapping')?.addEventListener('click', () => {
         if (!state.selectedOrg || !state.selectedFolder) return;
+        // Update in-memory per-org folder cache so that if the user switches orgs
+        // during the same session, coming back here auto-restores this folder.
+        state.foldersByOrg[state.selectedOrg] = state.selectedFolder;
         const mappings = [{ cfOrg: state.selectedOrg, groupFolderPath: state.selectedFolder }];
         state.mappings = mappings;
         state.error = null;
@@ -524,6 +537,12 @@ export function getScript(nonce: string): string {
             state.activeSessions = restoredSessions;
             state.orgs = cfg.orgs ?? [];
             state.mappings = cfg.orgGroupMappings;
+            // Rebuild the per-org folder cache from all persisted mappings so that
+            // switching orgs in the same session auto-restores the correct folder.
+            state.foldersByOrg = {};
+            for (const m of cfg.orgGroupMappings) {
+              state.foldersByOrg[m.cfOrg] = m.groupFolderPath;
+            }
           }
 
           // Gate: require credentials before proceeding with any other screen.

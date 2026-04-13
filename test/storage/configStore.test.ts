@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { initConfigStore, getConfig, saveConfig, clearConfig } from '../../src/storage/configStore';
-import type { ExtensionConfig } from '../../src/types/index';
+import { initConfigStore, getConfig, saveConfig, clearConfig, upsertOrgMappings } from '../../src/storage/configStore';
+import type { ExtensionConfig, OrgGroupMapping } from '../../src/types/index';
 
 // Minimal in-memory mock that matches the shape of vscode.ExtensionContext.globalState
 function makeContext() {
@@ -81,5 +81,66 @@ describe('configStore', () => {
     initConfigStore(undefined as unknown as Parameters<typeof initConfigStore>[0]);
     const config: ExtensionConfig = { apiEndpoint: '', orgs: [], orgGroupMappings: [] };
     await expect(saveConfig(config)).rejects.toThrow('ConfigStore not initialized');
+  });
+});
+
+describe('upsertOrgMappings', () => {
+  it('returns incoming mapping when existing list is empty', () => {
+    const incoming: OrgGroupMapping[] = [{ cfOrg: 'org-a', groupFolderPath: '/projects/a' }];
+    const result = upsertOrgMappings([], incoming);
+    expect(result).toEqual([{ cfOrg: 'org-a', groupFolderPath: '/projects/a' }]);
+  });
+
+  it('preserves existing mapping when adding a different org', () => {
+    const existing: OrgGroupMapping[] = [{ cfOrg: 'org-a', groupFolderPath: '/projects/a' }];
+    const incoming: OrgGroupMapping[] = [{ cfOrg: 'org-b', groupFolderPath: '/projects/b' }];
+    const result = upsertOrgMappings(existing, incoming);
+    expect(result).toHaveLength(2);
+    expect(result).toContainEqual({ cfOrg: 'org-a', groupFolderPath: '/projects/a' });
+    expect(result).toContainEqual({ cfOrg: 'org-b', groupFolderPath: '/projects/b' });
+  });
+
+  it('updates folder path when same org is re-saved with a new folder', () => {
+    const existing: OrgGroupMapping[] = [{ cfOrg: 'org-a', groupFolderPath: '/projects/a-old' }];
+    const incoming: OrgGroupMapping[] = [{ cfOrg: 'org-a', groupFolderPath: '/projects/a-new' }];
+    const result = upsertOrgMappings(existing, incoming);
+    expect(result).toEqual([{ cfOrg: 'org-a', groupFolderPath: '/projects/a-new' }]);
+  });
+
+  it('handles multi-org round-trip: org-A → org-B → org-A preserves both folders', () => {
+    // Simulate: user picks org-A + folder-A, then org-B + folder-B, then org-A + folder-A again
+    const afterFirst = upsertOrgMappings([], [{ cfOrg: 'org-a', groupFolderPath: '/folder-a' }]);
+    const afterSecond = upsertOrgMappings(afterFirst, [{ cfOrg: 'org-b', groupFolderPath: '/folder-b' }]);
+    const afterThird = upsertOrgMappings(afterSecond, [{ cfOrg: 'org-a', groupFolderPath: '/folder-a' }]);
+
+    expect(afterThird).toHaveLength(2);
+    expect(afterThird.find(m => m.cfOrg === 'org-a')?.groupFolderPath).toBe('/folder-a');
+    expect(afterThird.find(m => m.cfOrg === 'org-b')?.groupFolderPath).toBe('/folder-b');
+  });
+
+  it('handles multiple incoming mappings at once', () => {
+    const existing: OrgGroupMapping[] = [{ cfOrg: 'org-a', groupFolderPath: '/a' }];
+    const incoming: OrgGroupMapping[] = [
+      { cfOrg: 'org-a', groupFolderPath: '/a-updated' },
+      { cfOrg: 'org-b', groupFolderPath: '/b' },
+    ];
+    const result = upsertOrgMappings(existing, incoming);
+    expect(result).toHaveLength(2);
+    expect(result.find(m => m.cfOrg === 'org-a')?.groupFolderPath).toBe('/a-updated');
+    expect(result.find(m => m.cfOrg === 'org-b')?.groupFolderPath).toBe('/b');
+  });
+
+  it('does not mutate the input arrays', () => {
+    const existing: OrgGroupMapping[] = [{ cfOrg: 'org-a', groupFolderPath: '/a' }];
+    const incoming: OrgGroupMapping[] = [{ cfOrg: 'org-b', groupFolderPath: '/b' }];
+    const existingSnapshot = JSON.stringify(existing);
+    const incomingSnapshot = JSON.stringify(incoming);
+    upsertOrgMappings(existing, incoming);
+    expect(JSON.stringify(existing)).toBe(existingSnapshot);
+    expect(JSON.stringify(incoming)).toBe(incomingSnapshot);
+  });
+
+  it('returns empty array when both inputs are empty', () => {
+    expect(upsertOrgMappings([], [])).toEqual([]);
   });
 });

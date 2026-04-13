@@ -1909,4 +1909,171 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       });
     });
   });
+
+  // ─── Org-Folder Caching ────────────────────────────────────────────────────
+
+  test.describe('Org-Folder Caching', () => {
+    const MOCK_GROUP_FOLDER_BETA = '/tmp/cds-debug-e2e-group-beta';
+
+    test('Cached folder is auto-restored when re-selecting a previously mapped org', async () => {
+      // Verifies that after completing the full mapping flow for an org, navigating back
+      // to SELECT_FOLDER for the same org auto-fills the previously chosen folder path.
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        // Complete the full setup for mock-org-alpha with MOCK_GROUP_FOLDER
+        await completeMappingToReady(webview);
+
+        // Remap: no active sessions so btn-remap goes directly to SELECT_ORG
+        await webview.locator('#btn-remap').click();
+        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
+
+        // Re-select mock-org-alpha (the org that was already mapped)
+        await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
+        await webview.locator('#btn-next-org').click();
+
+        // SELECT_FOLDER must show the previously chosen folder path — no Browse required
+        await expect(webview.getByText('Select Local Folder')).toBeVisible();
+        await expect(webview.getByText(MOCK_GROUP_FOLDER)).toBeVisible();
+        // Save button is enabled because the cached folder was auto-restored
+        await expectButtonEnabled(webview.locator('#btn-save-mapping'));
+        // Browse button still present — user can override the cached folder
+        await expect(webview.locator('#btn-browse-folder')).toBeVisible();
+      });
+    });
+
+    test('Different orgs retain independent cached folder paths', async () => {
+      // Full round-trip: map org-alpha → folder-alpha, then map org-beta → folder-beta,
+      // then switch between both orgs and verify each still shows its own cached folder.
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+
+        // Step 1: complete mapping for mock-org-alpha with MOCK_GROUP_FOLDER
+        await completeMappingToReady(webview);
+
+        // Step 2: remap → SELECT_ORG → select org-beta → folder screen has no cached path
+        await webview.locator('#btn-remap').click();
+        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
+        await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
+        await webview.locator('#btn-next-org').click();
+        await expect(webview.getByText('Select Local Folder')).toBeVisible();
+        // org-beta has never been mapped → no pre-fill
+        await expect(webview.getByText('No folder selected yet.')).toBeVisible();
+        await expectButtonDisabled(webview.locator('#btn-save-mapping'));
+
+        // Step 3: select folder-beta and complete mapping for org-beta
+        await injectSelectedFolder(webview, MOCK_GROUP_FOLDER_BETA);
+        await expect(webview.getByText(MOCK_GROUP_FOLDER_BETA)).toBeVisible();
+        await webview.locator('#btn-save-mapping').click();
+        await expectReadyScreen(webview);
+
+        // Step 4: remap → SELECT_ORG → switch back to org-alpha → folder-alpha pre-filled
+        await webview.locator('#btn-remap').click();
+        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
+        await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
+        await webview.locator('#btn-next-org').click();
+        await expect(webview.getByText('Select Local Folder')).toBeVisible();
+        await expect(webview.getByText(MOCK_GROUP_FOLDER)).toBeVisible();
+        await expectButtonEnabled(webview.locator('#btn-save-mapping'));
+
+        // Step 5: go back → SELECT_ORG → switch to org-beta → folder-beta pre-filled
+        await webview.locator('#btn-back-select-org').click();
+        await expect(webview.getByText('Select CF Org')).toBeVisible();
+        await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
+        await webview.locator('#btn-next-org').click();
+        await expect(webview.getByText('Select Local Folder')).toBeVisible();
+        await expect(webview.getByText(MOCK_GROUP_FOLDER_BETA)).toBeVisible();
+        await expectButtonEnabled(webview.locator('#btn-save-mapping'));
+      });
+    });
+
+    test('User can override the cached folder by clicking Browse', async () => {
+      // Verify that a cached folder is shown as default but can be replaced by
+      // injecting a new GROUP_FOLDER_SELECTED (simulating the native file picker).
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        // Remap → select same org → folder is pre-filled with cached path
+        await webview.locator('#btn-remap').click();
+        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
+        await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
+        await webview.locator('#btn-next-org').click();
+        await expect(webview.getByText('Select Local Folder')).toBeVisible();
+        await expect(webview.getByText(MOCK_GROUP_FOLDER)).toBeVisible();
+
+        // Simulate Browse: inject a different folder path
+        const overriddenFolder = '/tmp/cds-debug-e2e-override';
+        await injectSelectedFolder(webview, overriddenFolder);
+
+        // Overridden folder replaces the cached one in the UI
+        await expect(webview.getByText(overriddenFolder)).toBeVisible();
+        await expect(webview.getByText(MOCK_GROUP_FOLDER)).toHaveCount(0);
+        // Save is still enabled (new path is valid)
+        await expectButtonEnabled(webview.locator('#btn-save-mapping'));
+      });
+    });
+
+    test('CONFIG_LOADED with multiple org mappings pre-populates folder cache for all orgs', async () => {
+      // Simulates VS Code restart where two orgs were previously mapped.
+      // CONFIG_LOADED populates state.foldersByOrg for both; navigating to either org's
+      // SELECT_FOLDER screen must show its persisted folder without any Browse interaction.
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await expectRegionScreen(webview);
+
+        // Inject CONFIG_LOADED with two pre-existing org mappings.
+        // The extension has no real config in this fresh session, so LOAD_APPS
+        // (sent by session-restore code) will return silently — we drive the UI
+        // entirely via injected messages below.
+        await injectMessage(webview, {
+          type: 'CONFIG_LOADED',
+          payload: {
+            config: {
+              apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+              orgs: ['mock-org-alpha', 'mock-org-beta'],
+              orgGroupMappings: [
+                { cfOrg: 'mock-org-alpha', groupFolderPath: '/cached/alpha' },
+                { cfOrg: 'mock-org-beta', groupFolderPath: '/cached/beta' },
+              ],
+            },
+            credentialStatus: { hasCredentials: true, email: MOCK_ENV_EMAIL, source: 'env' },
+            activeSessions: {},
+          },
+        });
+
+        // Session restore: webview transitions to LOADING_APPS for mappings[0] (mock-org-alpha).
+        // Extension responds with nothing (no config in store) — safe to inject APPS_LOADED.
+        await expect(webview.getByText(/Loading apps for/i)).toBeVisible();
+        await injectMessage(webview, {
+          type: 'APPS_LOADED',
+          payload: {
+            apps: [
+              { name: 'mock-service-a', state: 'started', urls: ['mock-service-a.cfapps.example.com'] },
+              { name: 'mock-service-b', state: 'stopped', urls: [] },
+              { name: 'mock-service-c', state: 'started', urls: ['mock-service-c.cfapps.example.com'] },
+            ],
+          },
+        });
+        await expectReadyScreen(webview);
+
+        // Remap → SELECT_ORG → select org-alpha → folder /cached/alpha is pre-filled
+        await webview.locator('#btn-remap').click();
+        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
+        await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
+        await webview.locator('#btn-next-org').click();
+        await expect(webview.getByText('Select Local Folder')).toBeVisible();
+        await expect(webview.getByText('/cached/alpha')).toBeVisible();
+        await expectButtonEnabled(webview.locator('#btn-save-mapping'));
+
+        // Go back → SELECT_ORG → select org-beta → folder /cached/beta is pre-filled
+        await webview.locator('#btn-back-select-org').click();
+        await expect(webview.getByText('Select CF Org')).toBeVisible();
+        await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
+        await webview.locator('#btn-next-org').click();
+        await expect(webview.getByText('Select Local Folder')).toBeVisible();
+        await expect(webview.getByText('/cached/beta')).toBeVisible();
+        await expectButtonEnabled(webview.locator('#btn-save-mapping'));
+      });
+    });
+  });
 });

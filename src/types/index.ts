@@ -162,6 +162,20 @@ export type WebviewMessage =
   | { type: 'CLEAR_CREDENTIALS' }
   | { type: 'RETRY_DEBUG'; payload: { appName: string } };
 
+// Messages from logs webview → logs extension panel
+export type LogsWebviewMessage =
+  | { type: 'LOGS_GET_APPS' }
+  | { type: 'LOGS_START'; payload: { appName: string } }
+  | { type: 'LOGS_STOP'; payload: { appName: string } }
+  | { type: 'LOGS_CLEAR'; payload: { appName: string } };
+
+// Messages from logs extension panel → logs webview
+export type LogsExtensionMessage =
+  | { type: 'LOGS_APPS'; payload: { apps: string[]; streaming: string[] } }
+  | { type: 'LOGS_LINE'; payload: { appName: string; line: string } }
+  | { type: 'LOGS_STATUS'; payload: { appName: string; streaming: boolean } }
+  | { type: 'LOGS_ERROR'; payload: { appName: string; message: string } };
+
 // Messages from extension → webview
 export type ExtensionMessage =
   | { type: 'GROUP_FOLDER_SELECTED'; payload: { path: string } }

@@ -6,7 +6,7 @@ import { CfCliError, cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, buildFallbackTargets, getFolderNameCandidates } from '../core/appMapper';
 import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig } from '../core/launchConfigurator';
-import { getConfig, saveConfig } from '../storage/configStore';
+import { getConfig, saveConfig, upsertOrgMappings } from '../storage/configStore';
 import {
   clearCredentialsFromSecretStorage,
   getCredentialSource,
@@ -301,7 +301,13 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const existing = getConfig();
     if (!existing) return;
     logInfo(`Saving ${mappings.length.toString()} org mapping(s).`);
-    await saveConfig({ ...existing, orgGroupMappings: mappings });
+    // Upsert: merge incoming mappings with existing ones keyed by cfOrg.
+    // This preserves folder selections for all other orgs so switching back
+    // to a previously-used org auto-restores its folder without re-picking.
+    await saveConfig({
+      ...existing,
+      orgGroupMappings: upsertOrgMappings(existing.orgGroupMappings, mappings),
+    });
   }
 
   private async handleLoadApps(org: string): Promise<void> {
