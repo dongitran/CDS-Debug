@@ -5,6 +5,7 @@ import type { CapDebugConfig, DebugTarget, LaunchConfiguration, LaunchJson } fro
 const LAUNCH_JSON_VERSION = '0.2.0';
 const SKIP_FILES = ['<node_internals>/**', '**/node_modules/**'];
 const GEN_SRV_SUFFIX = 'gen/srv';
+export const DEBUG_CONFIG_PREFIX = 'Debug: ';
 
 let launchJsonLock = Promise.resolve();
 
@@ -57,10 +58,11 @@ export function buildLaunchConfiguration(
   const config: LaunchConfiguration = {
     type: 'node',
     request: 'attach',
-    name: `Debug: ${target.appName}`,
+    name: `${DEBUG_CONFIG_PREFIX}${target.appName}`,
     address: '127.0.0.1',
     port: target.port,
     localRoot,
+    cdsDebugManaged: true,
     sourceMaps: true,
     restart: true,
     skipFiles: SKIP_FILES,
@@ -148,8 +150,8 @@ export async function removeLaunchConfigs(workspacePath: string, appNames: strin
     const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
     const existing = await getExistingLaunchConfigs(workspacePath);
 
-    const namesToRemove = new Set(appNames.map((n) => `Debug: ${n}`));
-    const kept = existing.configurations.filter((c) => !namesToRemove.has(c.name));
+    const namesToRemove = new Set(appNames.map((n) => `${DEBUG_CONFIG_PREFIX}${n}`));
+    const kept = existing.configurations.filter((c) => !(namesToRemove.has(c.name) && isManagedDebugConfig(c)));
 
     // Nothing changed — skip the write to avoid unnecessary disk I/O
     if (kept.length === existing.configurations.length) return;
@@ -162,6 +164,44 @@ export async function removeLaunchConfigs(workspacePath: string, appNames: strin
     await mkdir(dirname(launchJsonPath), { recursive: true });
     await writeFile(launchJsonPath, JSON.stringify(updated, null, 2) + '\n', 'utf8');
   });
+}
+
+// Removes all auto-generated debug configurations (prefixed with DEBUG_CONFIG_PREFIX) from
+// launch.json. Called on extension activation to clean up configs left by a previous session
+// that ended without proper cleanup (e.g. VS Code was force-killed while debugging).
+// Safe to call unconditionally on startup because no debug sessions can be active when the
+// extension is first loading into a new VS Code instance.
+export async function cleanStaleDebugConfigs(workspacePath: string): Promise<void> {
+  return withLock(async () => {
+    const existing = await getExistingLaunchConfigs(workspacePath);
+    const kept = existing.configurations.filter((c) => !isManagedDebugConfig(c));
+
+    // Nothing to clean — skip disk I/O
+    if (kept.length === existing.configurations.length) return;
+
+    const updated: LaunchJson = {
+      version: existing.version || LAUNCH_JSON_VERSION,
+      configurations: kept,
+    };
+
+    const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
+    await mkdir(dirname(launchJsonPath), { recursive: true });
+    await writeFile(launchJsonPath, JSON.stringify(updated, null, 2) + '\n', 'utf8');
+  });
+}
+
+function isManagedDebugConfig(config: LaunchConfiguration): boolean {
+  if (config.cdsDebugManaged === true) return true;
+
+  // Backward compatibility: older extension versions generated configs without
+  // cdsDebugManaged. Restrict legacy detection to the exact attach shape used
+  // by CDS Debug to avoid deleting user-defined "Debug: ..." entries.
+  return (
+    config.name.startsWith(DEBUG_CONFIG_PREFIX)
+    && config.type === 'node'
+    && config.request === 'attach'
+    && config.address === '127.0.0.1'
+  );
 }
 
 function normalizeLaunchJson(value: unknown): LaunchJson {

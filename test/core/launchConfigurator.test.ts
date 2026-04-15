@@ -4,6 +4,7 @@ vi.mock('node:fs/promises');
 
 import {
   buildLaunchConfiguration,
+  cleanStaleDebugConfigs,
   readCapDebugConfig,
   generateLaunchConfigurations,
   getExistingLaunchConfigs,
@@ -89,6 +90,11 @@ describe('buildLaunchConfiguration', () => {
   it('sets sourceMaps to true', () => {
     const config = buildLaunchConfiguration(target, undefined);
     expect(config.sourceMaps).toBe(true);
+  });
+
+  it('marks generated configs as cdsDebugManaged', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.cdsDebugManaged).toBe(true);
   });
 
   it('includes both skipFiles entries', () => {
@@ -336,13 +342,130 @@ describe('mergeLaunchJson', () => {
   });
 });
 
+describe('cleanStaleDebugConfigs', () => {
+  it('removes legacy CDS managed configs and preserves manual Debug-prefixed configs', async () => {
+    const existing = {
+      version: '0.2.0',
+      configurations: [
+        { name: 'Debug: stale-app-one', type: 'node', request: 'attach', address: '127.0.0.1', port: 20000 },
+        { name: 'Debug: stale-app-two', type: 'node', request: 'attach', address: '127.0.0.1', port: 20001 },
+        { name: 'Debug: manual-launch', type: 'node', request: 'launch', program: '${workspaceFolder}/app.js' },
+        { name: 'My manual config', type: 'node', port: 8080 },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await cleanStaleDebugConfigs('/workspace');
+
+    const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
+      configurations: { name: string }[];
+    };
+
+    expect(written.configurations).toHaveLength(2);
+    expect(written.configurations.find((c) => c.name === 'My manual config')).toBeDefined();
+    expect(written.configurations.find((c) => c.name === 'Debug: manual-launch')).toBeDefined();
+    expect(written.configurations.find((c) => c.name === 'Debug: stale-app-one')).toBeUndefined();
+    expect(written.configurations.find((c) => c.name === 'Debug: stale-app-two')).toBeUndefined();
+  });
+
+  it('removes all legacy CDS managed configs when no manual configs exist', async () => {
+    const existing = {
+      version: '0.2.0',
+      configurations: [
+        { name: 'Debug: app-a', type: 'node', request: 'attach', address: '127.0.0.1', port: 20000 },
+        { name: 'Debug: app-b', type: 'node', request: 'attach', address: '127.0.0.1', port: 20001 },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await cleanStaleDebugConfigs('/workspace');
+
+    const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
+      configurations: unknown[];
+    };
+
+    expect(written.configurations).toHaveLength(0);
+  });
+
+  it('removes marker-based managed configs even without Debug: prefix', async () => {
+    const existing = {
+      version: '0.2.0',
+      configurations: [
+        { name: 'CDS generated', type: 'node', request: 'attach', address: '127.0.0.1', port: 20000, cdsDebugManaged: true },
+        { name: 'Manual config', type: 'node', request: 'launch', program: '${workspaceFolder}/index.js' },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await cleanStaleDebugConfigs('/workspace');
+
+    const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
+      configurations: { name: string }[];
+    };
+
+    expect(written.configurations).toHaveLength(1);
+    expect(written.configurations[0]?.name).toBe('Manual config');
+  });
+
+  it('does not write to disk when no managed configurations exist', async () => {
+    const existing = {
+      version: '0.2.0',
+      configurations: [
+        { name: 'My manual config', type: 'node', port: 8080 },
+        { name: 'Debug: manual-launch', type: 'node', request: 'launch', program: '${workspaceFolder}/app.js' },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+
+    await cleanStaleDebugConfigs('/workspace');
+
+    expect(fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when launch.json does not exist', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    await cleanStaleDebugConfigs('/workspace');
+
+    expect(fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('writes output with trailing newline', async () => {
+    const existing = {
+      version: '0.2.0',
+      configurations: [
+        { name: 'Debug: app-a', type: 'node', request: 'attach', address: '127.0.0.1', port: 20000 },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await cleanStaleDebugConfigs('/workspace');
+
+    const content = vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string;
+    expect(content.endsWith('\n')).toBe(true);
+  });
+});
+
 describe('removeLaunchConfigs', () => {
   it('removes matching configs by app name', async () => {
     const existing = {
       version: '0.2.0',
       configurations: [
-        { name: 'Debug: myapp-svc-one', type: 'node', port: 9229 },
-        { name: 'Debug: myapp-svc-two', type: 'node', port: 9230 },
+        { name: 'Debug: myapp-svc-one', type: 'node', request: 'attach', address: '127.0.0.1', port: 9229 },
+        { name: 'Debug: myapp-svc-two', type: 'node', request: 'attach', address: '127.0.0.1', port: 9230 },
         { name: 'My manual config', type: 'node', port: 8080 },
       ],
     };
@@ -366,8 +489,8 @@ describe('removeLaunchConfigs', () => {
     const existing = {
       version: '0.2.0',
       configurations: [
-        { name: 'Debug: myapp-svc-one', type: 'node', port: 9229 },
-        { name: 'Debug: myapp-svc-two', type: 'node', port: 9230 },
+        { name: 'Debug: myapp-svc-one', type: 'node', request: 'attach', address: '127.0.0.1', port: 9229 },
+        { name: 'Debug: myapp-svc-two', type: 'node', request: 'attach', address: '127.0.0.1', port: 9230 },
         { name: 'My manual config', type: 'node', port: 8080 },
       ],
     };
@@ -384,6 +507,21 @@ describe('removeLaunchConfigs', () => {
 
     expect(written.configurations).toHaveLength(1);
     expect(written.configurations[0]?.name).toBe('My manual config');
+  });
+
+  it('preserves manual config with the same name when not managed by CDS Debug', async () => {
+    const existing = {
+      version: '0.2.0',
+      configurations: [
+        { name: 'Debug: myapp-svc-one', type: 'node', request: 'launch', program: '${workspaceFolder}/index.js' },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+
+    await removeLaunchConfigs('/workspace', ['myapp-svc-one']);
+
+    expect(fs.writeFile).not.toHaveBeenCalled();
   });
 
   it('does nothing when no matching config names exist', async () => {

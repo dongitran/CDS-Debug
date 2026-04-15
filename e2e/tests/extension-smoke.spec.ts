@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
@@ -155,6 +155,37 @@ async function createTempDirectory(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), prefix));
 }
 
+async function createWorkspaceWithLaunchJson(configurations: Record<string, unknown>[]): Promise<string> {
+  const workspaceDir = await createTempDirectory('cds-debug-e2e-workspace-');
+  const vscodeDir = join(workspaceDir, '.vscode');
+  await mkdir(vscodeDir, { recursive: true });
+  await writeFile(
+    join(vscodeDir, 'launch.json'),
+    JSON.stringify({ version: '0.2.0', configurations }, null, 2) + '\n',
+    'utf8',
+  );
+  return workspaceDir;
+}
+
+async function readLaunchJson(workspaceDir: string): Promise<{ configurations: Record<string, unknown>[] }> {
+  const raw = await readFile(join(workspaceDir, '.vscode', 'launch.json'), 'utf8');
+  const parsed = JSON.parse(raw) as unknown;
+
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new Error('launch.json content is not an object.');
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (!Array.isArray(record.configurations)) {
+    throw new Error('launch.json configurations is not an array.');
+  }
+
+  const configurations = record.configurations.filter(
+    (item): item is Record<string, unknown> => typeof item === 'object' && item !== null,
+  );
+  return { configurations };
+}
+
 async function allocatePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
@@ -206,6 +237,7 @@ function launchVsCode(
   extensionsDir: string,
   cdpPort: number,
   env: NodeJS.ProcessEnv,
+  workspaceDir?: string,
 ): ChildProcessWithoutNullStreams {
   const args = [
     '--user-data-dir', userDataDir,
@@ -217,7 +249,7 @@ function launchVsCode(
     '--skip-release-notes',
     `--remote-debugging-port=${cdpPort.toString()}`,
     `--extensionDevelopmentPath=${repoRoot}`,
-    repoRoot,
+    workspaceDir ?? repoRoot,
   ];
 
   return spawn('code', args, {
@@ -377,6 +409,7 @@ async function createSessionArtifacts(options: SessionOptions): Promise<SessionA
 async function withVsCodeSession(
   options: SessionOptions,
   run: (workbenchPage: Page) => Promise<void>,
+  workspaceDir?: string,
 ): Promise<void> {
   const repoRoot = resolve(process.cwd(), '..');
   const cdpPort = await allocatePort();
@@ -397,6 +430,7 @@ async function withVsCodeSession(
       artifacts.extensionsDir,
       cdpPort,
       env,
+      workspaceDir,
     );
     artifacts.appProcess.stdout.on('data', (chunk: Buffer | string) => {
       appendDiagnostic(diagnostics.vscodeStdout, chunk.toString());
@@ -550,6 +584,70 @@ async function expectButtonDisabled(button: Locator): Promise<void> {
 async function expectButtonEnabled(button: Locator): Promise<void> {
   await expect(button).toBeEnabled();
 }
+
+test.describe('Launch.json Cleanup E2E', () => {
+  test('User can reopen VS Code and stale CDS launch configs are cleaned while manual configs are kept', async () => {
+    const workspaceDir = await createWorkspaceWithLaunchJson([
+      {
+        name: 'Debug: stale-managed-legacy',
+        type: 'node',
+        request: 'attach',
+        address: '127.0.0.1',
+        port: 20000,
+        localRoot: '/tmp/stale/gen/srv',
+        sourceMaps: true,
+        restart: true,
+        skipFiles: ['<node_internals>/**', '**/node_modules/**'],
+        outFiles: ['/tmp/stale/gen/srv/**/*.js'],
+      },
+      {
+        name: 'CDS Managed Marker',
+        type: 'node',
+        request: 'attach',
+        address: '127.0.0.1',
+        port: 20001,
+        localRoot: '/tmp/stale-2/gen/srv',
+        sourceMaps: true,
+        restart: true,
+        skipFiles: ['<node_internals>/**', '**/node_modules/**'],
+        outFiles: ['/tmp/stale-2/gen/srv/**/*.js'],
+        cdsDebugManaged: true,
+      },
+      {
+        name: 'Debug: manual-launch',
+        type: 'node',
+        request: 'launch',
+        program: '${workspaceFolder}/server.js',
+      },
+      {
+        name: 'Manual config',
+        type: 'node',
+        request: 'launch',
+        program: '${workspaceFolder}/index.js',
+      },
+    ]);
+
+    try {
+      await withVsCodeSession(
+        { credentialMode: 'env', cfScenario: 'success' },
+        async (workbenchPage) => {
+          await openCdsDebugWebview(workbenchPage);
+
+          await expect.poll(
+            async () => {
+              const launch = await readLaunchJson(workspaceDir);
+              return launch.configurations.map((c) => String(c.name ?? ''));
+            },
+            { timeout: 15_000 },
+          ).toEqual(['Debug: manual-launch', 'Manual config']);
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+});
 
 test.describe('CDS Debug Onboarding and Launcher E2E', () => {
   test('User can login and see mocked org list', async () => {

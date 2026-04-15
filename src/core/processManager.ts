@@ -142,6 +142,10 @@ export function getSessionParams(appName: string): { folderPath: string; port: n
   return sessionParams.get(appName);
 }
 
+export function getActiveAppNames(): string[] {
+  return Array.from(sessionStates.keys());
+}
+
 function emitExitedAndCleanup(appName: string, sessionName: string): void {
   const p = processes.get(appName);
   if (p) {
