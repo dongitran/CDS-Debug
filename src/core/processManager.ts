@@ -375,10 +375,11 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
 
   // Pre-flight: free the local port before binding the SSH tunnel
   channel.appendLine(`[Extension] Ensuring port ${port.toString()} is free...`);
-  logInfo(`Ensuring port ${port.toString()} is free before starting...`);
+  logInfo(`[${appName}] Pre-flight: ensuring port ${port.toString()} is free…`);
   await killProcessOnPort(port);
   await new Promise(r => setTimeout(r, 200));
   if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
+  logInfo(`[${appName}] Port ${port.toString()} is free.`);
 
   // Store params so Retry and auto-reconnect can call back without re-doing CF login/folder resolution.
   sessionParams.set(appName, { folderPath, port, launchConfigName });
@@ -389,7 +390,9 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
   channel.appendLine(`[Extension] Activating Node inspector on ${appName}: cf ssh ${appName} -c "${signalCmd}"`);
   logInfo(`[Step 1] Activating Node inspector: cf ssh ${appName} -c "${signalCmd}"`);
 
+  logInfo(`[${appName}] Step 1: sending USR1 signal via cf ssh (timeout ${(CF_SSH_SIGNAL_TIMEOUT_MS / 1000).toString()}s)…`);
   const signalResult = await runCfSshSignal(appName, signalCmd, channel);
+  logInfo(`[${appName}] USR1 signal done (exit code: ${signalResult.exitCode?.toString() ?? 'null'}).`);
 
   // Detect SSH disabled: cf ssh fails with "not authorized" when SSH is not enabled
   if (isSshDisabledError(signalResult.stderr)) {
@@ -418,6 +421,7 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
 
   // Step 2: Open a persistent SSH tunnel — remote 9229 → local <port>.
   // Each app gets its own unique local port so parallel tunnels never conflict.
+  logInfo(`[${appName}] Step 2: opening SSH tunnel on port ${port.toString()}…`);
   spawnSshTunnel(appName, folderPath, port, launchConfigName, channel, lifecycleVersion);
 }
 
@@ -564,10 +568,24 @@ interface SshSignalResult {
 // Returns the exit code and accumulated stderr so callers can detect SSH-disabled errors.
 // Exit code ≠ 0 is logged as a warning but does not throw — USR1 failures are non-fatal
 // (the inspector may already be active, or pidof node returns empty on a quiet process).
+const CF_SSH_SIGNAL_TIMEOUT_MS = 15_000;
 async function runCfSshSignal(appName: string, cmd: string, channel: vscode.OutputChannel): Promise<SshSignalResult> {
   return new Promise((resolve) => {
     const child = spawn('cf', ['ssh', appName, '-c', cmd]);
     let stderrBuf = '';
+    let settled = false;
+
+    // Guard: if the SSH connection freezes at the TCP level (e.g. network drop after
+    // handshake) the child never emits 'close'. Kill it after a hard deadline so the
+    // caller is not stuck waiting indefinitely before reaching the tunnel step.
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      logWarn(`[${appName}] USR1 signal command timed out after ${(CF_SSH_SIGNAL_TIMEOUT_MS / 1000).toString()}s — killing and proceeding.`);
+      channel.appendLine(`[Extension] USR1 signal timed out — killing cf ssh and continuing.`);
+      try { child.kill(); } catch { /* already gone */ }
+      resolve({ exitCode: null, stderr: stderrBuf });
+    }, CF_SSH_SIGNAL_TIMEOUT_MS);
 
     child.stdout.on('data', (data: Buffer | string) => { channel.append(data.toString()); });
     child.stderr.on('data', (data: Buffer | string) => {
@@ -577,6 +595,9 @@ async function runCfSshSignal(appName: string, cmd: string, channel: vscode.Outp
     });
 
     child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
       if (code !== 0) {
         logWarn(`[${appName}] USR1 signal command exited with code ${code?.toString() ?? 'null'} — inspector may already be active.`);
       }
@@ -584,6 +605,9 @@ async function runCfSshSignal(appName: string, cmd: string, channel: vscode.Outp
     });
 
     child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
       logWarn(`[${appName}] Failed to run USR1 signal: ${err.message}`);
       resolve({ exitCode: null, stderr: err.message }); // non-fatal — proceed to tunnel step
     });
@@ -605,6 +629,7 @@ async function probeTunnelAndAttach(
   // Clamp to sane bounds matching the package.json schema (10–120 s).
   const TIMEOUT_MS = Math.max(10, Math.min(120, configuredSecs)) * 1000;
   const started = Date.now();
+  logInfo(`[${appName}] Probing port ${port.toString()} (timeout ${(TIMEOUT_MS / 1000).toString()}s)…`);
 
   const isReady = await new Promise<boolean>((resolve) => {
     const attempt = (): void => {

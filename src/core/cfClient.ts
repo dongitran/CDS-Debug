@@ -6,6 +6,11 @@ import { CF_DEFAULT_SPACE } from '../types/index';
 const execFileAsync = promisify(execFile);
 
 const MAX_BUFFER = 10 * 1024 * 1024;
+// Hard cap on any CF CLI invocation. Without a timeout, a hung auth-server token
+// refresh or slow CF API response keeps execFileAsync pending forever — the caller
+// never gets an error, so the extension appears frozen (e.g. "Preparing…" stuck).
+// 30 s is generous for interactive commands; cfRestartApp uses its own 120 s limit.
+const CF_CLI_TIMEOUT_MS = 30_000;
 
 export class CfCliError extends Error {
   public readonly stderr: string;
@@ -24,7 +29,7 @@ async function runCf(args: string[], cfHome?: string): Promise<string> {
   try {
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (cfHome) env.CF_HOME = cfHome;
-    const { stdout } = await execFileAsync('cf', args, { env, maxBuffer: MAX_BUFFER });
+    const { stdout } = await execFileAsync('cf', args, { env, maxBuffer: MAX_BUFFER, timeout: CF_CLI_TIMEOUT_MS });
     return stdout;
   } catch (err: unknown) {
     const error = err as NodeJS.ErrnoException & { stderr?: string };

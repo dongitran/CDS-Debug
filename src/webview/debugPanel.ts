@@ -382,13 +382,18 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     // Always target the org before opening the cf ssh tunnel. handleLoadApps may have
     // served apps from cache without calling cfTarget, leaving ~/.cf untargeted.
     // If the token has expired in the meantime, re-login automatically.
+    logInfo(`[StartDebug] Targeting CF org: ${org}…`);
     try {
       await cfTarget(org);
+      logInfo(`[StartDebug] CF org targeted successfully.`);
     } catch {
       logInfo(`cfTarget failed — attempting re-login before starting debug for ${org}.`);
       try {
+        logInfo(`[StartDebug] Re-authenticating to ${config.apiEndpoint}…`);
         await this.reLogin(config.apiEndpoint);
+        logInfo(`[StartDebug] Re-authentication successful. Targeting org again…`);
         await cfTarget(org);
+        logInfo(`[StartDebug] CF org targeted after re-login.`);
       } catch (retryErr: unknown) {
         const msg = extractErrorMessage(retryErr);
         logError(`Failed to target org ${org} after re-login: ${msg}`);
@@ -403,6 +408,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     const groupPath = mapping.groupFolderPath;
 
+    logInfo(`[StartDebug] Resolving local folders under: ${groupPath}`);
     const resolvedPaths: string[] = [];
     for (const appName of appNames) {
       let folderPath: string | null = null;
@@ -418,6 +424,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         logWarn(`Could not find local folder for: ${appName}`);
       }
     }
+    logInfo(`[StartDebug] Folder resolution complete. ${resolvedPaths.length.toString()}/${appNames.length.toString()} apps mapped.`);
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? mapping.groupFolderPath;
 
@@ -680,6 +687,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   /** Merges launch.json, posts DEBUG_CONNECTING, and starts tunnel processes. */
   private async launchDebugSessions(targets: DebugTarget[], workspaceRoot: string, unmapped: string[]): Promise<void> {
+    logInfo(`[StartDebug] Merging launch.json for ${targets.length.toString()} target(s)…`);
     await mergeLaunchJson(workspaceRoot, targets);
     logInfo(`Updated .vscode/launch.json with ${targets.length.toString()} config(s).`);
 
