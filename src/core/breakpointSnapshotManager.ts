@@ -21,37 +21,40 @@ const SENSITIVE_NAME_REGEX = /(pass(word)?|token|secret|api[_-]?key|authorizatio
 
 export const breakpointSnapshotEvents = new EventEmitter();
 
-let sessionEventListener: vscode.Disposable | undefined;
+// registerDebugAdapterTrackerFactory is the correct API for intercepting ALL DAP messages,
+// including standard events like 'stopped'. The onDidReceiveDebugSessionCustomEvent API only
+// fires for non-standard custom events defined by specific debug adapters and does NOT
+// intercept standard DAP events like 'stopped' — using it caused the feature to silently
+// never trigger (no snapshots, no auto-continue).
+let trackerRegistration: vscode.Disposable | undefined;
 const snapshotStore: BreakpointContextSnapshot[] = [];
 const sessionQueues = new Map<string, Promise<void>>();
 
 export function initializeBreakpointSnapshotManager(): void {
-  if (sessionEventListener) return;
+  if (trackerRegistration) return;
 
-  // Despite its name, onDidReceiveDebugSessionCustomEvent fires for ALL events from the
-  // debug adapter — including standard DAP events like 'stopped' — not only extension-defined
-  // custom events. This is the established VS Code extension pattern for intercepting DAP
-  // events without a DebugAdapterTracker, and is confirmed by VS Code's extension host
-  // implementation (ExtHostDebugService). The alternative, registerDebugAdapterTrackerFactory,
-  // requires knowing each adapter type identifier (e.g. 'node', 'pwa-node') and is better
-  // suited for protocol-level tracing rather than selective event handling.
-  sessionEventListener = vscode.debug.onDidReceiveDebugSessionCustomEvent((event) => {
-    if (event.event !== 'stopped') return;
-    if (!event.session.name.startsWith(DEBUG_SESSION_PREFIX)) return;
-
-    const body = asRecord(event.body);
-    if (body?.reason !== 'breakpoint') return;
-
-    const appName = event.session.name.slice(DEBUG_SESSION_PREFIX.length);
-    enqueueSessionTask(event.session.id, async () => {
-      await handleBreakpointStop(event.session, appName, body);
-    });
+  trackerRegistration = vscode.debug.registerDebugAdapterTrackerFactory('*', {
+    createDebugAdapterTracker(session: vscode.DebugSession): vscode.DebugAdapterTracker | undefined {
+      if (!session.name.startsWith(DEBUG_SESSION_PREFIX)) return undefined;
+      const appName = session.name.slice(DEBUG_SESSION_PREFIX.length);
+      return {
+        onDidSendMessage(message: unknown): void {
+          const msg = asRecord(message);
+          if (msg?.type !== 'event' || msg.event !== 'stopped') return;
+          const body = asRecord(msg.body);
+          if (body?.reason !== 'breakpoint') return;
+          enqueueSessionTask(session.id, async () => {
+            await handleBreakpointStop(session, appName, body);
+          });
+        },
+      };
+    },
   });
 }
 
 export function disposeBreakpointSnapshotManager(): void {
-  sessionEventListener?.dispose();
-  sessionEventListener = undefined;
+  trackerRegistration?.dispose();
+  trackerRegistration = undefined;
   snapshotStore.length = 0;
   sessionQueues.clear();
 }
