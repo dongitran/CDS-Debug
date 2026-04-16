@@ -1692,21 +1692,25 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
+        await expect(webview.locator('#chk-cache-enabled')).toBeChecked();
 
-        // Inject cache disabled AND sync still running — brief "Stopping sync…" transition state
-        await injectMessage(webview, {
-          type: 'CACHE_CONFIG',
-          payload: { enabled: false, intervalHours: 24 },
-        });
+        // Drive running sync first, then disable cache to force the "Stopping sync…" transition.
         await injectMessage(webview, {
           type: 'SYNC_STATUS',
           payload: { isRunning: true, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 14 },
         });
+        await injectMessage(webview, {
+          type: 'CACHE_CONFIG',
+          payload: { enabled: false, intervalHours: 24 },
+        });
 
-        // Should show spinner + "Stopping sync…" (not "Caching disabled" static row)
-        await expect(webview.locator('.sync-status-row.running')).toBeVisible();
+        await expect.poll(async () => {
+          const runningRow = webview.locator('.sync-status-row.running');
+          if (await runningRow.count() === 0) return '';
+          return (await runningRow.first().innerText()).trim();
+        }).toContain('Stopping sync');
+
         await expect(webview.locator('.sync-status-row.running .spinner')).toBeVisible();
-        await expect(webview.locator('.sync-status-row.running')).toContainText('Stopping sync');
       });
     });
 
