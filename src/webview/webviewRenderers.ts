@@ -209,7 +209,7 @@ export function getRendererScriptContent(): string {
         </button>
       \` : '';
       return \`
-        <div class="section-label" style="display:flex;align-items:center;gap:6px">
+        <div class="section-label" style="display:flex;align-items:center;gap:6px;margin:8px 0 6px">
           <span style="color:var(--vscode-testing-iconPassed)">&#9679;</span> Active Sessions
         </div>
         \${stopAllBtn}
@@ -421,7 +421,7 @@ export function getRendererScriptContent(): string {
           </div>
           <div id="breakpoint-snapshots-panel" class="bp-panel bp-panel-screen">\${renderBreakpointSnapshotsContent()}</div>
           <div class="footer" style="padding-top:0">
-            <button class="btn btn-secondary" id="btn-back-breakpoint-snapshots">&#8592; Back to Launcher</button>
+            <button class="btn bp-back-btn" id="btn-back-breakpoint-snapshots">&#8592; Back to Launcher</button>
           </div>
         </div>
       \`;
@@ -551,7 +551,7 @@ export function getRendererScriptContent(): string {
 
       return \`
         <div class="ready-layout">
-          <div class="step-header">
+          <div class="step-header ready-step-header">
             <span class="step-title">Debug Launcher</span>
             <button class="header-nav-btn" id="btn-open-breakpoint-snapshots"
               title="Open breakpoint snapshots" aria-label="Open breakpoint snapshots">

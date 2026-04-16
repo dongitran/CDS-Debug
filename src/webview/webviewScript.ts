@@ -493,12 +493,28 @@ export function getScript(nonce: string): string {
         }
         case 'APP_DEBUG_STATUS': {
           const { appName, status, message } = msg.payload;
+          let needFullRender = false;
+          // If a DEBUG_CONNECTING message was dropped while branch preparation was active,
+          // APP_DEBUG_STATUS can still arrive from processManager. Recover by returning to
+          // READY so launcher controls (including Breakpoint Snapshots navigation) remain visible.
+          if (
+            state.screen === SCREENS.PREPARING_BRANCHES
+            && (status === 'TUNNELING' || status === 'ATTACHED' || status === 'ERROR' || status === 'EXITED')
+          ) {
+            state.screen = SCREENS.READY;
+            state.branchPrepServices = [];
+            needFullRender = true;
+          }
           if (status === 'EXITED') {
             const session = state.activeSessions[appName];
             if (session?.intervalId) clearInterval(session.intervalId);
             delete state.activeSessions[appName];
-            refreshActiveSessionsPanel();
-            refreshAppListSection();
+            if (needFullRender) {
+              render();
+            } else {
+              refreshActiveSessionsPanel();
+              refreshAppListSection();
+            }
             return;
           }
           if (!state.activeSessions[appName]) {
@@ -512,8 +528,12 @@ export function getScript(nonce: string): string {
             }
           }
 
-          refreshActiveSessionsPanel();
-          refreshAppListSection();
+          if (needFullRender) {
+            render();
+          } else {
+            refreshActiveSessionsPanel();
+            refreshAppListSection();
+          }
           return;
         }
         case 'DEBUG_ERROR':
@@ -553,6 +573,13 @@ export function getScript(nonce: string): string {
           if (state.screen === SCREENS.READY || state.screen === SCREENS.BREAKPOINT_SNAPSHOTS) {
             refreshBreakpointSnapshotsPanel();
           }
+          if (state.screen === SCREENS.READY) {
+            const snapshotLabel = state.breakpointSnapshots.length > 0
+              ? 'Breakpoint Snapshots (' + state.breakpointSnapshots.length + ')'
+              : 'Breakpoint Snapshots';
+            const snapshotBtn = document.getElementById('btn-open-breakpoint-snapshots');
+            if (snapshotBtn) snapshotBtn.textContent = snapshotLabel;
+          }
           return;
         case 'BREAKPOINT_SNAPSHOT_ADDED':
           if (msg.payload && msg.payload.snapshot) {
@@ -561,10 +588,9 @@ export function getScript(nonce: string): string {
               refreshBreakpointSnapshotsPanel();
             }
             if (state.screen === SCREENS.READY) {
+              const snapshotLabel = 'Breakpoint Snapshots (' + state.breakpointSnapshots.length + ')';
               const snapshotBtn = document.getElementById('btn-open-breakpoint-snapshots');
-              if (snapshotBtn) {
-                snapshotBtn.textContent = 'Breakpoint Snapshots (' + state.breakpointSnapshots.length + ')';
-              }
+              if (snapshotBtn) snapshotBtn.textContent = snapshotLabel;
             }
           }
           return;

@@ -279,6 +279,10 @@ export function getStyles(): string {
       align-items: center;
       gap: 6px;
       margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .ready-step-header {
+      margin-bottom: 8px;
     }
     .step-badge {
       background: var(--vscode-badge-background);
@@ -288,7 +292,7 @@ export function getStyles(): string {
       padding: 1px 6px;
       border-radius: 99px;
     }
-    .step-title { font-size: 13px; font-weight: 600; flex: 1; }
+    .step-title { font-size: 13px; font-weight: 600; flex: 1 1 120px; min-width: 0; }
     .header-nav-btn {
       border: 1px solid var(--vscode-input-border, transparent);
       background: var(--vscode-button-secondaryBackground);
@@ -302,6 +306,7 @@ export function getStyles(): string {
       text-overflow: ellipsis;
       overflow: hidden;
       white-space: nowrap;
+      flex-shrink: 0;
     }
     .header-nav-btn:hover {
       background: var(--vscode-button-secondaryHoverBackground);
@@ -617,6 +622,15 @@ export function getStyles(): string {
     .bp-clear-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+    .bp-back-btn {
+      border: 1px solid var(--vscode-focusBorder);
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      font-weight: 600;
+    }
+    .bp-back-btn:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
     }
     .bp-empty {
       border: 1px dashed var(--vscode-panel-border);

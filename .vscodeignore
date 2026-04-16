@@ -17,4 +17,7 @@ pnpm-lock.yaml
 .vscodeignore
 implementation_plan.md
 coverage/**
+e2e/**
+.playwright-mcp/**
+designs/**
 *.vsix

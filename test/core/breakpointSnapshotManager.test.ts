@@ -15,6 +15,7 @@ interface MockTrackerFactory {
 const { vscodeMockState } = vi.hoisted(() => ({
   vscodeMockState: {
     factory: undefined as MockTrackerFactory | undefined,
+    sessions: [] as MockDebugSession[],
     pauseOnBreakpoint: false,
     breakpointSnapshotMaxEntries: 120,
   },
@@ -22,6 +23,9 @@ const { vscodeMockState } = vi.hoisted(() => ({
 
 vi.mock('vscode', () => ({
   debug: {
+    get sessions() {
+      return vscodeMockState.sessions;
+    },
     registerDebugAdapterTrackerFactory: (_type: string, factory: MockTrackerFactory) => {
       vscodeMockState.factory = factory;
       return {
@@ -63,14 +67,22 @@ import {
 
 function createMockSession(
   options?: {
+    id?: string;
+    name?: string;
     stackPath?: string;
+    parentSession?: MockDebugSession;
   },
 ): { session: MockDebugSession; customRequestCalls: string[] } {
   const customRequestCalls: string[] = [];
+  const id = options?.id ?? 'session-1';
+  const name = options?.name ?? 'Debug: catalog-service';
   const stackPath = options?.stackPath ?? '/workspace/srv/catalog-service.js';
   const customRequest = (command: string, args: unknown): Promise<unknown> => {
     void args;
     customRequestCalls.push(command);
+    if (command === 'threads') {
+      return Promise.resolve({ threads: [{ id: 1 }] });
+    }
     if (command === 'stackTrace') {
       return Promise.resolve({
         stackFrames: [
@@ -109,12 +121,17 @@ function createMockSession(
     return Promise.reject(new Error(`Unexpected request: ${command}`));
   };
 
+  const session: MockDebugSession = {
+    id,
+    name,
+    customRequest,
+  };
+  if (options?.parentSession) {
+    session.parentSession = options.parentSession;
+  }
+
   return {
-    session: {
-      id: 'session-1',
-      name: 'Debug: catalog-service',
-      customRequest,
-    },
+    session,
     customRequestCalls,
   };
 }
@@ -141,9 +158,21 @@ function createMockSessionWithFailingStackTrace(): { session: MockDebugSession; 
 function getTrackerFor(
   session: MockDebugSession,
 ): { onDidSendMessage(msg: unknown): void } | undefined {
+  registerSessionTree(session);
   const factory = vscodeMockState.factory;
   if (!factory) throw new Error('Factory not initialized.');
   return factory.createDebugAdapterTracker(session);
+}
+
+function registerSessionTree(session: MockDebugSession): void {
+  const add = (s: MockDebugSession | undefined): void => {
+    if (!s) return;
+    if (!vscodeMockState.sessions.some((existing) => existing.id === s.id)) {
+      vscodeMockState.sessions.push(s);
+    }
+    add(s.parentSession);
+  };
+  add(session);
 }
 
 function emitStoppedEvent(session: MockDebugSession, reason = 'breakpoint'): void {
@@ -172,6 +201,7 @@ async function waitForSnapshots(expectedLength: number, timeoutMs = 3_000): Prom
 beforeEach(() => {
   vscodeMockState.pauseOnBreakpoint = false;
   vscodeMockState.breakpointSnapshotMaxEntries = 120;
+  vscodeMockState.sessions = [];
   initializeBreakpointSnapshotManager();
 });
 
@@ -229,7 +259,7 @@ describe('breakpointSnapshotManager', () => {
     expect(customRequestCalls).toHaveLength(0);
   });
 
-  it('ignores stopped events from sessions that do not start with the CDS session prefix', async () => {
+  it('ignores stopped events from sessions that do not map to a CDS session', async () => {
     const mockCustomRequest = vi.fn().mockResolvedValue({});
     const nonCdsSession: MockDebugSession = {
       id: 'session-other',
@@ -237,9 +267,10 @@ describe('breakpointSnapshotManager', () => {
       customRequest: mockCustomRequest,
     };
 
-    // Non-CDS session yields no tracker — the factory returns undefined
     const tracker = getTrackerFor(nonCdsSession);
-    expect(tracker).toBeUndefined();
+    if (tracker) {
+      tracker.onDidSendMessage({ type: 'event', event: 'stopped', body: { reason: 'breakpoint', threadId: 1 } });
+    }
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -247,7 +278,7 @@ describe('breakpointSnapshotManager', () => {
     expect(mockCustomRequest).not.toHaveBeenCalled();
   });
 
-  it('creates an error snapshot without auto-continuing when threadId is absent', async () => {
+  it('creates an error snapshot and still auto-continues when threadId is absent', async () => {
     const { session, customRequestCalls } = createMockSession();
     emitStoppedEventWithBody(session, { reason: 'breakpoint' });
     await waitForSnapshots(1);
@@ -255,9 +286,12 @@ describe('breakpointSnapshotManager', () => {
     const snapshot = getBreakpointSnapshots()[0];
     if (!snapshot) throw new Error('Expected one snapshot.');
     expect(snapshot.captureError).toBe('No threadId found in breakpoint event.');
-    expect(snapshot.autoResumed).toBe(false);
-    // stackTrace, scopes, variables, and continue are all skipped
-    expect(customRequestCalls).toHaveLength(0);
+    expect(snapshot.autoResumed).toBe(true);
+    expect(customRequestCalls).toContain('threads');
+    expect(customRequestCalls).toContain('continue');
+    expect(customRequestCalls).not.toContain('stackTrace');
+    expect(customRequestCalls).not.toContain('scopes');
+    expect(customRequestCalls).not.toContain('variables');
   });
 
   it('creates an error snapshot and still auto-continues when stack trace capture fails', async () => {
@@ -318,5 +352,78 @@ describe('breakpointSnapshotManager', () => {
     const snapshots = getBreakpointSnapshots();
     expect(emittedIds).toHaveLength(1);
     expect(emittedIds[0]).toBe(snapshots[0]?.id);
+  });
+
+  it('falls back to ancestor CDS session for continue when child-session continue fails', async () => {
+    const parentCalls: string[] = [];
+    const parentSession: MockDebugSession = {
+      id: 'session-parent',
+      name: 'Debug: catalog-service',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        void args;
+        parentCalls.push(command);
+        if (command === 'continue') return Promise.resolve({});
+        if (command === 'threads') return Promise.resolve({ threads: [{ id: 1 }] });
+        return Promise.reject(new Error(`Unexpected parent request: ${command}`));
+      },
+    };
+
+    const { session: childSession, customRequestCalls: childCalls } = createMockSession({
+      id: 'session-child',
+      name: 'Node.js Worker',
+      parentSession,
+    });
+    childSession.customRequest = (command: string, args: unknown): Promise<unknown> => {
+      void args;
+      childCalls.push(command);
+      if (command === 'stackTrace') {
+        return Promise.resolve({
+          stackFrames: [
+            {
+              id: 11,
+              name: 'beforeCreate',
+              line: 42,
+              column: 9,
+              source: { path: '/workspace/srv/catalog-service.js' },
+            },
+          ],
+        });
+      }
+      if (command === 'scopes') {
+        return Promise.resolve({
+          scopes: [
+            {
+              name: 'Local',
+              expensive: false,
+              variablesReference: 101,
+            },
+          ],
+        });
+      }
+      if (command === 'variables') {
+        return Promise.resolve({
+          variables: [
+            { name: 'req.id', value: 'abc-123', type: 'string', variablesReference: 0 },
+          ],
+        });
+      }
+      if (command === 'continue') {
+        return Promise.reject(new Error('continue not supported in child session'));
+      }
+      if (command === 'threads') {
+        return Promise.resolve({ threads: [{ id: 1 }] });
+      }
+      return Promise.reject(new Error(`Unexpected child request: ${command}`));
+    };
+
+    emitStoppedEvent(childSession);
+    await waitForSnapshots(1);
+
+    const snapshot = getBreakpointSnapshots()[0];
+    if (!snapshot) throw new Error('Expected one snapshot.');
+    expect(snapshot.appName).toBe('catalog-service');
+    expect(snapshot.autoResumed).toBe(true);
+    expect(childCalls).toContain('continue');
+    expect(parentCalls).toContain('continue');
   });
 });

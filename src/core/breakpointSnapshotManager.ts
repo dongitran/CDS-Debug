@@ -16,7 +16,7 @@ const MAX_VALUE_LENGTH = 240;
 // Maximum time to spend capturing snapshot context before issuing auto-continue.
 // Without a hard cap, a slow or unresponsive debug adapter can hold the process
 // paused indefinitely because autoContinue is only called after captureSnapshot resolves.
-const SNAPSHOT_CAPTURE_TIMEOUT_MS = 3000;
+const SNAPSHOT_CAPTURE_TIMEOUT_MS = 1200;
 const SENSITIVE_NAME_REGEX = /(pass(word)?|token|secret|api[_-]?key|authorization|cookie|session|private[_-]?key)/i;
 
 export const breakpointSnapshotEvents = new EventEmitter();
@@ -35,19 +35,15 @@ export function initializeBreakpointSnapshotManager(): void {
 
   trackerRegistration = vscode.debug.registerDebugAdapterTrackerFactory('*', {
     createDebugAdapterTracker(session: vscode.DebugSession): vscode.DebugAdapterTracker | undefined {
-      // Match the session itself OR any child session whose ancestor is a CDS Debug session.
-      // pwa-node (which type:'node' maps to in VS Code 1.90+) can spawn child sessions
-      // for worker threads or internal bookkeeping — their name won't start with DEBUG_SESSION_PREFIX
-      // but their parentSession chain leads back to the CDS Debug session.
-      const appName = findCdsAppName(session);
-      if (!appName) return undefined;
-      logInfo(`[BreakpointSnapshots] Tracker attached — session: "${session.name}" type: ${session.type} app: ${appName}`);
       return {
         onDidSendMessage(message: unknown): void {
           const msg = asRecord(message);
           if (msg?.type !== 'event' || msg.event !== 'stopped') return;
           const body = asRecord(msg.body);
           if (body?.reason !== 'breakpoint') return;
+          const appName = findCdsAppName(session);
+          if (!appName) return;
+          logInfo(`[BreakpointSnapshots] Tracker attached — session: "${session.name}" type: ${session.type} app: ${appName}`);
           logInfo(`[BreakpointSnapshots] Breakpoint stop — app: ${appName} thread: ${String(body.threadId)}`);
           enqueueSessionTask(session.id, async () => {
             await handleBreakpointStop(session, appName, body);
@@ -114,7 +110,7 @@ async function handleBreakpointStop(
   const pauseOnBreakpoint = vscode.workspace
     .getConfiguration('cdsDebug')
     .get('pauseOnBreakpoint') === true;
-  const autoResumed = !pauseOnBreakpoint && threadId !== null;
+  const autoResumed = !pauseOnBreakpoint;
 
   // When auto-resuming, race captureSnapshot against a deadline so autoContinue is
   // guaranteed to run even if the debug adapter is slow or an individual DAP request
@@ -129,14 +125,14 @@ async function handleBreakpointStop(
   pushSnapshot(snapshot);
 
   if (autoResumed) {
-    await autoContinue(session, threadId);
+    await autoContinue(session, appName, threadId);
   }
 }
 
 function snapshotWithDeadline(
   session: vscode.DebugSession,
   appName: string,
-  threadId: number,
+  threadId: number | null,
   autoResumed: boolean,
 ): Promise<BreakpointContextSnapshot> {
   const now = Date.now();
@@ -146,11 +142,13 @@ function snapshotWithDeadline(
     sessionName: session.name,
     reason: 'breakpoint',
     createdAt: now,
-    threadId,
     autoResumed,
     scopes: [],
     captureError: 'Snapshot capture timed out — process resumed without full context.',
   };
+  if (threadId !== null) {
+    fallback.threadId = threadId;
+  }
   let deadlineHandle: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<BreakpointContextSnapshot>((resolve) => {
     deadlineHandle = setTimeout(() => { resolve(fallback); }, SNAPSHOT_CAPTURE_TIMEOUT_MS);
@@ -176,15 +174,84 @@ function pushSnapshot(snapshot: BreakpointContextSnapshot): void {
   breakpointSnapshotEvents.emit('snapshotAdded', snapshot);
 }
 
-async function autoContinue(session: vscode.DebugSession, threadId: number): Promise<void> {
+function getContinueSessionCandidates(session: vscode.DebugSession): vscode.DebugSession[] {
+  const seen = new Set<string>();
+  const candidates: vscode.DebugSession[] = [];
+  const addCandidate = (candidate: vscode.DebugSession | undefined): void => {
+    if (!candidate || seen.has(candidate.id)) return;
+    seen.add(candidate.id);
+    candidates.push(candidate);
+  };
+
+  addCandidate(session);
+  let parent = session.parentSession;
+  while (parent) {
+    addCandidate(parent);
+    parent = parent.parentSession;
+  }
+  return candidates;
+}
+
+async function continueThread(session: vscode.DebugSession, threadId: number): Promise<boolean> {
   try {
     await session.customRequest('continue', { threadId });
-    logInfo(`[BreakpointSnapshots] Auto-continued session "${session.name}" thread ${threadId.toString()}`);
-  } catch (err: unknown) {
-    logWarn(
-      `[BreakpointSnapshots] Auto-continue failed for ${session.name}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    return true;
+  } catch {
+    return false;
   }
+}
+
+function getThreadIds(value: unknown): number[] {
+  const record = asRecord(value);
+  if (!record) return [];
+  const rawThreads = asArray(record.threads);
+  const ids: number[] = [];
+  for (const rawThread of rawThreads) {
+    const thread = asRecord(rawThread);
+    const id = thread?.id;
+    if (typeof id === 'number' && Number.isInteger(id)) {
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
+async function continueWithoutThreadId(session: vscode.DebugSession): Promise<boolean> {
+  try {
+    const threadsResponse = await session.customRequest('threads', {}) as unknown;
+    const threadIds = getThreadIds(threadsResponse);
+    let resumed = false;
+    for (const threadId of threadIds) {
+      const resumedThread = await continueThread(session, threadId);
+      resumed = resumed || resumedThread;
+    }
+    if (resumed) return true;
+  } catch {
+    // Fall through to generic continue fallback.
+  }
+
+  try {
+    await session.customRequest('continue', {});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function autoContinue(session: vscode.DebugSession, appName: string, threadId: number | null): Promise<void> {
+  const candidates = getContinueSessionCandidates(session);
+  for (const candidate of candidates) {
+    const resumed = threadId !== null
+      ? await continueThread(candidate, threadId)
+      : await continueWithoutThreadId(candidate);
+    if (!resumed) continue;
+    const threadInfo = threadId !== null ? `thread ${threadId.toString()}` : 'all threads';
+    logInfo(`[BreakpointSnapshots] Auto-continued session "${candidate.name}" ${threadInfo}`);
+    return;
+  }
+
+  const threadInfo = threadId !== null ? `thread ${threadId.toString()}` : 'unknown threadId';
+  logWarn(`[BreakpointSnapshots] Auto-continue failed for app "${appName}" (${threadInfo}).`);
 }
 
 async function captureSnapshot(
