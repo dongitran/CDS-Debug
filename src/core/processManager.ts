@@ -38,6 +38,10 @@ const reconnecting = new Set<string>();
 const reconnectAttempts = new Map<string, number>();
 const MAX_RECONNECT_ATTEMPTS = 3;
 const TERMINATE_RECONNECT_GRACE_MS = 350;
+// Hard cap on `cf ssh <app> -c <cmd>` one-shot commands. If the SSH connection
+// freezes at the TCP level after the handshake, the child never emits 'close'.
+// 15 s is enough for a healthy CF SSH round-trip; on timeout we kill and proceed.
+const CF_SSH_SIGNAL_TIMEOUT_MS = 15_000;
 // Maps appName → the VS Code DebugSession.id that is currently active for that app.
 // Used to ignore late-arriving onDidTerminateDebugSession events that belong to a
 // previous (old) session after a successful reconnect has already started a new one.
@@ -388,9 +392,7 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
   // This is a one-shot command — it exits immediately after signalling.
   const signalCmd = `kill -s USR1 $(pidof node)`;
   channel.appendLine(`[Extension] Activating Node inspector on ${appName}: cf ssh ${appName} -c "${signalCmd}"`);
-  logInfo(`[Step 1] Activating Node inspector: cf ssh ${appName} -c "${signalCmd}"`);
-
-  logInfo(`[${appName}] Step 1: sending USR1 signal via cf ssh (timeout ${(CF_SSH_SIGNAL_TIMEOUT_MS / 1000).toString()}s)…`);
+  logInfo(`[${appName}] Step 1: activating Node inspector via cf ssh (timeout ${(CF_SSH_SIGNAL_TIMEOUT_MS / 1000).toString()}s)…`);
   const signalResult = await runCfSshSignal(appName, signalCmd, channel);
   logInfo(`[${appName}] USR1 signal done (exit code: ${signalResult.exitCode?.toString() ?? 'null'}).`);
 
@@ -568,7 +570,6 @@ interface SshSignalResult {
 // Returns the exit code and accumulated stderr so callers can detect SSH-disabled errors.
 // Exit code ≠ 0 is logged as a warning but does not throw — USR1 failures are non-fatal
 // (the inspector may already be active, or pidof node returns empty on a quiet process).
-const CF_SSH_SIGNAL_TIMEOUT_MS = 15_000;
 async function runCfSshSignal(appName: string, cmd: string, channel: vscode.OutputChannel): Promise<SshSignalResult> {
   return new Promise((resolve) => {
     const child = spawn('cf', ['ssh', appName, '-c', cmd]);

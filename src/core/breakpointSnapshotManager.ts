@@ -126,10 +126,17 @@ function snapshotWithDeadline(
     scopes: [],
     captureError: 'Snapshot capture timed out — process resumed without full context.',
   };
+  let deadlineHandle: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<BreakpointContextSnapshot>((resolve) => {
-    setTimeout(() => { resolve(fallback); }, SNAPSHOT_CAPTURE_TIMEOUT_MS);
+    deadlineHandle = setTimeout(() => { resolve(fallback); }, SNAPSHOT_CAPTURE_TIMEOUT_MS);
   });
-  return Promise.race([captureSnapshot(session, appName, threadId, autoResumed), deadline]);
+  // Clear the timer as soon as captureSnapshot wins so the handle does not linger
+  // for SNAPSHOT_CAPTURE_TIMEOUT_MS after the race is already settled.
+  const capture = captureSnapshot(session, appName, threadId, autoResumed).then((s) => {
+    clearTimeout(deadlineHandle);
+    return s;
+  });
+  return Promise.race([capture, deadline]);
 }
 
 function pushSnapshot(snapshot: BreakpointContextSnapshot): void {
