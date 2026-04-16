@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
