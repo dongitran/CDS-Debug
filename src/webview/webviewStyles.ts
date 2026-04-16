@@ -545,6 +545,153 @@ export function getStyles(): string {
       color: white;
     }
 
+    .bp-panel {
+      margin-bottom: 10px;
+    }
+    .bp-section-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 0;
+      margin-bottom: 6px;
+    }
+    .bp-count {
+      font-size: 10px;
+      padding: 0 6px;
+      border-radius: 99px;
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+    }
+    .bp-clear-btn {
+      margin-left: auto;
+      border: 1px solid var(--vscode-input-border, transparent);
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      border-radius: 4px;
+      font-size: 10px;
+      padding: 2px 6px;
+      cursor: pointer;
+    }
+    .bp-clear-btn:hover:not(:disabled) {
+      color: var(--vscode-foreground);
+      border-color: var(--vscode-focusBorder);
+    }
+    .bp-clear-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .bp-empty {
+      border: 1px dashed var(--vscode-panel-border);
+      border-radius: 6px;
+      padding: 10px;
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
+      line-height: 1.5;
+      margin-bottom: 8px;
+    }
+    .bp-grid {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--vscode-editorGroupHeader-tabsBackground);
+    }
+    .bp-list {
+      display: flex;
+      flex-direction: column;
+      max-height: 140px;
+      overflow-y: auto;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    .bp-item {
+      width: 100%;
+      text-align: left;
+      border: none;
+      border-bottom: 1px solid var(--vscode-panel-border);
+      background: transparent;
+      padding: 6px 8px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .bp-item:last-child {
+      border-bottom: none;
+    }
+    .bp-item:hover {
+      background: var(--vscode-list-hoverBackground);
+    }
+    .bp-item.selected {
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+    }
+    .bp-item-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .bp-item-app {
+      flex: 1;
+      font-size: 11px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--vscode-editor-font-family);
+    }
+    .bp-item-mode {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-radius: 99px;
+      padding: 1px 6px;
+      border: 1px solid transparent;
+      flex-shrink: 0;
+    }
+    .mode-auto {
+      color: var(--vscode-testing-iconPassed);
+      border-color: var(--vscode-testing-iconPassed);
+    }
+    .mode-paused {
+      color: var(--vscode-inputValidation-warningForeground, #cc9b00);
+      border-color: var(--vscode-inputValidation-warningBorder, #cca700);
+    }
+    .bp-item-meta {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .bp-item.selected .bp-item-meta {
+      color: inherit;
+      opacity: 0.85;
+    }
+    .bp-detail-wrap {
+      padding: 8px;
+      background: var(--vscode-editor-background);
+    }
+    .bp-detail-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 6px;
+    }
+    .bp-detail {
+      margin: 0;
+      max-height: 170px;
+      overflow: auto;
+      background: var(--vscode-textCodeBlock-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      padding: 8px;
+      font-size: 11px;
+      line-height: 1.45;
+      font-family: var(--vscode-editor-font-family);
+      white-space: pre;
+    }
+
     .progress-bar-wrap {
       height: 4px;
       background: var(--vscode-progressBar-background, var(--vscode-panel-border));

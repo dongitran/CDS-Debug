@@ -1451,6 +1451,111 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
   // ─── Settings Screen ───────────────────────────────────────────────────────
 
+  test.describe('Breakpoint Snapshot Panel', () => {
+    test('Injected snapshots render as list and clicking item updates detail view', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await injectMessage(webview, {
+          type: 'BREAKPOINT_SNAPSHOTS',
+          payload: {
+            snapshots: [
+              {
+                id: 'snap-2',
+                appName: 'orders-service',
+                sessionName: 'Debug: orders-service',
+                reason: 'breakpoint',
+                createdAt: 1713260100000,
+                threadId: 1,
+                autoResumed: true,
+                location: { sourcePath: '/workspace/srv/orders-service.js', line: 88, column: 16, functionName: 'onRead' },
+                scopes: [
+                  {
+                    name: 'Local',
+                    expensive: false,
+                    variables: [
+                      { name: 'req.id', value: 'abc-2', type: 'string' },
+                      { name: 'token', value: '[REDACTED]', type: 'string' },
+                    ],
+                  },
+                ],
+              },
+              {
+                id: 'snap-1',
+                appName: 'catalog-service',
+                sessionName: 'Debug: catalog-service',
+                reason: 'breakpoint',
+                createdAt: 1713260000000,
+                threadId: 1,
+                autoResumed: true,
+                location: { sourcePath: '/workspace/srv/catalog-service.js', line: 42, column: 9, functionName: 'beforeCreate' },
+                scopes: [
+                  {
+                    name: 'Local',
+                    expensive: false,
+                    variables: [
+                      { name: 'req.user', value: '{ id: \"U100\" }', type: 'object' },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        });
+
+        await expect(webview.locator('#breakpoint-snapshots-panel')).toBeVisible();
+        await expect(webview.locator('.bp-section-label')).toContainText('Breakpoint Snapshots');
+        await expect(webview.locator('.bp-count')).toContainText('2');
+        await expect(webview.locator('.bp-item')).toHaveCount(2);
+
+        // Default selection is first item (snap-2 / orders-service)
+        await expect(webview.locator('.bp-detail')).toContainText('orders-service');
+        await expect(webview.locator('.bp-detail')).toContainText('onRead');
+        await expect(webview.locator('.bp-detail')).toContainText('[REDACTED]');
+
+        // Selecting another snapshot updates detail
+        await webview.locator('[data-breakpoint-snapshot-id=\"snap-1\"]').click();
+        await expect(webview.locator('.bp-detail')).toContainText('catalog-service');
+        await expect(webview.locator('.bp-detail')).toContainText('beforeCreate');
+      });
+    });
+
+    test('Snapshot panel clear button resets list to empty state', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await injectMessage(webview, {
+          type: 'BREAKPOINT_SNAPSHOTS',
+          payload: {
+            snapshots: [
+              {
+                id: 'snap-1',
+                appName: 'catalog-service',
+                sessionName: 'Debug: catalog-service',
+                reason: 'breakpoint',
+                createdAt: 1713260000000,
+                threadId: 1,
+                autoResumed: true,
+                location: { sourcePath: '/workspace/srv/catalog-service.js', line: 42, column: 9, functionName: 'beforeCreate' },
+                scopes: [],
+              },
+            ],
+          },
+        });
+        await expect(webview.locator('.bp-item')).toHaveCount(1);
+        await expect(webview.locator('#btn-clear-breakpoint-snapshots')).toBeEnabled();
+
+        await webview.locator('#btn-clear-breakpoint-snapshots').click();
+
+        await expect(webview.locator('.bp-item')).toHaveCount(0);
+        await expect(webview.locator('.bp-empty')).toContainText('No breakpoint snapshots yet');
+        await expect(webview.locator('#btn-clear-breakpoint-snapshots')).toBeDisabled();
+      });
+    });
+  });
+
   test.describe('Settings Screen', () => {
     test('Settings shows keychain credential buttons (update + clear) when source is keychain', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {

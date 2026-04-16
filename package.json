@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.2.37",
+  "version": "0.2.39-pre.0",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -50,6 +50,18 @@
           "minimum": 10,
           "maximum": 120,
           "markdownDescription": "How long (in seconds) to wait for the SSH debug tunnel to become ready before reporting a connection error. Increase this value for high-latency CF regions (e.g. `ap10`, `jp10`) or slow app start-ups. Default: `30`."
+        },
+        "cdsDebug.pauseOnBreakpoint": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "When enabled, CDS Debug pauses at breakpoints normally. When disabled (default), CDS Debug snapshots breakpoint variables/context then auto-continues to avoid blocking shared remote services."
+        },
+        "cdsDebug.breakpointSnapshotMaxEntries": {
+          "type": "number",
+          "default": 120,
+          "minimum": 20,
+          "maximum": 1000,
+          "markdownDescription": "Maximum number of breakpoint context snapshots kept in memory for the webview list."
         }
       }
     },

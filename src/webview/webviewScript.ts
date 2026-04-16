@@ -91,6 +91,8 @@ export function getScript(nonce: string): string {
       setupCredEmail: '',
       credError: null,
       isSavingCreds: false,
+      breakpointSnapshots: [],
+      selectedBreakpointSnapshotId: null,
     };
 
     // === UTILS ===
@@ -132,6 +134,30 @@ export function getScript(nonce: string): string {
         return activeCount + ' debug session' + (activeCount === 1 ? '' : 's') + ' active.';
       }
       return '';
+    }
+
+    function hasSnapshot(snapshotId) {
+      return state.breakpointSnapshots.some(s => s.id === snapshotId);
+    }
+
+    function syncSelectedSnapshot() {
+      if (state.breakpointSnapshots.length === 0) {
+        state.selectedBreakpointSnapshotId = null;
+        return;
+      }
+      if (!state.selectedBreakpointSnapshotId || !hasSnapshot(state.selectedBreakpointSnapshotId)) {
+        state.selectedBreakpointSnapshotId = state.breakpointSnapshots[0].id;
+      }
+    }
+
+    function setBreakpointSnapshots(snapshots) {
+      state.breakpointSnapshots = Array.isArray(snapshots) ? snapshots : [];
+      syncSelectedSnapshot();
+    }
+
+    function addBreakpointSnapshot(snapshot) {
+      state.breakpointSnapshots = [snapshot, ...state.breakpointSnapshots].slice(0, 300);
+      syncSelectedSnapshot();
     }
 
     // === RENDERERS (injected) ===
@@ -277,6 +303,22 @@ export function getScript(nonce: string): string {
           const openBtn = e.target.closest('[data-open-url]');
           if (openBtn) {
             vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: openBtn.dataset.openUrl, source: 'manual' } });
+          }
+        });
+      }
+
+      const breakpointPanel = document.getElementById('breakpoint-snapshots-panel');
+      if (breakpointPanel) {
+        breakpointPanel.addEventListener('click', e => {
+          const clearBtn = e.target.closest('#btn-clear-breakpoint-snapshots');
+          if (clearBtn) {
+            vscode.postMessage({ type: 'CLEAR_BREAKPOINT_SNAPSHOTS' });
+            return;
+          }
+          const snapshotBtn = e.target.closest('[data-breakpoint-snapshot-id]');
+          if (snapshotBtn) {
+            state.selectedBreakpointSnapshotId = snapshotBtn.dataset.breakpointSnapshotId;
+            refreshBreakpointSnapshotsPanel();
           }
         });
       }
@@ -503,6 +545,20 @@ export function getScript(nonce: string): string {
           // Do NOT call render() here — the Settings UI updates its checkbox in-place
           // and render() would rebuild the full DOM, accumulating duplicate listeners
           // on every subsequent toggle.
+          return;
+        case 'BREAKPOINT_SNAPSHOTS':
+          setBreakpointSnapshots((msg.payload && msg.payload.snapshots) || []);
+          if (state.screen === SCREENS.READY) {
+            refreshBreakpointSnapshotsPanel();
+          }
+          return;
+        case 'BREAKPOINT_SNAPSHOT_ADDED':
+          if (msg.payload && msg.payload.snapshot) {
+            addBreakpointSnapshot(msg.payload.snapshot);
+            if (state.screen === SCREENS.READY) {
+              refreshBreakpointSnapshotsPanel();
+            }
+          }
           return;
         case 'CONFIG_LOADED': {
           // Always update credential status first — used to decide initial screen.

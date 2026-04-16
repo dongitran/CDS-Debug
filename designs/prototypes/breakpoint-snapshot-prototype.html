@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CDS Debug - Breakpoint Snapshots</title>
+  <style>
+    :root {
+      --bg: #10161d;
+      --panel: #16202a;
+      --panel-soft: #1d2a36;
+      --line: #2b3d4f;
+      --text: #d8e7f5;
+      --muted: #9bb2c8;
+      --ok: #4ecb93;
+      --warn: #f2c14e;
+      --accent: #4da3ff;
+      --accent-soft: rgba(77, 163, 255, 0.22);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top right, #193048, var(--bg));
+      color: var(--text);
+      padding: 20px;
+    }
+
+    .app {
+      max-width: 980px;
+      margin: 0 auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(180deg, var(--panel) 0%, #121b24 100%);
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+      overflow: hidden;
+      min-height: 560px;
+    }
+
+    .screen.hidden { display: none; }
+
+    .header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    .header-sub {
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--muted);
+      margin-left: auto;
+    }
+
+    .nav-btn {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .nav-btn:hover { border-color: var(--accent); background: rgba(77, 163, 255, 0.12); }
+
+    .launcher {
+      padding: 18px 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .launcher-card {
+      border: 1px solid var(--line);
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 10px;
+      padding: 14px;
+    }
+
+    .launcher-title {
+      margin: 0 0 6px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .launcher-desc {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .launcher-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      background: var(--panel-soft);
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 10px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      margin-top: 4px;
+      font-size: 16px;
+      font-weight: 600;
+      font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+    }
+
+    .cta {
+      border: 1px solid var(--accent);
+      background: linear-gradient(180deg, var(--accent-soft) 0%, rgba(77, 163, 255, 0.14) 100%);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      align-self: flex-start;
+    }
+
+    .cta:hover { filter: brightness(1.08); }
+
+    .controls {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: 1px solid var(--line);
+      background: var(--panel-soft);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .btn:hover { border-color: var(--accent); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      min-height: 480px;
+    }
+
+    .list {
+      border-right: 1px solid var(--line);
+      max-height: 70vh;
+      overflow: auto;
+      background: rgba(0, 0, 0, 0.16);
+    }
+
+    .item {
+      width: 100%;
+      border: none;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      background: transparent;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px 12px;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .item:hover { background: rgba(77, 163, 255, 0.09); }
+
+    .item.active {
+      background: rgba(77, 163, 255, 0.2);
+      border-left: 3px solid var(--accent);
+      padding-left: 9px;
+    }
+
+    .top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .app-name {
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .mode {
+      border: 1px solid var(--ok);
+      color: var(--ok);
+      border-radius: 99px;
+      padding: 1px 6px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .mode.paused {
+      border-color: var(--warn);
+      color: var(--warn);
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .detail {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .detail h3 {
+      margin: 0;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0f1922;
+      color: var(--text);
+      font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      overflow: auto;
+      max-height: 60vh;
+      white-space: pre;
+    }
+
+    .empty {
+      padding: 20px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 800px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .list {
+        border-right: none;
+        border-bottom: 1px solid var(--line);
+        max-height: 250px;
+      }
+
+      .launcher-metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .cta {
+        width: 100%;
+        text-align: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section id="screen-launcher" class="screen">
+      <div class="header">
+        <span>Debug Launcher</span>
+        <span class="header-sub">CDS Debug</span>
+      </div>
+      <div class="launcher">
+        <div class="launcher-card">
+          <h2 class="launcher-title">Breakpoint Observation</h2>
+          <p class="launcher-desc">
+            Open the breakpoint timeline to inspect context snapshots when breakpoints are hit rapidly.
+            This mirrors the intended extension flow: start in launcher, then navigate to snapshot analysis.
+          </p>
+          <div class="launcher-metrics">
+            <div class="metric">
+              <div class="metric-label">Active Sessions</div>
+              <div class="metric-value">2</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Auto Resume</div>
+              <div class="metric-value">ON</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Snapshots</div>
+              <div class="metric-value" id="metric-snapshot-count">3</div>
+            </div>
+          </div>
+        </div>
+        <button id="btn-open-breakpoints" class="cta">Open Breakpoint Snapshots</button>
+      </div>
+    </section>
+
+    <section id="screen-breakpoints" class="screen hidden">
+      <div class="header">
+        <button id="btn-back-launcher" class="nav-btn">&larr; Back to Debug Launcher</button>
+        <span>Breakpoint Snapshots</span>
+      </div>
+      <div class="controls">
+        <button class="btn" id="btn-hit-fast">Simulate 10 hits / 2s</button>
+        <button class="btn" id="btn-hit-one">Simulate 1 hit</button>
+        <button class="btn" id="btn-clear">Clear</button>
+      </div>
+      <section class="grid">
+        <div id="list" class="list"></div>
+        <div class="detail">
+          <h3>Snapshot Detail</h3>
+          <pre id="detail">Select a snapshot on the left.</pre>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const snapshots = [];
+    let selectedId = null;
+
+    const launcherScreen = document.getElementById('screen-launcher');
+    const breakpointScreen = document.getElementById('screen-breakpoints');
+    const openBreakpointsBtn = document.getElementById('btn-open-breakpoints');
+    const backToLauncherBtn = document.getElementById('btn-back-launcher');
+    const listEl = document.getElementById('list');
+    const detailEl = document.getElementById('detail');
+    const snapshotMetricEl = document.getElementById('metric-snapshot-count');
+
+    function setScreen(screenName) {
+      const showLauncher = screenName === 'launcher';
+      launcherScreen.classList.toggle('hidden', !showLauncher);
+      breakpointScreen.classList.toggle('hidden', showLauncher);
+    }
+
+    function updateSnapshotMetric() {
+      snapshotMetricEl.textContent = String(snapshots.length);
+    }
+
+    function createSnapshot() {
+      const id = Date.now().toString() + '-' + Math.random().toString(36).slice(2, 7);
+      const appName = Math.random() > 0.5 ? 'catalog-service' : 'orders-service';
+      const line = 40 + Math.floor(Math.random() * 70);
+      const mode = Math.random() > 0.1 ? 'auto' : 'paused';
+      return {
+        id,
+        appName,
+        mode,
+        at: Date.now(),
+        location: 'srv/' + appName + '.js:' + line,
+        body: [
+          'App: ' + appName,
+          'Mode: ' + (mode === 'auto' ? 'Auto-continued' : 'Paused'),
+          'Location: srv/' + appName + '.js:' + line,
+          '',
+          '[Local]',
+          '  req.id <string> = "' + Math.random().toString(16).slice(2, 10) + '"',
+          '  user.id <string> = "U' + Math.floor(Math.random() * 1000) + '"',
+          '  token <string> = [REDACTED]',
+          '',
+          '[Closure]',
+          '  tenant <string> = "acme"',
+          '  featureFlag <boolean> = true',
+        ].join('\n'),
+      };
+    }
+
+    function renderList() {
+      if (!snapshots.length) {
+        listEl.innerHTML = '<div class="empty">No snapshots yet. Simulate hits to preview dense breakpoint traffic.</div>';
+        detailEl.textContent = 'Select a snapshot on the left.';
+        updateSnapshotMetric();
+        return;
+      }
+
+      if (!selectedId || !snapshots.some(s => s.id === selectedId)) {
+        selectedId = snapshots[0].id;
+      }
+
+      listEl.innerHTML = snapshots.map(snapshot => {
+        const active = snapshot.id === selectedId ? 'active' : '';
+        const paused = snapshot.mode === 'paused' ? 'paused' : '';
+        return `
+          <button class="item ${active}" data-id="${snapshot.id}">
+            <span class="top">
+              <span class="app-name">${snapshot.appName}</span>
+              <span class="mode ${paused}">${snapshot.mode}</span>
+            </span>
+            <span class="meta">${snapshot.location} • ${new Date(snapshot.at).toLocaleTimeString([], { hour12: false })}</span>
+          </button>
+        `;
+      }).join('');
+
+      const selected = snapshots.find(s => s.id === selectedId);
+      detailEl.textContent = selected ? selected.body : 'Select a snapshot on the left.';
+      updateSnapshotMetric();
+    }
+
+    listEl.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-id]');
+      if (!button) return;
+      selectedId = button.dataset.id;
+      renderList();
+    });
+
+    document.getElementById('btn-hit-one').addEventListener('click', () => {
+      snapshots.unshift(createSnapshot());
+      snapshots.splice(120);
+      renderList();
+    });
+
+    document.getElementById('btn-hit-fast').addEventListener('click', async () => {
+      for (let i = 0; i < 10; i++) {
+        snapshots.unshift(createSnapshot());
+        snapshots.splice(120);
+        renderList();
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    });
+
+    document.getElementById('btn-clear').addEventListener('click', () => {
+      snapshots.length = 0;
+      selectedId = null;
+      renderList();
+    });
+
+    openBreakpointsBtn.addEventListener('click', () => {
+      setScreen('breakpoints');
+    });
+
+    backToLauncherBtn.addEventListener('click', () => {
+      setScreen('launcher');
+    });
+
+    snapshots.unshift(createSnapshot(), createSnapshot(), createSnapshot());
+    renderList();
+    setScreen('launcher');
+  </script>
+</body>
+</html>

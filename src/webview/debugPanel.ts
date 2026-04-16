@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { join } from 'node:path';
-import type { BranchPrepService, BranchPrepStep, CacheSettings, CapDebugConfig, CredentialStatus, DebugTarget, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
+import type { BranchPrepService, BranchPrepStep, BreakpointContextSnapshot, CacheSettings, CapDebugConfig, CredentialStatus, DebugTarget, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
 import { DEFAULT_CACHE_SETTINGS } from '../types/index';
 import { CfCliError, cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
 import { findRepoFolder } from '../core/folderScanner';
@@ -19,6 +19,7 @@ import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSync
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
 import { startTunnelAndAttach, stopProcess, stopAllProcesses, debugProcessEvents, getActiveSessions, getSessionParams } from '../core/processManager';
+import { breakpointSnapshotEvents, clearBreakpointSnapshots, getBreakpointSnapshots } from '../core/breakpointSnapshotManager';
 import {
   checkoutBranch,
   getCurrentBranch,
@@ -50,6 +51,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     });
     cacheSyncEvents.on('progress', (payload: SyncProgress) => {
       this.post({ type: 'SYNC_STATUS', payload });
+    });
+    breakpointSnapshotEvents.on('snapshotAdded', (snapshot: unknown) => {
+      if (!isBreakpointSnapshot(snapshot)) return;
+      this.post({ type: 'BREAKPOINT_SNAPSHOT_ADDED', payload: { snapshot } });
     });
   }
 
@@ -95,6 +100,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         // state always reflects globalState — not a stale acquireVsCodeApi() snapshot
         // from a previous VS Code session where openBrowserOnAttach may have been true.
         this.post({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
+        this.post({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
         break;
       }
 
@@ -138,6 +144,11 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       case 'RETRY_DEBUG':
         await this.handleRetryDebug(raw.payload.appName);
+        break;
+
+      case 'CLEAR_BREAKPOINT_SNAPSHOTS':
+        clearBreakpointSnapshots();
+        this.post({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
         break;
 
       case 'STOP_ALL_DEBUG': {
@@ -874,4 +885,13 @@ function toSafeHttpUri(rawUrl: string): vscode.Uri | null {
   } catch {
     return null;
   }
+}
+
+function isBreakpointSnapshot(value: unknown): value is BreakpointContextSnapshot {
+  return (
+    typeof value === 'object'
+    && value !== null
+    && 'id' in value
+    && typeof (value as Record<string, unknown>).id === 'string'
+  );
 }

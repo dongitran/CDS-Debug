@@ -144,6 +144,41 @@ export const DEFAULT_DEBUG_PREFERENCES: DebugPreferences = {
   enableBranchPrep: false,
 };
 
+export type BreakpointStopReason = 'breakpoint';
+
+export interface BreakpointContextVariable {
+  name: string;
+  value: string;
+  type?: string;
+  children?: BreakpointContextVariable[];
+}
+
+export interface BreakpointContextScope {
+  name: string;
+  expensive: boolean;
+  variables: BreakpointContextVariable[];
+}
+
+export interface BreakpointContextLocation {
+  sourcePath: string;
+  line: number;
+  column: number;
+  functionName?: string;
+}
+
+export interface BreakpointContextSnapshot {
+  id: string;
+  appName: string;
+  sessionName: string;
+  reason: BreakpointStopReason;
+  createdAt: number;
+  threadId?: number;
+  autoResumed: boolean;
+  location?: BreakpointContextLocation;
+  scopes: BreakpointContextScope[];
+  captureError?: string;
+}
+
 // Messages from webview → extension
 export type WebviewMessage =
   | { type: 'SELECT_GROUP_FOLDER' }
@@ -166,7 +201,8 @@ export type WebviewMessage =
   | { type: 'SAVE_CREDENTIALS'; payload: { email: string; password: string } }
   | { type: 'GET_CREDENTIALS_STATUS' }
   | { type: 'CLEAR_CREDENTIALS' }
-  | { type: 'RETRY_DEBUG'; payload: { appName: string } };
+  | { type: 'RETRY_DEBUG'; payload: { appName: string } }
+  | { type: 'CLEAR_BREAKPOINT_SNAPSHOTS' };
 
 // Messages from logs webview → logs extension panel
 export type LogsWebviewMessage =
@@ -203,4 +239,6 @@ export type ExtensionMessage =
   | { type: 'CREDENTIALS_SAVED'; payload: { email: string; source: 'env' | 'keychain' | 'none' } }
   | { type: 'CREDENTIALS_ERROR'; payload: { message: string } }
   | { type: 'CREDENTIALS_STATUS'; payload: CredentialStatus }
-  | { type: 'CREDENTIALS_REVOKED'; payload: { message: string } };
+  | { type: 'CREDENTIALS_REVOKED'; payload: { message: string } }
+  | { type: 'BREAKPOINT_SNAPSHOTS'; payload: { snapshots: BreakpointContextSnapshot[] } }
+  | { type: 'BREAKPOINT_SNAPSHOT_ADDED'; payload: { snapshot: BreakpointContextSnapshot } };
