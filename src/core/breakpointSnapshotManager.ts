@@ -13,6 +13,10 @@ const MAX_SCOPE_VARIABLES = 30;
 const MAX_CHILD_VARIABLES = 10;
 const MAX_VARIABLE_DEPTH = 1;
 const MAX_VALUE_LENGTH = 240;
+// Maximum time to spend capturing snapshot context before issuing auto-continue.
+// Without a hard cap, a slow or unresponsive debug adapter can hold the process
+// paused indefinitely because autoContinue is only called after captureSnapshot resolves.
+const SNAPSHOT_CAPTURE_TIMEOUT_MS = 3000;
 const SENSITIVE_NAME_REGEX = /(pass(word)?|token|secret|api[_-]?key|authorization|cookie|session|private[_-]?key)/i;
 
 export const breakpointSnapshotEvents = new EventEmitter();
@@ -87,12 +91,45 @@ async function handleBreakpointStop(
     .get('pauseOnBreakpoint') === true;
   const autoResumed = !pauseOnBreakpoint && threadId !== null;
 
-  const snapshot = await captureSnapshot(session, appName, threadId, autoResumed);
+  // When auto-resuming, race captureSnapshot against a deadline so autoContinue is
+  // guaranteed to run even if the debug adapter is slow or an individual DAP request
+  // hangs. Without this guard, a single stalled customRequest keeps the remote process
+  // paused indefinitely.
+  let snapshot: BreakpointContextSnapshot;
+  if (autoResumed) {
+    snapshot = await snapshotWithDeadline(session, appName, threadId, true);
+  } else {
+    snapshot = await captureSnapshot(session, appName, threadId, false);
+  }
   pushSnapshot(snapshot);
 
   if (autoResumed) {
     await autoContinue(session, threadId);
   }
+}
+
+function snapshotWithDeadline(
+  session: vscode.DebugSession,
+  appName: string,
+  threadId: number,
+  autoResumed: boolean,
+): Promise<BreakpointContextSnapshot> {
+  const now = Date.now();
+  const fallback: BreakpointContextSnapshot = {
+    id: `${now.toString()}-${Math.random().toString(36).slice(2, 8)}`,
+    appName,
+    sessionName: session.name,
+    reason: 'breakpoint',
+    createdAt: now,
+    threadId,
+    autoResumed,
+    scopes: [],
+    captureError: 'Snapshot capture timed out — process resumed without full context.',
+  };
+  const deadline = new Promise<BreakpointContextSnapshot>((resolve) => {
+    setTimeout(() => { resolve(fallback); }, SNAPSHOT_CAPTURE_TIMEOUT_MS);
+  });
+  return Promise.race([captureSnapshot(session, appName, threadId, autoResumed), deadline]);
 }
 
 function pushSnapshot(snapshot: BreakpointContextSnapshot): void {
@@ -172,21 +209,24 @@ async function captureScopes(session: vscode.DebugSession, frameId: number): Pro
   try {
     const scopesResponse = await session.customRequest('scopes', { frameId }) as unknown;
     const scopes = getScopes(scopesResponse).slice(0, MAX_SCOPES);
-    const result: BreakpointContextScope[] = [];
-    for (const scope of scopes) {
-      const variables = await captureVariables(
-        session,
-        scope.variablesReference,
-        MAX_SCOPE_VARIABLES,
-        MAX_VARIABLE_DEPTH,
-      );
-      result.push({
-        name: scope.name,
-        expensive: scope.expensive,
-        variables,
-      });
-    }
-    return result;
+    // Fetch variables for all scopes in parallel to minimize total pause time over
+    // high-latency transports (e.g. CF SSH tunnels where each sequential round-trip
+    // adds 100-300 ms). Sequential fetching could take 10+ seconds for typical payloads.
+    return await Promise.all(
+      scopes.map(async (scope) => {
+        const variables = await captureVariables(
+          session,
+          scope.variablesReference,
+          MAX_SCOPE_VARIABLES,
+          MAX_VARIABLE_DEPTH,
+        );
+        return {
+          name: scope.name,
+          expensive: scope.expensive,
+          variables,
+        };
+      }),
+    );
   } catch {
     return [];
   }
@@ -206,32 +246,33 @@ async function captureVariables(
       count: limit,
     }) as unknown;
     const vars = getVariables(response);
-    const result: BreakpointContextVariable[] = [];
+    // Fetch children for all variables in parallel — same latency reasoning as captureScopes.
+    const result = await Promise.all(
+      vars.slice(0, limit).map(async (variable) => {
+        const value = sanitizeVariableValue(variable.name, variable.value);
+        let children: BreakpointContextVariable[] | undefined;
 
-    for (const variable of vars.slice(0, limit)) {
-      const value = sanitizeVariableValue(variable.name, variable.value);
-      let children: BreakpointContextVariable[] | undefined;
-
-      if (depth > 0 && variable.variablesReference > 0) {
-        const capturedChildren = await captureVariables(
-          session,
-          variable.variablesReference,
-          MAX_CHILD_VARIABLES,
-          depth - 1,
-        );
-        if (capturedChildren.length > 0) {
-          children = capturedChildren;
+        if (depth > 0 && variable.variablesReference > 0) {
+          const capturedChildren = await captureVariables(
+            session,
+            variable.variablesReference,
+            MAX_CHILD_VARIABLES,
+            depth - 1,
+          );
+          if (capturedChildren.length > 0) {
+            children = capturedChildren;
+          }
         }
-      }
 
-      const mapped: BreakpointContextVariable = {
-        name: variable.name,
-        value,
-      };
-      if (variable.type !== undefined) mapped.type = variable.type;
-      if (children !== undefined) mapped.children = children;
-      result.push(mapped);
-    }
+        const mapped: BreakpointContextVariable = {
+          name: variable.name,
+          value,
+        };
+        if (variable.type !== undefined) mapped.type = variable.type;
+        if (children !== undefined) mapped.children = children;
+        return mapped;
+      }),
+    );
 
     return result;
   } catch {
