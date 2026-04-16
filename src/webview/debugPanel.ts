@@ -888,10 +888,12 @@ function toSafeHttpUri(rawUrl: string): vscode.Uri | null {
 }
 
 function isBreakpointSnapshot(value: unknown): value is BreakpointContextSnapshot {
+  if (typeof value !== 'object' || value === null) return false;
+  const rec = value as Record<string, unknown>;
   return (
-    typeof value === 'object'
-    && value !== null
-    && 'id' in value
-    && typeof (value as Record<string, unknown>).id === 'string'
+    typeof rec.id === 'string'
+    && typeof rec.appName === 'string'
+    && typeof rec.sessionName === 'string'
+    && Array.isArray(rec.scopes)
   );
 }

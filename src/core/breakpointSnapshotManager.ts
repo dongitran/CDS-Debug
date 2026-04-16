@@ -1,14 +1,13 @@
 import * as vscode from 'vscode';
 import { EventEmitter } from 'node:events';
 import { logWarn } from './logger';
+import { DEBUG_SESSION_PREFIX } from './processManager';
 import type {
   BreakpointContextLocation,
   BreakpointContextScope,
   BreakpointContextSnapshot,
   BreakpointContextVariable,
 } from '../types/index';
-
-const DEBUG_SESSION_PREFIX = 'Debug: ';
 const MAX_SCOPES = 4;
 const MAX_SCOPE_VARIABLES = 30;
 const MAX_CHILD_VARIABLES = 10;
@@ -25,6 +24,13 @@ const sessionQueues = new Map<string, Promise<void>>();
 export function initializeBreakpointSnapshotManager(): void {
   if (sessionEventListener) return;
 
+  // Despite its name, onDidReceiveDebugSessionCustomEvent fires for ALL events from the
+  // debug adapter — including standard DAP events like 'stopped' — not only extension-defined
+  // custom events. This is the established VS Code extension pattern for intercepting DAP
+  // events without a DebugAdapterTracker, and is confirmed by VS Code's extension host
+  // implementation (ExtHostDebugService). The alternative, registerDebugAdapterTrackerFactory,
+  // requires knowing each adapter type identifier (e.g. 'node', 'pwa-node') and is better
+  // suited for protocol-level tracing rather than selective event handling.
   sessionEventListener = vscode.debug.onDidReceiveDebugSessionCustomEvent((event) => {
     if (event.event !== 'stopped') return;
     if (!event.session.name.startsWith(DEBUG_SESSION_PREFIX)) return;

@@ -27,7 +27,7 @@ const sessionParams = new Map<string, { folderPath: string; port: number; launch
 const stoppedApps = new Set<string>();
 let sessionListener: vscode.Disposable | null = null;
 let startListener: vscode.Disposable | null = null;
-const DEBUG_SESSION_PREFIX = 'Debug: ';
+export const DEBUG_SESSION_PREFIX = 'Debug: ';
 const activeVsCodeSessions = new Set<string>();
 
 // Apps scheduled for auto-reconnect after an unexpected tunnel drop.

@@ -577,6 +577,12 @@ async function completeMappingToReady(webview: Frame): Promise<void> {
   await expectReadyScreen(webview);
 }
 
+async function openBreakpointSnapshotsScreen(webview: Frame): Promise<void> {
+  await webview.locator('#btn-open-breakpoint-snapshots').click();
+  await expect(webview.locator('.step-title')).toContainText('Breakpoint Snapshots');
+  await expect(webview.locator('#btn-back-breakpoint-snapshots')).toBeVisible();
+}
+
 async function expectButtonDisabled(button: Locator): Promise<void> {
   await expect(button).toBeDisabled();
 }
@@ -1452,10 +1458,24 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
   // ─── Settings Screen ───────────────────────────────────────────────────────
 
   test.describe('Breakpoint Snapshot Panel', () => {
+    test('User can open breakpoint snapshots screen from launcher and return back', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await openBreakpointSnapshotsScreen(webview);
+        await expect(webview.locator('.bp-section-label')).toContainText('Breakpoint Snapshots');
+
+        await webview.locator('#btn-back-breakpoint-snapshots').click();
+        await expect(webview.locator('.step-title')).toContainText('Debug Launcher');
+      });
+    });
+
     test('Injected snapshots render as list and clicking item updates detail view', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
+        await openBreakpointSnapshotsScreen(webview);
 
         await injectMessage(webview, {
           type: 'BREAKPOINT_SNAPSHOTS',
@@ -1525,6 +1545,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
+        await openBreakpointSnapshotsScreen(webview);
 
         await injectMessage(webview, {
           type: 'BREAKPOINT_SNAPSHOTS',
@@ -1552,6 +1573,72 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.bp-item')).toHaveCount(0);
         await expect(webview.locator('.bp-empty')).toContainText('No breakpoint snapshots yet');
         await expect(webview.locator('#btn-clear-breakpoint-snapshots')).toBeDisabled();
+      });
+    });
+
+    test('BREAKPOINT_SNAPSHOT_ADDED increments list and preserves selection on subsequent snapshots', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+        await openBreakpointSnapshotsScreen(webview);
+
+        // Panel starts empty
+        await expect(webview.locator('.bp-empty')).toBeVisible();
+        await expect(webview.locator('#btn-clear-breakpoint-snapshots')).toBeDisabled();
+
+        // First live snapshot arrives
+        await injectMessage(webview, {
+          type: 'BREAKPOINT_SNAPSHOT_ADDED',
+          payload: {
+            snapshot: {
+              id: 'live-snap-1',
+              appName: 'catalog-service',
+              sessionName: 'Debug: catalog-service',
+              reason: 'breakpoint',
+              createdAt: 1713260000000,
+              threadId: 1,
+              autoResumed: true,
+              location: { sourcePath: '/workspace/srv/catalog-service.js', line: 42, column: 9, functionName: 'beforeCreate' },
+              scopes: [
+                {
+                  name: 'Local',
+                  expensive: false,
+                  variables: [{ name: 'req.user', value: '{ id: "U100" }', type: 'object' }],
+                },
+              ],
+            },
+          },
+        });
+
+        await expect(webview.locator('.bp-item')).toHaveCount(1);
+        await expect(webview.locator('.bp-count')).toContainText('1');
+        await expect(webview.locator('.bp-detail')).toContainText('catalog-service');
+        await expect(webview.locator('.bp-detail')).toContainText('beforeCreate');
+
+        // Second live snapshot from a different service
+        await injectMessage(webview, {
+          type: 'BREAKPOINT_SNAPSHOT_ADDED',
+          payload: {
+            snapshot: {
+              id: 'live-snap-2',
+              appName: 'orders-service',
+              sessionName: 'Debug: orders-service',
+              reason: 'breakpoint',
+              createdAt: 1713260050000,
+              threadId: 2,
+              autoResumed: true,
+              location: { sourcePath: '/workspace/srv/orders-service.js', line: 88, column: 16, functionName: 'onRead' },
+              scopes: [],
+            },
+          },
+        });
+
+        // List grows to 2; selection (catalog-service) is preserved since it still exists
+        await expect(webview.locator('.bp-item')).toHaveCount(2);
+        await expect(webview.locator('.bp-count')).toContainText('2');
+        await expect(webview.locator('.bp-detail')).toContainText('catalog-service');
+        // The clear button becomes enabled once snapshots exist
+        await expect(webview.locator('#btn-clear-breakpoint-snapshots')).toBeEnabled();
       });
     });
   });

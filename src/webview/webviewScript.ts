@@ -20,6 +20,7 @@ export function getScript(nonce: string): string {
       SELECT_FOLDER: 'select-folder',
       LOADING_APPS: 'loading-apps',
       READY: 'ready',
+      BREAKPOINT_SNAPSHOTS: 'breakpoint-snapshots',
       SETTINGS: 'settings',
       PREPARING_BRANCHES: 'preparing-branches',
     };
@@ -151,7 +152,7 @@ export function getScript(nonce: string): string {
     }
 
     function setBreakpointSnapshots(snapshots) {
-      state.breakpointSnapshots = Array.isArray(snapshots) ? snapshots : [];
+      state.breakpointSnapshots = Array.isArray(snapshots) ? snapshots.slice(0, 300) : [];
       syncSelectedSnapshot();
     }
 
@@ -178,6 +179,7 @@ export function getScript(nonce: string): string {
         case SCREENS.SELECT_FOLDER:       return renderSelectFolder();
         case SCREENS.LOADING_APPS:        return renderLoadingApps();
         case SCREENS.READY:               return renderReady();
+        case SCREENS.BREAKPOINT_SNAPSHOTS:return renderBreakpointSnapshotsScreen();
         case SCREENS.SETTINGS:            return renderSettings();
         case SCREENS.PREPARING_BRANCHES:  return renderPreparingBranches();
         default:                          return '';
@@ -548,14 +550,14 @@ export function getScript(nonce: string): string {
           return;
         case 'BREAKPOINT_SNAPSHOTS':
           setBreakpointSnapshots((msg.payload && msg.payload.snapshots) || []);
-          if (state.screen === SCREENS.READY) {
+          if (state.screen === SCREENS.READY || state.screen === SCREENS.BREAKPOINT_SNAPSHOTS) {
             refreshBreakpointSnapshotsPanel();
           }
           return;
         case 'BREAKPOINT_SNAPSHOT_ADDED':
           if (msg.payload && msg.payload.snapshot) {
             addBreakpointSnapshot(msg.payload.snapshot);
-            if (state.screen === SCREENS.READY) {
+            if (state.screen === SCREENS.READY || state.screen === SCREENS.BREAKPOINT_SNAPSHOTS) {
               refreshBreakpointSnapshotsPanel();
             }
           }

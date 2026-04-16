@@ -407,6 +407,26 @@ export function getRendererScriptContent(): string {
       panel.innerHTML = renderBreakpointSnapshotsContent();
     }
 
+    function renderBreakpointSnapshotsScreen() {
+      const snapshotCount = state.breakpointSnapshots.length;
+      const snapshotSummary = snapshotCount === 1
+        ? '1 snapshot captured'
+        : snapshotCount + ' snapshots captured';
+
+      return \`
+        <div class="ready-layout">
+          <div class="step-header">
+            <span class="step-title">Breakpoint Snapshots</span>
+            <span class="radio-desc">\${escape(snapshotSummary)}</span>
+          </div>
+          <div id="breakpoint-snapshots-panel" class="bp-panel bp-panel-screen">\${renderBreakpointSnapshotsContent()}</div>
+          <div class="footer" style="padding-top:0">
+            <button class="btn btn-secondary" id="btn-back-breakpoint-snapshots">&#8592; Back to Launcher</button>
+          </div>
+        </div>
+      \`;
+    }
+
     function refreshAppListSection() {
       const filtered = state.apps.filter(app =>
         !state.searchQuery || app.name.toLowerCase().includes(state.searchQuery.toLowerCase())
@@ -524,11 +544,19 @@ export function getRendererScriptContent(): string {
       const countLabel = totalStarted > 0
         ? selectedCount + ' / ' + totalStarted + ' selected'
         : 'No started apps';
+      const snapshotCount = state.breakpointSnapshots.length;
+      const snapshotButtonLabel = snapshotCount > 0
+        ? 'Breakpoint Snapshots (' + snapshotCount + ')'
+        : 'Breakpoint Snapshots';
 
       return \`
         <div class="ready-layout">
           <div class="step-header">
             <span class="step-title">Debug Launcher</span>
+            <button class="header-nav-btn" id="btn-open-breakpoint-snapshots"
+              title="Open breakpoint snapshots" aria-label="Open breakpoint snapshots">
+              \${escape(snapshotButtonLabel)}
+            </button>
             <button class="gear-btn" id="btn-refresh-apps" title="Refresh app list" aria-label="Refresh apps" style="font-size:13px">&#8635;</button>
             <button class="gear-btn" id="btn-gear" title="Settings" aria-label="Open settings">&#9881;</button>
           </div>
@@ -540,7 +568,6 @@ export function getRendererScriptContent(): string {
           \` : ''}
 
           <div id="active-sessions-panel" style="flex-shrink:0">\${renderActiveSessionsContent()}</div>
-          <div id="breakpoint-snapshots-panel" class="bp-panel" style="flex-shrink:0">\${renderBreakpointSnapshotsContent()}</div>
 
           <div class="section-label" style="flex-shrink:0">Cloud Foundry</div>
           <div class="cf-info-box" style="flex-shrink:0">
@@ -930,6 +957,18 @@ export function getRendererScriptContent(): string {
         vscode.postMessage({ type: 'GET_CACHE_CONFIG' });
         vscode.postMessage({ type: 'GET_DEBUG_PREFS' });
         vscode.postMessage({ type: 'GET_CREDENTIALS_STATUS' });
+        render();
+      });
+
+      $('btn-open-breakpoint-snapshots')?.addEventListener('click', () => {
+        state.screen = SCREENS.BREAKPOINT_SNAPSHOTS;
+        state.error = null;
+        render();
+      });
+
+      $('btn-back-breakpoint-snapshots')?.addEventListener('click', () => {
+        state.screen = SCREENS.READY;
+        state.error = null;
         render();
       });
 

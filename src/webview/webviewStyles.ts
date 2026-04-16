@@ -289,6 +289,23 @@ export function getStyles(): string {
       border-radius: 99px;
     }
     .step-title { font-size: 13px; font-weight: 600; flex: 1; }
+    .header-nav-btn {
+      border: 1px solid var(--vscode-input-border, transparent);
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border-radius: 4px;
+      font-size: 10px;
+      line-height: 1.3;
+      padding: 3px 7px;
+      cursor: pointer;
+      max-width: 170px;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .header-nav-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
     .gear-btn {
       background: transparent;
       border: none;
@@ -547,6 +564,27 @@ export function getStyles(): string {
 
     .bp-panel {
       margin-bottom: 10px;
+    }
+    .bp-panel-screen {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 12px;
+    }
+    .bp-panel-screen .bp-grid {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .bp-panel-screen .bp-list {
+      flex: 1;
+      min-height: 120px;
+      max-height: none;
+    }
+    .bp-panel-screen .bp-detail {
+      max-height: 240px;
     }
     .bp-section-label {
       display: flex;
