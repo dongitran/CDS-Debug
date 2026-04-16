@@ -560,6 +560,12 @@ export function getScript(nonce: string): string {
             if (state.screen === SCREENS.READY || state.screen === SCREENS.BREAKPOINT_SNAPSHOTS) {
               refreshBreakpointSnapshotsPanel();
             }
+            if (state.screen === SCREENS.READY) {
+              const snapshotBtn = document.getElementById('btn-open-breakpoint-snapshots');
+              if (snapshotBtn) {
+                snapshotBtn.textContent = 'Breakpoint Snapshots (' + state.breakpointSnapshots.length + ')';
+              }
+            }
           }
           return;
         case 'CONFIG_LOADED': {

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { EventEmitter } from 'node:events';
-import { logWarn } from './logger';
+import { logInfo, logWarn } from './logger';
 import { DEBUG_SESSION_PREFIX } from './processManager';
 import type {
   BreakpointContextLocation,
@@ -35,14 +35,20 @@ export function initializeBreakpointSnapshotManager(): void {
 
   trackerRegistration = vscode.debug.registerDebugAdapterTrackerFactory('*', {
     createDebugAdapterTracker(session: vscode.DebugSession): vscode.DebugAdapterTracker | undefined {
-      if (!session.name.startsWith(DEBUG_SESSION_PREFIX)) return undefined;
-      const appName = session.name.slice(DEBUG_SESSION_PREFIX.length);
+      // Match the session itself OR any child session whose ancestor is a CDS Debug session.
+      // pwa-node (which type:'node' maps to in VS Code 1.90+) can spawn child sessions
+      // for worker threads or internal bookkeeping — their name won't start with DEBUG_SESSION_PREFIX
+      // but their parentSession chain leads back to the CDS Debug session.
+      const appName = findCdsAppName(session);
+      if (!appName) return undefined;
+      logInfo(`[BreakpointSnapshots] Tracker attached — session: "${session.name}" type: ${session.type} app: ${appName}`);
       return {
         onDidSendMessage(message: unknown): void {
           const msg = asRecord(message);
           if (msg?.type !== 'event' || msg.event !== 'stopped') return;
           const body = asRecord(msg.body);
           if (body?.reason !== 'breakpoint') return;
+          logInfo(`[BreakpointSnapshots] Breakpoint stop — app: ${appName} thread: ${String(body.threadId)}`);
           enqueueSessionTask(session.id, async () => {
             await handleBreakpointStop(session, appName, body);
           });
@@ -50,6 +56,22 @@ export function initializeBreakpointSnapshotManager(): void {
       };
     },
   });
+}
+
+// Walks the session hierarchy to find the CDS Debug app name.
+// Returns null when neither the session nor any ancestor is a CDS Debug session.
+function findCdsAppName(session: vscode.DebugSession): string | null {
+  if (session.name.startsWith(DEBUG_SESSION_PREFIX)) {
+    return session.name.slice(DEBUG_SESSION_PREFIX.length);
+  }
+  let parent = session.parentSession;
+  while (parent) {
+    if (parent.name.startsWith(DEBUG_SESSION_PREFIX)) {
+      return parent.name.slice(DEBUG_SESSION_PREFIX.length);
+    }
+    parent = parent.parentSession;
+  }
+  return null;
 }
 
 export function disposeBreakpointSnapshotManager(): void {
@@ -157,6 +179,7 @@ function pushSnapshot(snapshot: BreakpointContextSnapshot): void {
 async function autoContinue(session: vscode.DebugSession, threadId: number): Promise<void> {
   try {
     await session.customRequest('continue', { threadId });
+    logInfo(`[BreakpointSnapshots] Auto-continued session "${session.name}" thread ${threadId.toString()}`);
   } catch (err: unknown) {
     logWarn(
       `[BreakpointSnapshots] Auto-continue failed for ${session.name}: ${err instanceof Error ? err.message : String(err)}`,
