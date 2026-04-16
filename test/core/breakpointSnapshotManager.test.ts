@@ -252,7 +252,7 @@ describe('breakpointSnapshotManager', () => {
     expect(customRequestCalls).toContain('continue');
   });
 
-  it('excludes Global scope from captured breakpoint snapshot', async () => {
+  it('excludes Global scope, skips expensive scopes, and prioritizes Local/Arguments', async () => {
     const customRequestCalls: string[] = [];
     const capturedVariableReferences: number[] = [];
     const session: MockDebugSession = {
@@ -278,6 +278,9 @@ describe('breakpointSnapshotManager', () => {
           return Promise.resolve({
             scopes: [
               { name: 'Global', expensive: false, variablesReference: 999 },
+              { name: 'Module', expensive: true, variablesReference: 998 },
+              { name: 'Closure', expensive: false, variablesReference: 103 },
+              { name: 'Arguments', expensive: false, variablesReference: 102 },
               { name: 'Local', expensive: false, variablesReference: 101 },
             ],
           });
@@ -290,7 +293,7 @@ describe('breakpointSnapshotManager', () => {
             ? variablesArg.variablesReference
             : -1;
           capturedVariableReferences.push(variablesReference);
-          if (variablesReference === 101) {
+          if (variablesReference === 101 || variablesReference === 102) {
             return Promise.resolve({
               variables: [
                 { name: 'req.id', value: 'abc-123', type: 'string', variablesReference: 0 },
@@ -309,9 +312,68 @@ describe('breakpointSnapshotManager', () => {
 
     const snapshot = getBreakpointSnapshots()[0];
     if (!snapshot) throw new Error('Expected one snapshot.');
-    expect(snapshot.scopes.map((scope) => scope.name)).toEqual(['Local']);
-    expect(capturedVariableReferences).toEqual([101]);
+    expect(snapshot.scopes.map((scope) => scope.name)).toEqual(['Local', 'Arguments']);
+    expect(capturedVariableReferences).toEqual(expect.arrayContaining([101, 102]));
+    expect(capturedVariableReferences).not.toContain(998);
+    expect(capturedVariableReferences).not.toContain(999);
+    expect(capturedVariableReferences).not.toContain(103);
     expect(customRequestCalls).toContain('continue');
+  });
+
+  it('still captures a scope when adapter marks all scopes as expensive', async () => {
+    const capturedVariableReferences: number[] = [];
+    const session: MockDebugSession = {
+      id: 'session-expensive',
+      name: 'Debug: catalog-service',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        if (command === 'threads') return Promise.resolve({ threads: [{ id: 1 }] });
+        if (command === 'stackTrace') {
+          return Promise.resolve({
+            stackFrames: [
+              {
+                id: 11,
+                name: 'beforeCreate',
+                line: 42,
+                column: 9,
+                source: { path: '/workspace/srv/catalog-service.js' },
+              },
+            ],
+          });
+        }
+        if (command === 'scopes') {
+          return Promise.resolve({
+            scopes: [
+              { name: 'Arguments', expensive: true, variablesReference: 102 },
+              { name: 'Local', expensive: true, variablesReference: 101 },
+            ],
+          });
+        }
+        if (command === 'variables') {
+          const variablesArg = typeof args === 'object' && args !== null
+            ? (args as { variablesReference?: unknown })
+            : {};
+          const variablesReference = typeof variablesArg.variablesReference === 'number'
+            ? variablesArg.variablesReference
+            : -1;
+          capturedVariableReferences.push(variablesReference);
+          return Promise.resolve({
+            variables: [
+              { name: 'req.id', value: 'abc-123', type: 'string', variablesReference: 0 },
+            ],
+          });
+        }
+        if (command === 'continue') return Promise.resolve({});
+        return Promise.reject(new Error(`Unexpected request: ${command}`));
+      },
+    };
+
+    emitStoppedEvent(session);
+    await waitForSnapshots(1);
+
+    const snapshot = getBreakpointSnapshots()[0];
+    if (!snapshot) throw new Error('Expected one snapshot.');
+    expect(snapshot.scopes.map((scope) => scope.name)).toEqual(['Local', 'Arguments']);
+    expect(capturedVariableReferences).toEqual(expect.arrayContaining([101, 102]));
   });
 
   it('does not auto-continue when pauseOnBreakpoint is enabled', async () => {
@@ -403,6 +465,140 @@ describe('breakpointSnapshotManager', () => {
     expect(customRequestCalls).toContain('continue');
     expect(customRequestCalls).not.toContain('scopes');
     expect(customRequestCalls).not.toContain('variables');
+  });
+
+  it('limits child expansion requests to avoid fan-out latency spikes', async () => {
+    const childReferencesRequested: number[] = [];
+    const session: MockDebugSession = {
+      id: 'session-child-limit',
+      name: 'Debug: catalog-service',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        if (command === 'threads') return Promise.resolve({ threads: [{ id: 1 }] });
+        if (command === 'stackTrace') {
+          return Promise.resolve({
+            stackFrames: [
+              {
+                id: 11,
+                name: 'beforeCreate',
+                line: 42,
+                column: 9,
+                source: { path: '/workspace/srv/catalog-service.js' },
+              },
+            ],
+          });
+        }
+        if (command === 'scopes') {
+          return Promise.resolve({
+            scopes: [
+              { name: 'Local', expensive: false, variablesReference: 101 },
+            ],
+          });
+        }
+        if (command === 'variables') {
+          const variablesArg = typeof args === 'object' && args !== null
+            ? (args as { variablesReference?: unknown })
+            : {};
+          const variablesReference = typeof variablesArg.variablesReference === 'number'
+            ? variablesArg.variablesReference
+            : -1;
+          if (variablesReference === 101) {
+            return Promise.resolve({
+              variables: [
+                { name: 'obj1', value: '{...}', type: 'object', variablesReference: 201 },
+                { name: 'obj2', value: '{...}', type: 'object', variablesReference: 202 },
+                { name: 'obj3', value: '{...}', type: 'object', variablesReference: 203 },
+                { name: 'obj4', value: '{...}', type: 'object', variablesReference: 204 },
+                { name: 'obj5', value: '{...}', type: 'object', variablesReference: 205 },
+              ],
+            });
+          }
+          childReferencesRequested.push(variablesReference);
+          return Promise.resolve({
+            variables: [{ name: 'id', value: '1', type: 'number', variablesReference: 0 }],
+          });
+        }
+        if (command === 'continue') return Promise.resolve({});
+        return Promise.reject(new Error(`Unexpected request: ${command}`));
+      },
+    };
+
+    emitStoppedEvent(session);
+    await waitForSnapshots(1);
+
+    const snapshot = getBreakpointSnapshots()[0];
+    if (!snapshot) throw new Error('Expected one snapshot.');
+    expect(childReferencesRequested).toEqual([201, 202, 203, 204]);
+    const localVariables = snapshot.scopes[0]?.variables ?? [];
+    expect(localVariables[0]?.children?.length).toBe(1);
+    expect(localVariables[1]?.children?.length).toBe(1);
+    expect(localVariables[2]?.children?.length).toBe(1);
+    expect(localVariables[3]?.children?.length).toBe(1);
+    expect(localVariables[4]?.children).toBeUndefined();
+  });
+
+  it('times out slow child expansion and still resumes with top-level variables', async () => {
+    const customRequestCalls: string[] = [];
+    const session: MockDebugSession = {
+      id: 'session-child-timeout',
+      name: 'Debug: catalog-service',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        customRequestCalls.push(command);
+        if (command === 'threads') return Promise.resolve({ threads: [{ id: 1 }] });
+        if (command === 'stackTrace') {
+          return Promise.resolve({
+            stackFrames: [
+              {
+                id: 11,
+                name: 'beforeCreate',
+                line: 42,
+                column: 9,
+                source: { path: '/workspace/srv/catalog-service.js' },
+              },
+            ],
+          });
+        }
+        if (command === 'scopes') {
+          return Promise.resolve({
+            scopes: [
+              { name: 'Local', expensive: false, variablesReference: 101 },
+            ],
+          });
+        }
+        if (command === 'variables') {
+          const variablesArg = typeof args === 'object' && args !== null
+            ? (args as { variablesReference?: unknown })
+            : {};
+          const variablesReference = typeof variablesArg.variablesReference === 'number'
+            ? variablesArg.variablesReference
+            : -1;
+          if (variablesReference === 101) {
+            return Promise.resolve({
+              variables: [
+                { name: 'req', value: '{...}', type: 'object', variablesReference: 201 },
+                { name: 'req.id', value: 'abc-123', type: 'string', variablesReference: 0 },
+              ],
+            });
+          }
+          if (variablesReference === 201) {
+            return new Promise(() => undefined);
+          }
+          return Promise.resolve({ variables: [] });
+        }
+        if (command === 'continue') return Promise.resolve({});
+        return Promise.reject(new Error(`Unexpected request: ${command}`));
+      },
+    };
+
+    emitStoppedEvent(session);
+    await waitForSnapshots(1);
+
+    const snapshot = getBreakpointSnapshots()[0];
+    if (!snapshot) throw new Error('Expected one snapshot.');
+    expect(snapshot.autoResumed).toBe(true);
+    const reqVariable = snapshot.scopes[0]?.variables[0];
+    expect(reqVariable?.name).toBe('req');
+    expect(reqVariable?.children).toBeUndefined();
+    expect(customRequestCalls).toContain('continue');
   });
 
   it('caps the snapshot store at the configured max entries', async () => {

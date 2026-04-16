@@ -9,16 +9,23 @@ import type {
   BreakpointContextSnapshot,
   BreakpointContextVariable,
 } from '../types/index';
-const MAX_SCOPES = 4;
-const MAX_SCOPE_VARIABLES = 30;
-const MAX_CHILD_VARIABLES = 10;
+const MAX_SCOPES = 2;
+const MAX_SCOPE_VARIABLES = 18;
+const MAX_CHILD_VARIABLES = 8;
+const MAX_EXPANDABLE_VARIABLE_CHILDREN = 4;
 const MAX_VARIABLE_DEPTH = 1;
 const MAX_VALUE_LENGTH = 240;
+const CHILD_VARIABLE_REQUEST_TIMEOUT_MS = 90;
 // Maximum time to spend capturing snapshot context before issuing auto-continue.
 // Without a hard cap, a slow or unresponsive debug adapter can hold the process
 // paused indefinitely because autoContinue is only called after captureSnapshot resolves.
 const SNAPSHOT_CAPTURE_TIMEOUT_MS = 1200;
 const SENSITIVE_NAME_REGEX = /(pass(word)?|token|secret|api[_-]?key|authorization|cookie|session|private[_-]?key)/i;
+const SCOPE_PRIORITY: Readonly<Record<string, number>> = {
+  local: 0,
+  arguments: 1,
+  closure: 2,
+};
 
 export const breakpointSnapshotEvents = new EventEmitter();
 
@@ -320,9 +327,7 @@ async function captureSnapshot(
 async function captureScopes(session: vscode.DebugSession, frameId: number): Promise<BreakpointContextScope[]> {
   try {
     const scopesResponse = await session.customRequest('scopes', { frameId }) as unknown;
-    const scopes = getScopes(scopesResponse)
-      .filter((scope) => !isGlobalScope(scope.name))
-      .slice(0, MAX_SCOPES);
+    const scopes = selectScopesForSnapshot(getScopes(scopesResponse));
     // Fetch variables for all scopes in parallel to minimize total pause time over
     // high-latency transports (e.g. CF SSH tunnels where each sequential round-trip
     // adds 100-300 ms). Sequential fetching could take 10+ seconds for typical payloads.
@@ -351,6 +356,48 @@ function isGlobalScope(name: string): boolean {
   return normalized === 'global';
 }
 
+function normalizeScopeName(name: string): string {
+  return name.trim().replace(/^\[+|\]+$/g, '').trim().toLowerCase();
+}
+
+function getScopePriority(name: string): number {
+  const normalized = normalizeScopeName(name);
+  return SCOPE_PRIORITY[normalized] ?? Number.MAX_SAFE_INTEGER;
+}
+
+function sortScopesByPriority(scopes: DapScope[]): DapScope[] {
+  return [...scopes].sort((a, b) => {
+    const pA = getScopePriority(a.name);
+    const pB = getScopePriority(b.name);
+    if (pA !== pB) return pA - pB;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function selectScopesForSnapshot(scopes: DapScope[]): DapScope[] {
+  const nonGlobal = scopes.filter((scope) => !isGlobalScope(scope.name));
+  if (nonGlobal.length === 0) return [];
+
+  // Prefer non-expensive scopes for fast snapshots. If an adapter marks every
+  // scope as expensive, still capture top candidates so snapshot stays useful.
+  const preferred = nonGlobal.filter((scope) => !scope.expensive);
+  const candidateScopes = preferred.length > 0 ? preferred : nonGlobal;
+  return sortScopesByPriority(candidateScopes).slice(0, MAX_SCOPES);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(fallback);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).then((value) => {
+    clearTimeout(timer);
+    return value;
+  });
+}
+
 async function captureVariables(
   session: vscode.DebugSession,
   variablesReference: number,
@@ -365,18 +412,28 @@ async function captureVariables(
       count: limit,
     }) as unknown;
     const vars = getVariables(response);
+    let expandableChildrenBudget = MAX_EXPANDABLE_VARIABLE_CHILDREN;
     // Fetch children for all variables in parallel — same latency reasoning as captureScopes.
     const result = await Promise.all(
       vars.slice(0, limit).map(async (variable) => {
         const value = sanitizeVariableValue(variable.name, variable.value);
         let children: BreakpointContextVariable[] | undefined;
 
-        if (depth > 0 && variable.variablesReference > 0) {
-          const capturedChildren = await captureVariables(
-            session,
-            variable.variablesReference,
-            MAX_CHILD_VARIABLES,
-            depth - 1,
+        const canExpandChildren = depth > 0
+          && variable.variablesReference > 0
+          && expandableChildrenBudget > 0;
+
+        if (canExpandChildren) {
+          expandableChildrenBudget -= 1;
+          const capturedChildren = await withTimeout(
+            captureVariables(
+              session,
+              variable.variablesReference,
+              MAX_CHILD_VARIABLES,
+              depth - 1,
+            ),
+            CHILD_VARIABLE_REQUEST_TIMEOUT_MS,
+            [],
           );
           if (capturedChildren.length > 0) {
             children = capturedChildren;
