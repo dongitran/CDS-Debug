@@ -3,18 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 interface MockDebugSession {
   id: string;
   name: string;
+  type?: string;
+  parentSession?: MockDebugSession;
   customRequest: (command: string, args: unknown) => Promise<unknown>;
 }
 
-interface MockDebugEvent {
-  event: string;
-  session: MockDebugSession;
-  body: unknown;
+interface MockTrackerFactory {
+  createDebugAdapterTracker(session: MockDebugSession): { onDidSendMessage(msg: unknown): void } | undefined;
 }
 
 const { vscodeMockState } = vi.hoisted(() => ({
   vscodeMockState: {
-    handler: undefined as ((event: MockDebugEvent) => void) | undefined,
+    factory: undefined as MockTrackerFactory | undefined,
     pauseOnBreakpoint: false,
     breakpointSnapshotMaxEntries: 120,
   },
@@ -22,14 +22,21 @@ const { vscodeMockState } = vi.hoisted(() => ({
 
 vi.mock('vscode', () => ({
   debug: {
-    onDidReceiveDebugSessionCustomEvent: (handler: (event: MockDebugEvent) => void) => {
-      vscodeMockState.handler = handler;
+    registerDebugAdapterTrackerFactory: (_type: string, factory: MockTrackerFactory) => {
+      vscodeMockState.factory = factory;
       return {
         dispose: () => {
-          vscodeMockState.handler = undefined;
+          vscodeMockState.factory = undefined;
         },
       };
     },
+  },
+  window: {
+    createOutputChannel: () => ({
+      appendLine: () => undefined,
+      show: () => undefined,
+      dispose: () => undefined,
+    }),
   },
   workspace: {
     getConfiguration: () => ({
@@ -112,29 +119,6 @@ function createMockSession(
   };
 }
 
-function emitStoppedEvent(session: MockDebugSession, reason = 'breakpoint'): void {
-  const handler = vscodeMockState.handler;
-  if (!handler) {
-    throw new Error('Debug event handler is not initialized.');
-  }
-  handler({
-    event: 'stopped',
-    session,
-    body: {
-      reason,
-      threadId: 1,
-    },
-  });
-}
-
-function emitStoppedEventWithBody(session: MockDebugSession, body: Record<string, unknown>): void {
-  const handler = vscodeMockState.handler;
-  if (!handler) {
-    throw new Error('Debug event handler is not initialized.');
-  }
-  handler({ event: 'stopped', session, body });
-}
-
 function createMockSessionWithFailingStackTrace(): { session: MockDebugSession; customRequestCalls: string[] } {
   const customRequestCalls: string[] = [];
   const customRequest = (command: string, args: unknown): Promise<unknown> => {
@@ -152,6 +136,26 @@ function createMockSessionWithFailingStackTrace(): { session: MockDebugSession; 
     session: { id: 'session-fail', name: 'Debug: catalog-service', customRequest },
     customRequestCalls,
   };
+}
+
+function getTrackerFor(
+  session: MockDebugSession,
+): { onDidSendMessage(msg: unknown): void } | undefined {
+  const factory = vscodeMockState.factory;
+  if (!factory) throw new Error('Factory not initialized.');
+  return factory.createDebugAdapterTracker(session);
+}
+
+function emitStoppedEvent(session: MockDebugSession, reason = 'breakpoint'): void {
+  const tracker = getTrackerFor(session);
+  if (!tracker) return;
+  tracker.onDidSendMessage({ type: 'event', event: 'stopped', body: { reason, threadId: 1 } });
+}
+
+function emitStoppedEventWithBody(session: MockDebugSession, body: Record<string, unknown>): void {
+  const tracker = getTrackerFor(session);
+  if (!tracker) return;
+  tracker.onDidSendMessage({ type: 'event', event: 'stopped', body });
 }
 
 async function waitForSnapshots(expectedLength: number, timeoutMs = 3_000): Promise<void> {
@@ -233,9 +237,9 @@ describe('breakpointSnapshotManager', () => {
       customRequest: mockCustomRequest,
     };
 
-    const handler = vscodeMockState.handler;
-    if (!handler) throw new Error('Handler not initialized');
-    handler({ event: 'stopped', session: nonCdsSession, body: { reason: 'breakpoint', threadId: 1 } });
+    // Non-CDS session yields no tracker — the factory returns undefined
+    const tracker = getTrackerFor(nonCdsSession);
+    expect(tracker).toBeUndefined();
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -297,7 +301,7 @@ describe('breakpointSnapshotManager', () => {
     emitStoppedEvent(session);
     await waitForSnapshots(1);
 
-    // A duplicate listener would have produced 2 or 3 snapshots from a single event
+    // A duplicate tracker registration would have produced 2 or 3 snapshots from a single event
     expect(getBreakpointSnapshots()).toHaveLength(1);
   });
 
