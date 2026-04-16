@@ -7,6 +7,7 @@ on:
     paths:
       - 'src/**'
       - 'package.json'
+      - 'pnpm-lock.yaml'
       - '.github/workflows/publish.yml'
 
 jobs:
@@ -28,7 +29,44 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Publish to VS Code Marketplace
-        run: npx @vscode/vsce publish --no-dependencies
+      - name: Resolve publish metadata
+        id: publish_meta
+        run: |
+          RAW_VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$RAW_VERSION" == *-* ]]; then
+            CHANNEL="pre-release"
+            PUBLISH_VERSION="${RAW_VERSION%%-*}"
+          else
+            CHANNEL="stable"
+            PUBLISH_VERSION="$RAW_VERSION"
+          fi
+
+          if [[ ! "$PUBLISH_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unsupported marketplace version '$PUBLISH_VERSION'. Expected major.minor.patch."
+            exit 1
+          fi
+
+          echo "raw_version=$RAW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "publish_version=$PUBLISH_VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Normalize package version for VS Marketplace
+        if: steps.publish_meta.outputs.raw_version != steps.publish_meta.outputs.publish_version
+        env:
+          RAW_VERSION: ${{ steps.publish_meta.outputs.raw_version }}
+          PUBLISH_VERSION: ${{ steps.publish_meta.outputs.publish_version }}
+        run: |
+          echo "::notice::Marketplace does not accept semver pre-release tags. Publishing ${RAW_VERSION} as ${PUBLISH_VERSION} with pre-release channel."
+          npm pkg set version="$PUBLISH_VERSION"
+
+      - name: Publish stable to VS Code Marketplace
+        if: steps.publish_meta.outputs.channel == 'stable'
+        run: npx @vscode/vsce publish --skip-duplicate --no-dependencies
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish pre-release to VS Code Marketplace
+        if: steps.publish_meta.outputs.channel == 'pre-release'
+        run: npx @vscode/vsce publish --pre-release --skip-duplicate --no-dependencies
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
