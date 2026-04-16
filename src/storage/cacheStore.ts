@@ -63,10 +63,34 @@ export async function saveCacheSettings(settings: CacheSettings): Promise<void> 
   await ctx().globalState.update(SETTINGS_KEY, settings);
 }
 
+function readDebugPreferences(value: unknown): Partial<DebugPreferences> {
+  if (typeof value !== 'object' || value === null) return {};
+  const record = value as Record<string, unknown>;
+  const parsed: Partial<DebugPreferences> = {};
+  if (typeof record.openBrowserOnAttach === 'boolean') {
+    parsed.openBrowserOnAttach = record.openBrowserOnAttach;
+  }
+  if (typeof record.enableBranchPrep === 'boolean') {
+    parsed.enableBranchPrep = record.enableBranchPrep;
+  }
+  if (typeof record.enableBreakpointSnapshotHandling === 'boolean') {
+    parsed.enableBreakpointSnapshotHandling = record.enableBreakpointSnapshotHandling;
+  }
+  return parsed;
+}
+
 export function getDebugPreferences(): DebugPreferences {
-  return ctx().globalState.get<DebugPreferences>(DEBUG_PREFS_KEY) ?? { ...DEFAULT_DEBUG_PREFERENCES };
+  const stored = ctx().globalState.get<unknown>(DEBUG_PREFS_KEY);
+  return {
+    ...DEFAULT_DEBUG_PREFERENCES,
+    ...readDebugPreferences(stored),
+  };
 }
 
 export async function saveDebugPreferences(prefs: DebugPreferences): Promise<void> {
-  await ctx().globalState.update(DEBUG_PREFS_KEY, prefs);
+  const normalized: DebugPreferences = {
+    ...DEFAULT_DEBUG_PREFERENCES,
+    ...readDebugPreferences(prefs),
+  };
+  await ctx().globalState.update(DEBUG_PREFS_KEY, normalized);
 }

@@ -21,6 +21,16 @@ const { vscodeMockState } = vi.hoisted(() => ({
   },
 }));
 
+const { debugPrefsMockState } = vi.hoisted(() => ({
+  debugPrefsMockState: {
+    value: {
+      openBrowserOnAttach: false,
+      enableBranchPrep: false,
+      enableBreakpointSnapshotHandling: true,
+    },
+  },
+}));
+
 vi.mock('vscode', () => ({
   debug: {
     get sessions() {
@@ -55,6 +65,10 @@ vi.mock('vscode', () => ({
       },
     }),
   },
+}));
+
+vi.mock('../../src/storage/cacheStore', () => ({
+  getDebugPreferences: () => debugPrefsMockState.value,
 }));
 
 import {
@@ -202,6 +216,11 @@ beforeEach(() => {
   vscodeMockState.pauseOnBreakpoint = false;
   vscodeMockState.breakpointSnapshotMaxEntries = 120;
   vscodeMockState.sessions = [];
+  debugPrefsMockState.value = {
+    openBrowserOnAttach: false,
+    enableBranchPrep: false,
+    enableBreakpointSnapshotHandling: true,
+  };
   initializeBreakpointSnapshotManager();
 });
 
@@ -233,6 +252,68 @@ describe('breakpointSnapshotManager', () => {
     expect(customRequestCalls).toContain('continue');
   });
 
+  it('excludes Global scope from captured breakpoint snapshot', async () => {
+    const customRequestCalls: string[] = [];
+    const capturedVariableReferences: number[] = [];
+    const session: MockDebugSession = {
+      id: 'session-global',
+      name: 'Debug: catalog-service',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        customRequestCalls.push(command);
+        if (command === 'threads') return Promise.resolve({ threads: [{ id: 1 }] });
+        if (command === 'stackTrace') {
+          return Promise.resolve({
+            stackFrames: [
+              {
+                id: 11,
+                name: 'beforeCreate',
+                line: 42,
+                column: 9,
+                source: { path: '/workspace/srv/catalog-service.js' },
+              },
+            ],
+          });
+        }
+        if (command === 'scopes') {
+          return Promise.resolve({
+            scopes: [
+              { name: 'Global', expensive: false, variablesReference: 999 },
+              { name: 'Local', expensive: false, variablesReference: 101 },
+            ],
+          });
+        }
+        if (command === 'variables') {
+          const variablesArg = typeof args === 'object' && args !== null
+            ? (args as { variablesReference?: unknown })
+            : {};
+          const variablesReference = typeof variablesArg.variablesReference === 'number'
+            ? variablesArg.variablesReference
+            : -1;
+          capturedVariableReferences.push(variablesReference);
+          if (variablesReference === 101) {
+            return Promise.resolve({
+              variables: [
+                { name: 'req.id', value: 'abc-123', type: 'string', variablesReference: 0 },
+              ],
+            });
+          }
+          return Promise.resolve({ variables: [] });
+        }
+        if (command === 'continue') return Promise.resolve({});
+        return Promise.reject(new Error(`Unexpected request: ${command}`));
+      },
+    };
+
+    emitStoppedEvent(session);
+    await waitForSnapshots(1);
+
+    const snapshot = getBreakpointSnapshots()[0];
+    if (!snapshot) throw new Error('Expected one snapshot.');
+    expect(snapshot.scopes.map((scope) => scope.name)).toEqual(['Local']);
+    expect(capturedVariableReferences).toEqual([101]);
+    expect(customRequestCalls).toContain('continue');
+  });
+
   it('does not auto-continue when pauseOnBreakpoint is enabled', async () => {
     vscodeMockState.pauseOnBreakpoint = true;
     const { session, customRequestCalls } = createMockSession();
@@ -254,6 +335,21 @@ describe('breakpointSnapshotManager', () => {
     const { session, customRequestCalls } = createMockSession();
     emitStoppedEvent(session, 'step');
     await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(getBreakpointSnapshots()).toHaveLength(0);
+    expect(customRequestCalls).toHaveLength(0);
+  });
+
+  it('does not handle breakpoints when snapshot handling is disabled in debug preferences', async () => {
+    debugPrefsMockState.value = {
+      openBrowserOnAttach: false,
+      enableBranchPrep: false,
+      enableBreakpointSnapshotHandling: false,
+    };
+    const { session, customRequestCalls } = createMockSession();
+    emitStoppedEvent(session);
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
 
     expect(getBreakpointSnapshots()).toHaveLength(0);
     expect(customRequestCalls).toHaveLength(0);

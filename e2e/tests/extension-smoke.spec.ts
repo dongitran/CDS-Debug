@@ -1782,10 +1782,13 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.cred-info-email')).toContainText(MOCK_ENV_EMAIL);
         await expect(webview.locator('.cred-info-icon[aria-label="Environment variable info"]')).toBeVisible();
         await expect(webview.locator('#btn-update-credentials')).toHaveCount(0);
-        // Debug Behavior section with both preference toggles
+        // Debug Behavior section with all preference toggles
         await expect(webview.locator('.section-label', { hasText: 'Debug Behavior' })).toBeVisible();
         await expect(webview.getByText(/Auto-open browser on attach/)).toBeVisible();
         await expect(webview.locator('#chk-open-browser')).toBeVisible();
+        await expect(webview.getByText(/Breakpoint snapshot handling/)).toBeVisible();
+        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).toBeVisible();
+        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).toBeChecked();
         await expect(webview.getByText(/Branch auto-checkout/)).toBeVisible();
         await expect(webview.locator('#chk-branch-prep')).toBeVisible();
         // App Cache section with sync controls
@@ -1803,8 +1806,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.pref-state-badge.pref-state-off')).toContainText('off by default');
         // Branch auto-checkout carries an "experimental" badge
         await expect(webview.locator('.beta-badge')).toBeVisible();
-        // Both preference rows have toggle switches (one for each pref)
-        await expect(webview.locator('.pref-row .toggle-switch')).toHaveCount(2);
+        // Debug behavior contains exactly three preference toggles
+        await expect(webview.locator('.pref-row .toggle-switch')).toHaveCount(3);
         // Navigation buttons
         await expect(webview.locator('#btn-back-settings')).toBeVisible();
         await expect(webview.locator('#btn-logout-settings')).toBeVisible();
@@ -1813,6 +1816,32 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await expectReadyScreen(webview);
         await expect(webview.getByText('mock-service-a')).toBeVisible();
+      });
+    });
+
+    test('Breakpoint snapshot handling toggle can be disabled and persists after reopening settings', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await webview.locator('#btn-gear').click();
+        await expect(webview.getByText('Settings')).toBeVisible();
+        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).toBeChecked();
+
+        await webview.locator('#chk-breakpoint-snapshot-handling').uncheck({ force: true });
+        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).not.toBeChecked();
+        await expect(
+          webview.locator('label.pref-row:has(#chk-breakpoint-snapshot-handling) .toggle-switch'),
+        ).not.toHaveClass(/on/);
+        // Let SAVE_DEBUG_PREFS round-trip complete before leaving Settings.
+        await delay(300);
+
+        await webview.locator('#btn-back-settings').click();
+        await expectReadyScreen(webview);
+        await webview.locator('#btn-gear').click();
+
+        await expect(webview.getByText('Settings')).toBeVisible();
+        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).not.toBeChecked();
       });
     });
   });

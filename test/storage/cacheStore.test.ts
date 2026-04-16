@@ -156,15 +156,31 @@ describe('cacheStore', () => {
   });
 
   it('saveDebugPreferences persists prefs and getDebugPreferences retrieves them', async () => {
-    const prefs: DebugPreferences = { openBrowserOnAttach: true, enableBranchPrep: true };
+    const prefs: DebugPreferences = {
+      openBrowserOnAttach: true,
+      enableBranchPrep: true,
+      enableBreakpointSnapshotHandling: false,
+    };
     await saveDebugPreferences(prefs);
     expect(getDebugPreferences()).toEqual(prefs);
   });
 
   it('saveDebugPreferences overwrites previous prefs', async () => {
-    await saveDebugPreferences({ openBrowserOnAttach: true, enableBranchPrep: true });
-    await saveDebugPreferences({ openBrowserOnAttach: false, enableBranchPrep: false });
-    expect(getDebugPreferences()).toEqual({ openBrowserOnAttach: false, enableBranchPrep: false });
+    await saveDebugPreferences({
+      openBrowserOnAttach: true,
+      enableBranchPrep: true,
+      enableBreakpointSnapshotHandling: false,
+    });
+    await saveDebugPreferences({
+      openBrowserOnAttach: false,
+      enableBranchPrep: false,
+      enableBreakpointSnapshotHandling: true,
+    });
+    expect(getDebugPreferences()).toEqual({
+      openBrowserOnAttach: false,
+      enableBranchPrep: false,
+      enableBreakpointSnapshotHandling: true,
+    });
   });
 
   it('DEFAULT_DEBUG_PREFERENCES has openBrowserOnAttach = false', () => {
@@ -173,6 +189,34 @@ describe('cacheStore', () => {
 
   it('DEFAULT_DEBUG_PREFERENCES has enableBranchPrep = false', () => {
     expect(DEFAULT_DEBUG_PREFERENCES.enableBranchPrep).toBe(false);
+  });
+
+  it('DEFAULT_DEBUG_PREFERENCES has enableBreakpointSnapshotHandling = true', () => {
+    expect(DEFAULT_DEBUG_PREFERENCES.enableBreakpointSnapshotHandling).toBe(true);
+  });
+
+  it('getDebugPreferences backfills missing fields from legacy stored prefs', () => {
+    const store = new Map<string, unknown>();
+    store.set('cds-debug.debugPrefs', {
+      openBrowserOnAttach: true,
+      enableBranchPrep: false,
+    });
+    initCacheStore({
+      globalState: {
+        get: (key: string): unknown => store.get(key),
+        update: (key: string, value: unknown): Promise<void> => {
+          if (value === undefined) store.delete(key);
+          else store.set(key, value);
+          return Promise.resolve();
+        },
+      },
+    } as unknown as Parameters<typeof initCacheStore>[0]);
+
+    expect(getDebugPreferences()).toEqual({
+      openBrowserOnAttach: true,
+      enableBranchPrep: false,
+      enableBreakpointSnapshotHandling: true,
+    });
   });
 
   // ── uninitialized guard ────────────────────────────────────────────────────

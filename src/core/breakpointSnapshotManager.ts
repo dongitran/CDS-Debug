@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { EventEmitter } from 'node:events';
 import { logInfo, logWarn } from './logger';
 import { DEBUG_SESSION_PREFIX } from './processManager';
+import { getDebugPreferences } from '../storage/cacheStore';
 import type {
   BreakpointContextLocation,
   BreakpointContextScope,
@@ -43,6 +44,7 @@ export function initializeBreakpointSnapshotManager(): void {
           if (body?.reason !== 'breakpoint') return;
           const appName = findCdsAppName(session);
           if (!appName) return;
+          if (!isBreakpointSnapshotHandlingEnabled()) return;
           logInfo(`[BreakpointSnapshots] Tracker attached — session: "${session.name}" type: ${session.type} app: ${appName}`);
           logInfo(`[BreakpointSnapshots] Breakpoint stop — app: ${appName} thread: ${String(body.threadId)}`);
           enqueueSessionTask(session.id, async () => {
@@ -52,6 +54,16 @@ export function initializeBreakpointSnapshotManager(): void {
       };
     },
   });
+}
+
+function isBreakpointSnapshotHandlingEnabled(): boolean {
+  try {
+    return getDebugPreferences().enableBreakpointSnapshotHandling;
+  } catch {
+    // Preferences store can be unavailable in early lifecycle / test harness.
+    // Preserve the legacy default behavior when that happens.
+    return true;
+  }
 }
 
 // Walks the session hierarchy to find the CDS Debug app name.
@@ -308,7 +320,9 @@ async function captureSnapshot(
 async function captureScopes(session: vscode.DebugSession, frameId: number): Promise<BreakpointContextScope[]> {
   try {
     const scopesResponse = await session.customRequest('scopes', { frameId }) as unknown;
-    const scopes = getScopes(scopesResponse).slice(0, MAX_SCOPES);
+    const scopes = getScopes(scopesResponse)
+      .filter((scope) => !isGlobalScope(scope.name))
+      .slice(0, MAX_SCOPES);
     // Fetch variables for all scopes in parallel to minimize total pause time over
     // high-latency transports (e.g. CF SSH tunnels where each sequential round-trip
     // adds 100-300 ms). Sequential fetching could take 10+ seconds for typical payloads.
@@ -330,6 +344,11 @@ async function captureScopes(session: vscode.DebugSession, frameId: number): Pro
   } catch {
     return [];
   }
+}
+
+function isGlobalScope(name: string): boolean {
+  const normalized = name.trim().replace(/^\[+|\]+$/g, '').trim().toLowerCase();
+  return normalized === 'global';
 }
 
 async function captureVariables(

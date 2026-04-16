@@ -131,6 +131,13 @@ export interface DebugPreferences {
    */
   openBrowserOnAttach: boolean;
   /**
+   * When true, CDS Debug intercepts breakpoint stops to capture a snapshot,
+   * then applies the current auto-continue behavior. When false, CDS Debug
+   * does not handle breakpoint stops at all (native debugger pause behavior).
+   * Default: true.
+   */
+  enableBreakpointSnapshotHandling: boolean;
+  /**
    * When true, the branch auto-checkout feature is enabled: before starting
    * a debug session the extension stashes local changes, checks out the mapped
    * branch, then runs `pnpm i --shamefully-hoist` and `pnpm build`.
@@ -141,6 +148,7 @@ export interface DebugPreferences {
 
 export const DEFAULT_DEBUG_PREFERENCES: DebugPreferences = {
   openBrowserOnAttach: false,
+  enableBreakpointSnapshotHandling: true,
   enableBranchPrep: false,
 };
 

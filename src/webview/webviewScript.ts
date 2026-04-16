@@ -81,7 +81,11 @@ export function getScript(nonce: string): string {
       // Branch preparation state: [{ appName, targetBranch, currentBranch, step, message }]
       branchPrepServices: [],
       // Debug behavior preferences
-      debugPrefs: { openBrowserOnAttach: false, enableBranchPrep: false },
+      debugPrefs: {
+        openBrowserOnAttach: false,
+        enableBreakpointSnapshotHandling: true,
+        enableBranchPrep: false,
+      },
       // True when the current LOAD_APPS was triggered automatically by session restore
       // (VS Code restart). Used to determine whether APPS_ERROR should auto-reconnect.
       isRestoringSession: false,

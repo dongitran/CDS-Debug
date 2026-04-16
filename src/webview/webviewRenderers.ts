@@ -727,7 +727,20 @@ export function getRendererScriptContent(): string {
           </div>
         </label>
 
-        <div style="height:4px"></div>
+        <label class="pref-row" for="chk-breakpoint-snapshot-handling">
+          <div class="pref-row-content">
+            <span class="pref-row-title">Breakpoint snapshot handling
+              <span class="pref-state-badge \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'pref-state-on' : 'pref-state-off'}">
+                \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'enabled by default' : 'disabled'}
+              </span>
+            </span>
+            <span class="pref-row-desc">On: capture snapshot + auto-continue. Off: keep native breakpoint pause behavior.</span>
+          </div>
+          <div class="toggle-switch \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'on' : ''}">
+            <input type="checkbox" id="chk-breakpoint-snapshot-handling" \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'checked' : ''} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </div>
+        </label>
 
         <label class="pref-row" for="chk-branch-prep">
           <div class="pref-row-content">
@@ -983,6 +996,20 @@ export function getRendererScriptContent(): string {
           badge.textContent = openBrowserOnAttach ? 'enabled' : 'off by default';
           badge.classList.toggle('pref-state-on', openBrowserOnAttach);
           badge.classList.toggle('pref-state-off', !openBrowserOnAttach);
+        }
+        vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: state.debugPrefs });
+      });
+
+      $('chk-breakpoint-snapshot-handling')?.addEventListener('change', function(e) {
+        const enableBreakpointSnapshotHandling = !!e.target.checked;
+        state.debugPrefs = { ...state.debugPrefs, enableBreakpointSnapshotHandling };
+        var toggle = $('chk-breakpoint-snapshot-handling')?.closest('.toggle-switch');
+        if (toggle) toggle.classList.toggle('on', enableBreakpointSnapshotHandling);
+        var badge = $('chk-breakpoint-snapshot-handling')?.closest('.pref-row')?.querySelector('.pref-state-badge');
+        if (badge) {
+          badge.textContent = enableBreakpointSnapshotHandling ? 'enabled by default' : 'disabled';
+          badge.classList.toggle('pref-state-on', enableBreakpointSnapshotHandling);
+          badge.classList.toggle('pref-state-off', !enableBreakpointSnapshotHandling);
         }
         vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: state.debugPrefs });
       });
