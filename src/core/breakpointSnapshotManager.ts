@@ -9,13 +9,14 @@ import type {
   BreakpointContextSnapshot,
   BreakpointContextVariable,
 } from '../types/index';
-const MAX_SCOPES = 2;
-const MAX_SCOPE_VARIABLES = 18;
+const MAX_SCOPES = 3;
+const MAX_SCOPE_VARIABLES = 20;
 const MAX_CHILD_VARIABLES = 8;
-const MAX_EXPANDABLE_VARIABLE_CHILDREN = 4;
-const MAX_VARIABLE_DEPTH = 1;
+const MAX_EXPANDABLE_VARIABLE_CHILDREN_ROOT = 5;
+const MAX_EXPANDABLE_VARIABLE_CHILDREN_NESTED = 1;
+const MAX_VARIABLE_DEPTH = 2;
 const MAX_VALUE_LENGTH = 240;
-const CHILD_VARIABLE_REQUEST_TIMEOUT_MS = 90;
+const CHILD_VARIABLE_REQUEST_TIMEOUT_MS = 220;
 // Maximum time to spend capturing snapshot context before issuing auto-continue.
 // Without a hard cap, a slow or unresponsive debug adapter can hold the process
 // paused indefinitely because autoContinue is only called after captureSnapshot resolves.
@@ -24,7 +25,8 @@ const SENSITIVE_NAME_REGEX = /(pass(word)?|token|secret|api[_-]?key|authorizatio
 const SCOPE_PRIORITY: Readonly<Record<string, number>> = {
   local: 0,
   arguments: 1,
-  closure: 2,
+  block: 2,
+  closure: 3,
 };
 
 export const breakpointSnapshotEvents = new EventEmitter();
@@ -362,6 +364,7 @@ function normalizeScopeName(name: string): string {
 
 function getScopePriority(name: string): number {
   const normalized = normalizeScopeName(name);
+  if (normalized.startsWith('block')) return SCOPE_PRIORITY.block ?? Number.MAX_SAFE_INTEGER;
   return SCOPE_PRIORITY[normalized] ?? Number.MAX_SAFE_INTEGER;
 }
 
@@ -393,9 +396,38 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Pr
     }, timeoutMs);
   });
   return Promise.race([promise, timeout]).then((value) => {
-    clearTimeout(timer);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
     return value;
   });
+}
+
+function getExpandableChildrenBudget(depth: number): number {
+  if (depth >= 2) return MAX_EXPANDABLE_VARIABLE_CHILDREN_ROOT;
+  if (depth === 1) return MAX_EXPANDABLE_VARIABLE_CHILDREN_NESTED;
+  return 0;
+}
+
+function withStructuredPreview(raw: string, children: BreakpointContextVariable[]): string {
+  if (children.length === 0) return raw;
+  const compact = raw.trim();
+  const hasGenericPreview = compact.includes('{…}')
+    || compact.includes('{...}')
+    || compact.includes('[…]')
+    || compact.includes('[...]');
+  if (!hasGenericPreview) return raw;
+
+  const sample = children
+    .slice(0, 3)
+    .map((child) => `${child.name}: ${child.value}`)
+    .join(', ');
+  const suffix = children.length > 3 ? ', …' : '';
+  const preview = compact.startsWith('[')
+    ? `[${sample}${suffix}]`
+    : `{${sample}${suffix}}`;
+  if (preview.length <= MAX_VALUE_LENGTH) return preview;
+  return `${preview.slice(0, MAX_VALUE_LENGTH)}...`;
 }
 
 async function captureVariables(
@@ -412,11 +444,11 @@ async function captureVariables(
       count: limit,
     }) as unknown;
     const vars = getVariables(response);
-    let expandableChildrenBudget = MAX_EXPANDABLE_VARIABLE_CHILDREN;
+    let expandableChildrenBudget = getExpandableChildrenBudget(depth);
     // Fetch children for all variables in parallel — same latency reasoning as captureScopes.
     const result = await Promise.all(
       vars.slice(0, limit).map(async (variable) => {
-        const value = sanitizeVariableValue(variable.name, variable.value);
+        const rawValue = sanitizeVariableValue(variable.name, variable.value);
         let children: BreakpointContextVariable[] | undefined;
 
         const canExpandChildren = depth > 0
@@ -439,6 +471,10 @@ async function captureVariables(
             children = capturedChildren;
           }
         }
+
+        const value = rawValue === '[REDACTED]'
+          ? rawValue
+          : withStructuredPreview(rawValue, children ?? []);
 
         const mapped: BreakpointContextVariable = {
           name: variable.name,

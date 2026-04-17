@@ -252,7 +252,7 @@ describe('breakpointSnapshotManager', () => {
     expect(customRequestCalls).toContain('continue');
   });
 
-  it('excludes Global scope, skips expensive scopes, and prioritizes Local/Arguments', async () => {
+  it('excludes Global scope, skips expensive scopes, and prioritizes Local/Arguments/Closure', async () => {
     const customRequestCalls: string[] = [];
     const capturedVariableReferences: number[] = [];
     const session: MockDebugSession = {
@@ -293,7 +293,7 @@ describe('breakpointSnapshotManager', () => {
             ? variablesArg.variablesReference
             : -1;
           capturedVariableReferences.push(variablesReference);
-          if (variablesReference === 101 || variablesReference === 102) {
+          if (variablesReference === 101 || variablesReference === 102 || variablesReference === 103) {
             return Promise.resolve({
               variables: [
                 { name: 'req.id', value: 'abc-123', type: 'string', variablesReference: 0 },
@@ -312,11 +312,10 @@ describe('breakpointSnapshotManager', () => {
 
     const snapshot = getBreakpointSnapshots()[0];
     if (!snapshot) throw new Error('Expected one snapshot.');
-    expect(snapshot.scopes.map((scope) => scope.name)).toEqual(['Local', 'Arguments']);
-    expect(capturedVariableReferences).toEqual(expect.arrayContaining([101, 102]));
+    expect(snapshot.scopes.map((scope) => scope.name)).toEqual(['Local', 'Arguments', 'Closure']);
+    expect(capturedVariableReferences).toEqual(expect.arrayContaining([101, 102, 103]));
     expect(capturedVariableReferences).not.toContain(998);
     expect(capturedVariableReferences).not.toContain(999);
-    expect(capturedVariableReferences).not.toContain(103);
     expect(customRequestCalls).toContain('continue');
   });
 
@@ -374,6 +373,81 @@ describe('breakpointSnapshotManager', () => {
     if (!snapshot) throw new Error('Expected one snapshot.');
     expect(snapshot.scopes.map((scope) => scope.name)).toEqual(['Local', 'Arguments']);
     expect(capturedVariableReferences).toEqual(expect.arrayContaining([101, 102]));
+  });
+
+  it('captures one nested object level and enriches generic object previews', async () => {
+    const session: MockDebugSession = {
+      id: 'session-nested-preview',
+      name: 'Debug: catalog-service',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        if (command === 'threads') return Promise.resolve({ threads: [{ id: 1 }] });
+        if (command === 'stackTrace') {
+          return Promise.resolve({
+            stackFrames: [
+              {
+                id: 11,
+                name: 'beforeCreate',
+                line: 42,
+                column: 9,
+                source: { path: '/workspace/srv/catalog-service.js' },
+              },
+            ],
+          });
+        }
+        if (command === 'scopes') {
+          return Promise.resolve({
+            scopes: [
+              { name: 'Local', expensive: false, variablesReference: 101 },
+            ],
+          });
+        }
+        if (command === 'variables') {
+          const variablesArg = typeof args === 'object' && args !== null
+            ? (args as { variablesReference?: unknown })
+            : {};
+          const variablesReference = typeof variablesArg.variablesReference === 'number'
+            ? variablesArg.variablesReference
+            : -1;
+          if (variablesReference === 101) {
+            return Promise.resolve({
+              variables: [
+                { name: 'common_1', value: '{…}', type: 'Object', variablesReference: 201 },
+              ],
+            });
+          }
+          if (variablesReference === 201) {
+            return Promise.resolve({
+              variables: [
+                { name: 'API_DESTINATION', value: 'MULE_API', type: 'string', variablesReference: 0 },
+                { name: 'API_ENDPOINTS', value: '{…}', type: 'Object', variablesReference: 301 },
+              ],
+            });
+          }
+          if (variablesReference === 301) {
+            return Promise.resolve({
+              variables: [
+                { name: 'testConnectivity', value: '/api/test', type: 'string', variablesReference: 0 },
+                { name: 'status', value: 'active', type: 'string', variablesReference: 0 },
+              ],
+            });
+          }
+          return Promise.resolve({ variables: [] });
+        }
+        if (command === 'continue') return Promise.resolve({});
+        return Promise.reject(new Error(`Unexpected request: ${command}`));
+      },
+    };
+
+    emitStoppedEvent(session);
+    await waitForSnapshots(1);
+
+    const snapshot = getBreakpointSnapshots()[0];
+    if (!snapshot) throw new Error('Expected one snapshot.');
+    const common = snapshot.scopes[0]?.variables[0];
+    expect(common?.value).toContain('API_DESTINATION: MULE_API');
+    const endpoints = common?.children?.find((v) => v.name === 'API_ENDPOINTS');
+    expect(endpoints?.value).toContain('testConnectivity: /api/test');
+    expect(endpoints?.children?.map((c) => c.name)).toEqual(['testConnectivity', 'status']);
   });
 
   it('does not auto-continue when pauseOnBreakpoint is enabled', async () => {
@@ -467,7 +541,7 @@ describe('breakpointSnapshotManager', () => {
     expect(customRequestCalls).not.toContain('variables');
   });
 
-  it('limits child expansion requests to avoid fan-out latency spikes', async () => {
+  it('limits root child expansion requests to avoid fan-out latency spikes', async () => {
     const childReferencesRequested: number[] = [];
     const session: MockDebugSession = {
       id: 'session-child-limit',
@@ -527,13 +601,13 @@ describe('breakpointSnapshotManager', () => {
 
     const snapshot = getBreakpointSnapshots()[0];
     if (!snapshot) throw new Error('Expected one snapshot.');
-    expect(childReferencesRequested).toEqual([201, 202, 203, 204]);
+    expect(childReferencesRequested).toEqual([201, 202, 203, 204, 205]);
     const localVariables = snapshot.scopes[0]?.variables ?? [];
     expect(localVariables[0]?.children?.length).toBe(1);
     expect(localVariables[1]?.children?.length).toBe(1);
     expect(localVariables[2]?.children?.length).toBe(1);
     expect(localVariables[3]?.children?.length).toBe(1);
-    expect(localVariables[4]?.children).toBeUndefined();
+    expect(localVariables[4]?.children?.length).toBe(1);
   });
 
   it('times out slow child expansion and still resumes with top-level variables', async () => {

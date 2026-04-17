@@ -1515,7 +1515,22 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
                     name: 'Local',
                     expensive: false,
                     variables: [
-                      { name: 'req.user', value: '{ id: \"U100\" }', type: 'object' },
+                      {
+                        name: 'req',
+                        value: '{id: \"U100\", headers: {…}}',
+                        type: 'object',
+                        children: [
+                          { name: 'id', value: 'U100', type: 'string' },
+                          {
+                            name: 'headers',
+                            value: '{authorization: [REDACTED]}',
+                            type: 'object',
+                            children: [
+                              { name: 'authorization', value: '[REDACTED]', type: 'string' },
+                            ],
+                          },
+                        ],
+                      },
                     ],
                   },
                 ],
@@ -1538,6 +1553,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await webview.locator('[data-breakpoint-snapshot-id=\"snap-1\"]').click();
         await expect(webview.locator('.bp-detail')).toContainText('catalog-service');
         await expect(webview.locator('.bp-detail')).toContainText('beforeCreate');
+        await expect(webview.locator('.bp-detail')).toContainText('headers');
+        await expect(webview.locator('.bp-detail')).toContainText('authorization');
       });
     });
 

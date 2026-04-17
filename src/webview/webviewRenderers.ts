@@ -343,7 +343,7 @@ export function getRendererScriptContent(): string {
           lines.push('');
           continue;
         }
-        appendSnapshotVariables(lines, scope.variables, 1, 2);
+        appendSnapshotVariables(lines, scope.variables, 1, 3);
         lines.push('');
       }
 
