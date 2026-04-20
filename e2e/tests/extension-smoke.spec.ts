@@ -1805,7 +1805,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('#chk-open-browser')).toBeVisible();
         await expect(webview.getByText(/Breakpoint snapshot handling/)).toBeVisible();
         await expect(webview.locator('#chk-breakpoint-snapshot-handling')).toBeVisible();
-        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).toBeChecked();
+        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).not.toBeChecked();
         await expect(webview.getByText(/Branch auto-checkout/)).toBeVisible();
         await expect(webview.locator('#chk-branch-prep')).toBeVisible();
         // App Cache section with sync controls
@@ -1820,7 +1820,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.sync-status-row')).toContainText('Last sync');
         await expect(webview.locator('.sync-status-row')).toContainText('Never');
         // Auto-open browser pref badge shows "off by default" (disabled by default)
-        await expect(webview.locator('.pref-state-badge.pref-state-off')).toContainText('off by default');
+        await expect(
+          webview.locator('label.pref-row:has(#chk-open-browser) .pref-state-badge.pref-state-off'),
+        ).toContainText('off by default');
+        await expect(
+          webview.locator('label.pref-row:has(#chk-breakpoint-snapshot-handling) .pref-state-badge.pref-state-off'),
+        ).toContainText('off by default');
         // Branch auto-checkout carries an "experimental" badge
         await expect(webview.locator('.beta-badge')).toBeVisible();
         // Debug behavior contains exactly three preference toggles
@@ -1836,20 +1841,20 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       });
     });
 
-    test('Breakpoint snapshot handling toggle can be disabled and persists after reopening settings', async () => {
+    test('Breakpoint snapshot handling toggle can be enabled and persists after reopening settings', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
-        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).toBeChecked();
-
-        await webview.locator('#chk-breakpoint-snapshot-handling').uncheck({ force: true });
         await expect(webview.locator('#chk-breakpoint-snapshot-handling')).not.toBeChecked();
+
+        await webview.locator('#chk-breakpoint-snapshot-handling').check({ force: true });
+        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).toBeChecked();
         await expect(
           webview.locator('label.pref-row:has(#chk-breakpoint-snapshot-handling) .toggle-switch'),
-        ).not.toHaveClass(/on/);
+        ).toHaveClass(/on/);
         // Let SAVE_DEBUG_PREFS round-trip complete before leaving Settings.
         await delay(300);
 
@@ -1858,7 +1863,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await webview.locator('#btn-gear').click();
 
         await expect(webview.getByText('Settings')).toBeVisible();
-        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).not.toBeChecked();
+        await expect(webview.locator('#chk-breakpoint-snapshot-handling')).toBeChecked();
       });
     });
   });

@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -54,7 +54,7 @@
         "cdsDebug.pauseOnBreakpoint": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "When enabled, CDS Debug pauses at breakpoints normally. When disabled (default), CDS Debug snapshots breakpoint variables/context then auto-continues to avoid blocking shared remote services."
+          "markdownDescription": "When `Breakpoint Snapshot Handling` is enabled in the CDS Debug Settings panel, turning this on keeps the debugger paused at breakpoints. When off, CDS Debug captures breakpoint context and auto-continues. Breakpoint snapshot handling itself is off by default."
         },
         "cdsDebug.breakpointSnapshotMaxEntries": {
           "type": "number",

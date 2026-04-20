@@ -191,8 +191,8 @@ describe('cacheStore', () => {
     expect(DEFAULT_DEBUG_PREFERENCES.enableBranchPrep).toBe(false);
   });
 
-  it('DEFAULT_DEBUG_PREFERENCES has enableBreakpointSnapshotHandling = true', () => {
-    expect(DEFAULT_DEBUG_PREFERENCES.enableBreakpointSnapshotHandling).toBe(true);
+  it('DEFAULT_DEBUG_PREFERENCES has enableBreakpointSnapshotHandling = false', () => {
+    expect(DEFAULT_DEBUG_PREFERENCES.enableBreakpointSnapshotHandling).toBe(false);
   });
 
   it('getDebugPreferences backfills missing fields from legacy stored prefs', () => {
@@ -215,7 +215,7 @@ describe('cacheStore', () => {
     expect(getDebugPreferences()).toEqual({
       openBrowserOnAttach: true,
       enableBranchPrep: false,
-      enableBreakpointSnapshotHandling: true,
+      enableBreakpointSnapshotHandling: false,
     });
   });
 

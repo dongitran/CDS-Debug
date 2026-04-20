@@ -134,7 +134,7 @@ export interface DebugPreferences {
    * When true, CDS Debug intercepts breakpoint stops to capture a snapshot,
    * then applies the current auto-continue behavior. When false, CDS Debug
    * does not handle breakpoint stops at all (native debugger pause behavior).
-   * Default: true.
+   * Default: false.
    */
   enableBreakpointSnapshotHandling: boolean;
   /**
@@ -148,7 +148,7 @@ export interface DebugPreferences {
 
 export const DEFAULT_DEBUG_PREFERENCES: DebugPreferences = {
   openBrowserOnAttach: false,
-  enableBreakpointSnapshotHandling: true,
+  enableBreakpointSnapshotHandling: false,
   enableBranchPrep: false,
 };
 

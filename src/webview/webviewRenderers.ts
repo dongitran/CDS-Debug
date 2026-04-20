@@ -731,10 +731,10 @@ export function getRendererScriptContent(): string {
           <div class="pref-row-content">
             <span class="pref-row-title">Breakpoint snapshot handling
               <span class="pref-state-badge \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'pref-state-on' : 'pref-state-off'}">
-                \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'enabled by default' : 'disabled'}
+                \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'enabled' : 'off by default'}
               </span>
             </span>
-            <span class="pref-row-desc">On: capture snapshot + auto-continue. Off: keep native breakpoint pause behavior.</span>
+            <span class="pref-row-desc">Off by default. Turn this on to capture a snapshot and auto-continue; leave it off to keep native breakpoint pause behavior.</span>
           </div>
           <div class="toggle-switch \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'on' : ''}">
             <input type="checkbox" id="chk-breakpoint-snapshot-handling" \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'checked' : ''} />
@@ -1007,7 +1007,7 @@ export function getRendererScriptContent(): string {
         if (toggle) toggle.classList.toggle('on', enableBreakpointSnapshotHandling);
         var badge = $('chk-breakpoint-snapshot-handling')?.closest('.pref-row')?.querySelector('.pref-state-badge');
         if (badge) {
-          badge.textContent = enableBreakpointSnapshotHandling ? 'enabled by default' : 'disabled';
+          badge.textContent = enableBreakpointSnapshotHandling ? 'enabled' : 'off by default';
           badge.classList.toggle('pref-state-on', enableBreakpointSnapshotHandling);
           badge.classList.toggle('pref-state-off', !enableBreakpointSnapshotHandling);
         }

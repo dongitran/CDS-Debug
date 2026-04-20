@@ -26,7 +26,7 @@ const { debugPrefsMockState } = vi.hoisted(() => ({
     value: {
       openBrowserOnAttach: false,
       enableBranchPrep: false,
-      enableBreakpointSnapshotHandling: true,
+      enableBreakpointSnapshotHandling: false,
     },
   },
 }));
@@ -219,10 +219,17 @@ beforeEach(() => {
   debugPrefsMockState.value = {
     openBrowserOnAttach: false,
     enableBranchPrep: false,
-    enableBreakpointSnapshotHandling: true,
+    enableBreakpointSnapshotHandling: false,
   };
   initializeBreakpointSnapshotManager();
 });
+
+function enableBreakpointSnapshotHandling(): void {
+  debugPrefsMockState.value = {
+    ...debugPrefsMockState.value,
+    enableBreakpointSnapshotHandling: true,
+  };
+}
 
 afterEach(() => {
   disposeBreakpointSnapshotManager();
@@ -231,7 +238,8 @@ afterEach(() => {
 });
 
 describe('breakpointSnapshotManager', () => {
-  it('captures breakpoint context, redacts sensitive values, and auto-continues by default', async () => {
+  it('captures breakpoint context, redacts sensitive values, and auto-continues when snapshot handling is enabled', async () => {
+    enableBreakpointSnapshotHandling();
     const { session, customRequestCalls } = createMockSession();
     emitStoppedEvent(session);
     await waitForSnapshots(1);
@@ -253,6 +261,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('excludes Global scope, skips expensive scopes, and prioritizes Local/Arguments/Closure', async () => {
+    enableBreakpointSnapshotHandling();
     const customRequestCalls: string[] = [];
     const capturedVariableReferences: number[] = [];
     const session: MockDebugSession = {
@@ -320,6 +329,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('still captures a scope when adapter marks all scopes as expensive', async () => {
+    enableBreakpointSnapshotHandling();
     const capturedVariableReferences: number[] = [];
     const session: MockDebugSession = {
       id: 'session-expensive',
@@ -376,6 +386,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('captures one nested object level and enriches generic object previews', async () => {
+    enableBreakpointSnapshotHandling();
     const session: MockDebugSession = {
       id: 'session-nested-preview',
       name: 'Debug: catalog-service',
@@ -451,6 +462,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('does not auto-continue when pauseOnBreakpoint is enabled', async () => {
+    enableBreakpointSnapshotHandling();
     vscodeMockState.pauseOnBreakpoint = true;
     const { session, customRequestCalls } = createMockSession();
 
@@ -476,12 +488,7 @@ describe('breakpointSnapshotManager', () => {
     expect(customRequestCalls).toHaveLength(0);
   });
 
-  it('does not handle breakpoints when snapshot handling is disabled in debug preferences', async () => {
-    debugPrefsMockState.value = {
-      openBrowserOnAttach: false,
-      enableBranchPrep: false,
-      enableBreakpointSnapshotHandling: false,
-    };
+  it('does not handle breakpoints when snapshot handling remains at the default off state', async () => {
     const { session, customRequestCalls } = createMockSession();
     emitStoppedEvent(session);
 
@@ -511,6 +518,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('creates an error snapshot and still auto-continues when threadId is absent', async () => {
+    enableBreakpointSnapshotHandling();
     const { session, customRequestCalls } = createMockSession();
     emitStoppedEventWithBody(session, { reason: 'breakpoint' });
     await waitForSnapshots(1);
@@ -527,6 +535,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('creates an error snapshot and still auto-continues when stack trace capture fails', async () => {
+    enableBreakpointSnapshotHandling();
     const { session, customRequestCalls } = createMockSessionWithFailingStackTrace();
     emitStoppedEvent(session);
     await waitForSnapshots(1);
@@ -542,6 +551,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('limits root child expansion requests to avoid fan-out latency spikes', async () => {
+    enableBreakpointSnapshotHandling();
     const childReferencesRequested: number[] = [];
     const session: MockDebugSession = {
       id: 'session-child-limit',
@@ -611,6 +621,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('times out slow child expansion and still resumes with top-level variables', async () => {
+    enableBreakpointSnapshotHandling();
     const customRequestCalls: string[] = [];
     const session: MockDebugSession = {
       id: 'session-child-timeout',
@@ -676,6 +687,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('caps the snapshot store at the configured max entries', async () => {
+    enableBreakpointSnapshotHandling();
     vscodeMockState.breakpointSnapshotMaxEntries = 25;
     const { session } = createMockSession();
 
@@ -693,6 +705,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('registers only one event listener when initialized multiple times', async () => {
+    enableBreakpointSnapshotHandling();
     // beforeEach already called initializeBreakpointSnapshotManager once
     initializeBreakpointSnapshotManager();
     initializeBreakpointSnapshotManager();
@@ -706,6 +719,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('emits snapshotAdded event with the captured snapshot', async () => {
+    enableBreakpointSnapshotHandling();
     const emittedIds: string[] = [];
     breakpointSnapshotEvents.on('snapshotAdded', (s: { id: string }) => {
       emittedIds.push(s.id);
@@ -721,6 +735,7 @@ describe('breakpointSnapshotManager', () => {
   });
 
   it('falls back to ancestor CDS session for continue when child-session continue fails', async () => {
+    enableBreakpointSnapshotHandling();
     const parentCalls: string[] = [];
     const parentSession: MockDebugSession = {
       id: 'session-parent',

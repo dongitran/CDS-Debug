@@ -83,7 +83,7 @@ export function getScript(nonce: string): string {
       // Debug behavior preferences
       debugPrefs: {
         openBrowserOnAttach: false,
-        enableBreakpointSnapshotHandling: true,
+        enableBreakpointSnapshotHandling: false,
         enableBranchPrep: false,
       },
       // True when the current LOAD_APPS was triggered automatically by session restore
