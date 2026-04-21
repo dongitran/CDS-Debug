@@ -17,6 +17,7 @@ import {
   stashChanges,
   checkoutBranch,
   listBranches,
+  pullLatest,
 } from '../../src/core/gitOperations';
 
 const mockExec = vi.mocked(exec) as ReturnType<typeof vi.fn>;
@@ -123,5 +124,36 @@ describe('listBranches', () => {
   it('returns empty array on error', async () => {
     rejectWith('not a git repo');
     expect(await listBranches('/repo')).toEqual([]);
+  });
+});
+
+describe('pullLatest', () => {
+  it('returns success false when fetch fails', async () => {
+    rejectWith('offline');
+
+    await expect(pullLatest('/repo')).resolves.toEqual({ success: false, changed: false });
+  });
+
+  it('returns success true and changed false when ff-only reports up to date', async () => {
+    resolveWith('');
+    resolveWith('Already up to date.\n');
+
+    await expect(pullLatest('/repo')).resolves.toEqual({ success: true, changed: false });
+  });
+
+  it('falls back to rebase when ff-only fails', async () => {
+    resolveWith('');
+    rejectWith('diverged history');
+    resolveWith('Updating abc123..def456\n');
+
+    await expect(pullLatest('/repo')).resolves.toEqual({ success: true, changed: true });
+  });
+
+  it('returns success false when both ff-only and rebase fail', async () => {
+    resolveWith('');
+    rejectWith('diverged history');
+    rejectWith('rebase conflict');
+
+    await expect(pullLatest('/repo')).resolves.toEqual({ success: false, changed: false });
   });
 });

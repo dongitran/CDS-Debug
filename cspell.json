@@ -127,6 +127,7 @@
     "credenv",
     "credential",
     "credentials",
-    "requestfailed"
+    "requestfailed",
+    "pkill"
   ]
 }

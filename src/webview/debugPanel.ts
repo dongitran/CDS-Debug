@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
-import { join } from 'node:path';
 import type { BranchPrepService, BranchPrepStep, BreakpointContextSnapshot, CacheSettings, CapDebugConfig, CredentialStatus, DebugTarget, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
 import { DEFAULT_CACHE_SETTINGS } from '../types/index';
 import { CfCliError, cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, buildFallbackTargets, getFolderNameCandidates } from '../core/appMapper';
 import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig } from '../core/launchConfigurator';
+import { resolveSharedCapDebugConfig } from '../core/capDebugConfig';
 import { getConfig, saveConfig, upsertOrgMappings } from '../storage/configStore';
 import {
   clearCredentialsFromSecretStorage,
@@ -444,12 +444,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     const { targets, unmapped } = buildDebugTargets(appNames, resolvedPaths, existingPorts, usedPorts);
 
+    const sharedCapConfig = await resolveSharedCapDebugConfig(workspaceRoot);
+
     if (targets.length === 0) {
       // All apps unmapped — build fallback targets using workspaceRoot so debug can still proceed.
       // Source maps won't resolve, but the SSH tunnel and debug console will work.
       logWarn(`No local folder found for any selected app. Starting debug in console-only mode (no source maps).`);
       const fallbackTargets = buildFallbackTargets(unmapped, workspaceRoot, existingPorts, usedPorts);
-      await this.launchDebugSessions(fallbackTargets, workspaceRoot, []);
+      await this.launchDebugSessions(fallbackTargets, workspaceRoot, [], sharedCapConfig);
       return;
     }
 
@@ -458,11 +460,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     let finalTargets: DebugTarget[];
 
     if (debugPrefs.enableBranchPrep) {
-      // Read workspace-level config for orgBranchMap fallback
-      const workspaceCapConfig = await readCapDebugConfig(join(workspaceRoot, '.vscode'));
-
       // Resolve target branches: config lookup + optional QuickPick for unconfigured repos
-      const branchInfos = await this.resolveTargetBranches(targets, org, workspaceCapConfig);
+      const branchInfos = await this.resolveTargetBranches(targets, org, sharedCapConfig);
 
       // Services with a target branch go through preparation; others proceed directly
       const servicesNeedingPrep = branchInfos.filter((b) => b.targetBranch !== null);
@@ -490,18 +489,18 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped);
+    await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped, sharedCapConfig);
   }
 
   /**
    * Determines the target branch for each debug target.
-   * Priority: per-app `branch` field > workspace `orgBranchMap` > per-app `orgBranchMap` > QuickPick.
+   * Priority: per-app `branch` field > shared fallback `orgBranchMap` > per-app `orgBranchMap` > QuickPick.
    * QuickPick is shown once per git repo root to avoid duplicate prompts in monorepos.
    */
   private async resolveTargetBranches(
     targets: DebugTarget[],
     org: string,
-    workspaceConfig: CapDebugConfig | null,
+    fallbackConfig: CapDebugConfig | null,
   ): Promise<ServiceBranchInfo[]> {
     // Pre-fetch repo roots and per-app configs in parallel (deduplicated by folder path)
     const uniqueFolderPaths = [...new Set(targets.map((t) => t.folderPath))];
@@ -523,7 +522,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       if (appConfig?.branch) {
         resolvedBranches.set(target.appName, appConfig.branch);
       } else {
-        const orgMap = workspaceConfig?.orgBranchMap ?? appConfig?.orgBranchMap;
+        const orgMap = fallbackConfig?.orgBranchMap ?? appConfig?.orgBranchMap;
         if (orgMap?.[org]) {
           resolvedBranches.set(target.appName, orgMap[org]);
         } else if (repoRoot) {
@@ -686,9 +685,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   }
 
   /** Merges launch.json, posts DEBUG_CONNECTING, and starts tunnel processes. */
-  private async launchDebugSessions(targets: DebugTarget[], workspaceRoot: string, unmapped: string[]): Promise<void> {
+  private async launchDebugSessions(
+    targets: DebugTarget[],
+    workspaceRoot: string,
+    unmapped: string[],
+    fallbackConfig: CapDebugConfig | null,
+  ): Promise<void> {
     logInfo(`[StartDebug] Merging launch.json for ${targets.length.toString()} target(s)…`);
-    await mergeLaunchJson(workspaceRoot, targets);
+    await mergeLaunchJson(workspaceRoot, targets, fallbackConfig);
     logInfo(`Updated .vscode/launch.json with ${targets.length.toString()} config(s).`);
 
     const ports: Record<string, number> = {};

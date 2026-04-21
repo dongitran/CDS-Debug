@@ -17,11 +17,20 @@ import {
 } from '@playwright/test';
 
 type CredentialMode = 'env' | 'none';
-type CfScenario = 'success' | 'auth-fail' | 'no-orgs' | 'apps-fail' | 'slow-auth' | 'slow-apps' | 'slow-target';
+type CfScenario =
+  | 'success'
+  | 'auth-fail'
+  | 'no-orgs'
+  | 'apps-fail'
+  | 'slow-auth'
+  | 'slow-apps'
+  | 'slow-target'
+  | 'slow-target-after-apps';
 
 interface SessionOptions {
   credentialMode: CredentialMode;
   cfScenario: CfScenario;
+  userSettings?: Record<string, unknown>;
 }
 
 interface SessionArtifacts {
@@ -47,6 +56,7 @@ const MOCK_GROUP_FOLDER = '/tmp/cds-debug-e2e-group';
 const WEBSOCKET_TIMEOUT_MS = 90_000;
 const FRAME_TIMEOUT_MS = 90_000;
 const DIAGNOSTIC_TAIL_SIZE = 120;
+const MOCK_SLOW_TARGET_DELAY_SECONDS = 8;
 
 function appendDiagnostic(target: string[], raw: string): void {
   const normalized = raw.replaceAll('\r', '').split('\n').map((line) => line.trim()).filter(Boolean);
@@ -84,6 +94,9 @@ set -euo pipefail
 
 SCENARIO="${scenario}"
 cmd="\${1:-}"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+slow_target_after_apps_ready="$script_dir/.slow-target-after-apps-ready"
+slow_target_after_apps_used="$script_dir/.slow-target-after-apps-used"
 
 case "$cmd" in
   api)
@@ -118,7 +131,11 @@ OUT
     ;;
   target)
     if [[ "$SCENARIO" == "slow-target" ]]; then
-      sleep 30
+      sleep ${MOCK_SLOW_TARGET_DELAY_SECONDS}
+    fi
+    if [[ "$SCENARIO" == "slow-target-after-apps" && -f "$slow_target_after_apps_ready" && ! -f "$slow_target_after_apps_used" ]]; then
+      touch "$slow_target_after_apps_used"
+      sleep ${MOCK_SLOW_TARGET_DELAY_SECONDS}
     fi
     echo "OK"
     ;;
@@ -129,6 +146,9 @@ OUT
     fi
     if [[ "$SCENARIO" == "slow-apps" ]]; then
       sleep 30
+    fi
+    if [[ "$SCENARIO" == "slow-target-after-apps" ]]; then
+      touch "$slow_target_after_apps_ready"
     fi
     cat <<'OUT'
 name   requested state   processes   routes
@@ -155,6 +175,16 @@ async function createTempDirectory(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), prefix));
 }
 
+async function writeUserSettings(userDataDir: string, settings: Record<string, unknown>): Promise<void> {
+  const settingsDir = join(userDataDir, 'User');
+  await mkdir(settingsDir, { recursive: true });
+  await writeFile(
+    join(settingsDir, 'settings.json'),
+    JSON.stringify(settings, null, 2) + '\n',
+    'utf8',
+  );
+}
+
 async function createWorkspaceWithLaunchJson(configurations: Record<string, unknown>[]): Promise<string> {
   const workspaceDir = await createTempDirectory('cds-debug-e2e-workspace-');
   const vscodeDir = join(workspaceDir, '.vscode');
@@ -164,6 +194,39 @@ async function createWorkspaceWithLaunchJson(configurations: Record<string, unkn
     JSON.stringify({ version: '0.2.0', configurations }, null, 2) + '\n',
     'utf8',
   );
+  return workspaceDir;
+}
+
+interface CapConfigWorkspaceOptions {
+  workspaceConfig?: Record<string, unknown>;
+  serviceConfig?: Record<string, unknown>;
+}
+
+async function createWorkspaceForCapConfigTest(options: CapConfigWorkspaceOptions): Promise<string> {
+  const workspaceDir = await createTempDirectory('cds-debug-e2e-cap-config-');
+  const vscodeDir = join(workspaceDir, '.vscode');
+  const serviceDir = join(workspaceDir, 'mock-service-a');
+
+  await mkdir(vscodeDir, { recursive: true });
+  await mkdir(serviceDir, { recursive: true });
+  await writeFile(join(serviceDir, 'package.json'), JSON.stringify({ name: 'sample-service' }, null, 2) + '\n', 'utf8');
+
+  if (options.workspaceConfig !== undefined) {
+    await writeFile(
+      join(vscodeDir, 'cap-debug-config.json'),
+      JSON.stringify(options.workspaceConfig, null, 2) + '\n',
+      'utf8',
+    );
+  }
+
+  if (options.serviceConfig !== undefined) {
+    await writeFile(
+      join(serviceDir, 'cap-debug-config.json'),
+      JSON.stringify(options.serviceConfig, null, 2) + '\n',
+      'utf8',
+    );
+  }
+
   return workspaceDir;
 }
 
@@ -184,6 +247,16 @@ async function readLaunchJson(workspaceDir: string): Promise<{ configurations: R
     (item): item is Record<string, unknown> => typeof item === 'object' && item !== null,
   );
   return { configurations };
+}
+
+async function readManagedRemoteRoot(workspaceDir: string, appName: string): Promise<string | null> {
+  try {
+    const launchJson = await readLaunchJson(workspaceDir);
+    const config = launchJson.configurations.find((item) => item.name === `Debug: ${appName}`);
+    return typeof config?.remoteRoot === 'string' ? config.remoteRoot : null;
+  } catch {
+    return null;
+  }
 }
 
 async function allocatePort(): Promise<number> {
@@ -393,11 +466,26 @@ async function removeDirWithRetry(path: string): Promise<void> {
   await rm(path, { recursive: true, force: true });
 }
 
+async function terminateProcessesMatching(pattern: string): Promise<void> {
+  const child = spawn('pkill', ['-f', pattern], { stdio: 'ignore' });
+  const [code] = await once(child, 'close');
+  if (code === 0 || code === 1) return;
+  throw new Error(`pkill -f ${pattern} exited with code ${code?.toString() ?? 'null'}.`);
+}
+
+async function cleanupSessionHelpers(userDataDir: string, mockBinDir: string): Promise<void> {
+  await terminateProcessesMatching(userDataDir).catch(() => undefined);
+  await terminateProcessesMatching(mockBinDir).catch(() => undefined);
+}
+
 async function createSessionArtifacts(options: SessionOptions): Promise<SessionArtifacts> {
   const userDataDir = await createTempDirectory('cds-debug-e2e-user-');
   const extensionsDir = await createTempDirectory('cds-debug-e2e-extensions-');
   const mockBinDir = await createTempDirectory('cds-debug-e2e-bin-');
   await createMockCfCli(mockBinDir, options.cfScenario);
+  if (options.userSettings !== undefined) {
+    await writeUserSettings(userDataDir, options.userSettings);
+  }
 
   return {
     userDataDir,
@@ -476,6 +564,7 @@ async function withVsCodeSession(
       await artifacts.browser.close().catch(() => undefined);
     }
 
+    await cleanupSessionHelpers(artifacts.userDataDir, artifacts.mockBinDir);
     await removeDirWithRetry(artifacts.userDataDir);
     await removeDirWithRetry(artifacts.extensionsDir);
     await removeDirWithRetry(artifacts.mockBinDir);
@@ -569,12 +658,22 @@ async function injectMessage(webview: Frame, message: Record<string, unknown>): 
   }, message);
 }
 
-async function completeMappingToReady(webview: Frame): Promise<void> {
+async function completeMappingToReadyWithFolder(webview: Frame, folderPath: string): Promise<void> {
   await goToFolderSelection(webview);
-  await injectSelectedFolder(webview, MOCK_GROUP_FOLDER);
-  await expect(webview.getByText(MOCK_GROUP_FOLDER)).toBeVisible();
+  await injectSelectedFolder(webview, folderPath);
+  await expect(webview.getByText(folderPath)).toBeVisible();
   await webview.locator('#btn-save-mapping').click();
   await expectReadyScreen(webview);
+}
+
+async function completeMappingToReady(webview: Frame): Promise<void> {
+  await completeMappingToReadyWithFolder(webview, MOCK_GROUP_FOLDER);
+}
+
+async function startDebugForApp(webview: Frame, appName: string): Promise<void> {
+  await webview.locator(`input[type="checkbox"][data-app="${appName}"]`).check();
+  await expectButtonEnabled(webview.locator('#btn-start-debug'));
+  await webview.locator('#btn-start-debug').click();
 }
 
 async function openBreakpointSnapshotsScreen(webview: Frame): Promise<void> {
@@ -646,6 +745,133 @@ test.describe('Launch.json Cleanup E2E', () => {
             },
             { timeout: 15_000 },
           ).toEqual(['Debug: manual-launch', 'Manual config']);
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+});
+
+test.describe('CAP Debug Config Precedence E2E', () => {
+  test('User setting overrides workspace cap config when generating launch.json', async () => {
+    const workspaceDir = await createWorkspaceForCapConfigTest({
+      workspaceConfig: { remoteRoot: '/sample/workspace-root' },
+    });
+
+    try {
+      await withVsCodeSession(
+        {
+          credentialMode: 'env',
+          cfScenario: 'success',
+          userSettings: {
+            'cdsDebug.sharedCapDebugConfig': {
+              remoteRoot: '/sample/global-root',
+            },
+          },
+        },
+        async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await startDebugForApp(webview, 'mock-service-a');
+
+          await expect.poll(
+            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            { timeout: 15_000 },
+          ).toBe('/sample/global-root');
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+
+  test('Workspace cap config is used when no user setting is configured', async () => {
+    const workspaceDir = await createWorkspaceForCapConfigTest({
+      workspaceConfig: { remoteRoot: '/sample/workspace-root' },
+    });
+
+    try {
+      await withVsCodeSession(
+        { credentialMode: 'env', cfScenario: 'success' },
+        async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await startDebugForApp(webview, 'mock-service-a');
+
+          await expect.poll(
+            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            { timeout: 15_000 },
+          ).toBe('/sample/workspace-root');
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+
+  test('Per-service cap config overrides both user setting and workspace fallback', async () => {
+    const workspaceDir = await createWorkspaceForCapConfigTest({
+      workspaceConfig: { remoteRoot: '/sample/workspace-root' },
+      serviceConfig: { remoteRoot: '/sample/service-root' },
+    });
+
+    try {
+      await withVsCodeSession(
+        {
+          credentialMode: 'env',
+          cfScenario: 'success',
+          userSettings: {
+            'cdsDebug.sharedCapDebugConfig': {
+              remoteRoot: '/sample/global-root',
+            },
+          },
+        },
+        async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await startDebugForApp(webview, 'mock-service-a');
+
+          await expect.poll(
+            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            { timeout: 15_000 },
+          ).toBe('/sample/service-root');
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+
+  test('Malformed user setting falls back to workspace cap config', async () => {
+    const workspaceDir = await createWorkspaceForCapConfigTest({
+      workspaceConfig: { remoteRoot: '/sample/workspace-root' },
+    });
+
+    try {
+      await withVsCodeSession(
+        {
+          credentialMode: 'env',
+          cfScenario: 'success',
+          userSettings: {
+            'cdsDebug.sharedCapDebugConfig': {
+              remoteRoot: 123,
+            },
+          },
+        },
+        async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await startDebugForApp(webview, 'mock-service-a');
+
+          await expect.poll(
+            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            { timeout: 15_000 },
+          ).toBe('/sample/workspace-root');
         },
         workspaceDir,
       );
@@ -965,9 +1191,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
   });
 
   test('Clicking Start Debug Sessions shows pending sessions immediately (optimistic UI)', async () => {
-    // Uses slow-target so cfTarget() blocks in the extension while we assert the
-    // optimistic PENDING state that should appear in the UI before DEBUG_CONNECTING.
-    await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-target' }, async (workbenchPage) => {
+    // Uses slow-target-after-apps so the initial LOAD_APPS flow stays fast, but the
+    // subsequent Start Debug cfTarget() blocks long enough to assert optimistic UI
+    // before DEBUG_CONNECTING arrives from the extension host.
+    await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-target-after-apps' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await completeMappingToReady(webview);
 
@@ -1352,9 +1579,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
   test.describe('Ready Screen — Actions and Navigation', () => {
     test('DEBUG_ERROR clears pending sessions and shows an error message', async () => {
-      // Uses slow-target so cfTarget() blocks long enough for us to inject DEBUG_ERROR
-      // before the extension has a chance to resolve the start request on its own.
-      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-target' }, async (workbenchPage) => {
+      // Uses slow-target-after-apps so the first app load completes normally, but the
+      // Start Debug cfTarget() blocks long enough for us to inject DEBUG_ERROR before
+      // the extension resolves the start request on its own.
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-target-after-apps' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
@@ -1392,8 +1620,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
 
     test('Cancel app loading returns to Ready screen when apps were previously loaded', async () => {
-      // Uses slow-target so cfTarget blocks for 30 s on every LOAD_APPS call.
-      // This gives a stable 30 s LOADING_APPS window after the refresh click,
+      // Uses slow-target so cfTarget blocks for a few seconds on every LOAD_APPS call.
+      // This gives a stable LOADING_APPS window after the refresh click,
       // long enough to assert all screen elements and click cancel before either
       // the first or second cfTarget process can complete and send APPS_LOADED.
       // force:true on the refresh click bypasses Playwright actionability checks
@@ -1403,7 +1631,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await goToFolderSelection(webview);
         await injectSelectedFolder(webview, MOCK_GROUP_FOLDER);
 
-        // Kick off the save (goes to LOADING_APPS; first cfTarget sleeps 30 s)
+        // Kick off the save (goes to LOADING_APPS; first cfTarget sleeps briefly)
         await webview.locator('#btn-save-mapping').click();
         await expect(webview.locator('#btn-cancel-load-apps')).toBeVisible();
 
@@ -1420,7 +1648,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         });
         await expectReadyScreen(webview);
 
-        // Refresh — second cfTarget also sleeps 30 s, keeping LOADING_APPS stable.
+        // Refresh — second cfTarget also sleeps briefly, keeping LOADING_APPS stable.
         // force:true avoids an indefinite actionability-check hang caused by rapid
         // DOM replacement when the extension's success response races with the click.
         await webview.locator('#btn-refresh-apps').click({ force: true });

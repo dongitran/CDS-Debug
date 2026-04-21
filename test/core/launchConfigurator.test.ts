@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('node:fs/promises');
+vi.mock('vscode', () => ({
+  workspace: {
+    getConfiguration: () => ({
+      inspect: () => undefined,
+    }),
+  },
+}));
 
 import {
   buildLaunchConfiguration,
@@ -258,9 +265,33 @@ describe('getExistingLaunchConfigs', () => {
     expect(result.configurations).toHaveLength(1);
     expect(result.configurations[0]?.name).toBe('Valid Config');
   });
+
+  it('returns an empty configurations array when configurations is not an array', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ version: '0.2.0', configurations: 'invalid' }));
+
+    const result = await getExistingLaunchConfigs('/workspace');
+
+    expect(result).toEqual({ version: '0.2.0', configurations: [] });
+  });
 });
 
 describe('mergeLaunchJson', () => {
+  it('uses the provided fallback config when writing generated launch configs', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await mergeLaunchJson('/workspace', TARGETS, { remoteRoot: '/sample/global-root' });
+
+    const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
+      configurations: { name: string; remoteRoot?: string }[];
+    };
+
+    expect(written.configurations).toHaveLength(2);
+    expect(written.configurations[0]?.remoteRoot).toBe('/sample/global-root');
+    expect(written.configurations[1]?.remoteRoot).toBe('/sample/global-root');
+  });
+
   it('writes new launch.json when file does not exist', async () => {
     vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     vi.mocked(fs.mkdir).mockResolvedValue(undefined);
@@ -339,6 +370,20 @@ describe('mergeLaunchJson', () => {
 
     const content = vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string;
     expect(content.endsWith('\n')).toBe(true);
+  });
+
+  it('falls back to the default version when merging a launch.json with an empty version', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ version: '', configurations: [] }));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await mergeLaunchJson('/workspace', TARGETS);
+
+    const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
+      version: string;
+    };
+
+    expect(written.version).toBe('0.2.0');
   });
 });
 
@@ -457,6 +502,27 @@ describe('cleanStaleDebugConfigs', () => {
     const content = vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string;
     expect(content.endsWith('\n')).toBe(true);
   });
+
+  it('falls back to the default version when cleaning configs from a launch.json with an empty version', async () => {
+    const existing = {
+      version: '',
+      configurations: [
+        { name: 'Debug: app-a', type: 'node', request: 'attach', address: '127.0.0.1', port: 20000 },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await cleanStaleDebugConfigs('/workspace');
+
+    const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
+      version: string;
+    };
+
+    expect(written.version).toBe('0.2.0');
+  });
 });
 
 describe('removeLaunchConfigs', () => {
@@ -545,5 +611,26 @@ describe('removeLaunchConfigs', () => {
 
     expect(fs.readFile).not.toHaveBeenCalled();
     expect(fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the default version when removing configs from a launch.json with an empty version', async () => {
+    const existing = {
+      version: '',
+      configurations: [
+        { name: 'Debug: myapp-svc-one', type: 'node', request: 'attach', address: '127.0.0.1', port: 9229 },
+      ],
+    };
+
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(existing));
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await removeLaunchConfigs('/workspace', ['myapp-svc-one']);
+
+    const written = JSON.parse((vi.mocked(fs.writeFile).mock.calls[0]?.[1] as string)) as {
+      version: string;
+    };
+
+    expect(written.version).toBe('0.2.0');
   });
 });

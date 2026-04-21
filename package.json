@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -62,6 +62,30 @@
           "minimum": 20,
           "maximum": 1000,
           "markdownDescription": "Maximum number of breakpoint context snapshots kept in memory for the webview list."
+        },
+        "cdsDebug.sharedCapDebugConfig": {
+          "type": "object",
+          "scope": "application",
+          "default": {},
+          "additionalProperties": false,
+          "markdownDescription": "Shared fallback for `cap-debug-config.json`. When configured in user settings, CDS Debug uses this object before checking workspace `.vscode/cap-debug-config.json`. Per-service `cap-debug-config.json` files still take priority.",
+          "properties": {
+            "remoteRoot": {
+              "type": "string",
+              "markdownDescription": "Remote source root used for generated attach configurations."
+            },
+            "branch": {
+              "type": "string",
+              "markdownDescription": "Default branch to use for branch preparation when no per-service `branch` is configured."
+            },
+            "orgBranchMap": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "markdownDescription": "Maps Cloud Foundry org names to git branches for branch preparation."
+            }
+          }
         }
       }
     },

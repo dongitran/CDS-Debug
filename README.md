@@ -38,6 +38,7 @@ A sidebar panel connects to your Cloud Foundry environment, shows your running a
 - ☑️ **Multi-select Debug** — tick any started apps and launch all sessions at once
 - 🟢 **Session Status Panel** — watch each app go from *Connecting* → *Debugger Attached* in real time
 - 🔧 **Auto `launch.json`** — configs are merged in, not overwritten; your manual entries stay safe
+- 🧩 **Shared CAP Config** — define one global fallback in VS Code user settings instead of copying `cap-debug-config.json` into every workspace
 - 💾 **Persistent Mapping** — org ↔ folder mapping is saved, no re-setup on restart
 - ⚡ **Background Cache** — app list pre-fetched in the background so loading feels instant
 - ⚙️ **Settings Panel** — control cache sync interval, trigger a manual sync, or log out
@@ -85,6 +86,27 @@ Select the org you want to work with, then click **Browse…** to choose its loc
 Search or scroll the app list, tick the services you want to debug, and hit **▶ Start Debug Sessions**.
 
 The extension opens a background process per service, updates `launch.json`, and attaches the debugger automatically.
+
+### Optional — configure a shared fallback once for all workspaces
+
+If you reuse the same CAP debug settings across many workspaces, add this to your VS Code user `settings.json`:
+
+```json
+{
+  "cdsDebug.sharedCapDebugConfig": {
+    "remoteRoot": "/home/vcap/app",
+    "orgBranchMap": {
+      "sample-org": "sample-branch"
+    }
+  }
+}
+```
+
+Precedence is:
+
+1. per-service `cap-debug-config.json`
+2. user `cdsDebug.sharedCapDebugConfig`
+3. workspace `.vscode/cap-debug-config.json`
 
 ---
 
