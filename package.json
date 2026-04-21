@@ -7,7 +7,7 @@
   "publisher": "dongtran",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dongitran/cds-debug"
+    "url": "https://github.com/dongitran/CDS-Debug.git"
   },
   "license": "MIT",
   "engines": {
