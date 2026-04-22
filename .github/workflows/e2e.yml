@@ -1,6 +1,15 @@
 name: E2E
 
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'e2e/**'
+      - '.github/workflows/e2e.yml'
+      - 'src/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
   pull_request:
     branches:
       - master
