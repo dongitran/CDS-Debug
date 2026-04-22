@@ -89,9 +89,9 @@ describe('buildLaunchConfiguration', () => {
     expect(config.localRoot).toBe('/group/sub-a/myapp_svc_one');
   });
 
-  it('sets outFiles using the repository root', () => {
+  it('sets outFiles using the generated srv path', () => {
     const config = buildLaunchConfiguration(target, undefined);
-    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/**/*.js');
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/gen/srv/**/*.js');
   });
 
   it('sets sourceMaps to true', () => {
@@ -170,7 +170,7 @@ describe('generateLaunchConfigurations', () => {
     const configs = await generateLaunchConfigurations([firstTarget]);
 
     expect(configs[0]?.localRoot).toBe('/group/sub-a/myapp_svc_one');
-    expect(configs[0]?.outFiles).toContain('/group/sub-a/myapp_svc_one/**/*.js');
+    expect(configs[0]?.outFiles).toContain('/group/sub-a/myapp_svc_one/gen/srv/**/*.js');
   });
 
   it('uses workspace-level fallback remoteRoot when app config is absent', async () => {
@@ -214,7 +214,7 @@ describe('getExistingLaunchConfigs', () => {
           sourceMaps: true,
           restart: true,
           skipFiles: ['<node_internals>/**'],
-          outFiles: ['/group/sub-a/myapp_svc_one/**/*.js'],
+          outFiles: ['/group/sub-a/myapp_svc_one/gen/srv/**/*.js'],
         },
       ],
     };

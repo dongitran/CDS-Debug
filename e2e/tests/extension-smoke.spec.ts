@@ -703,7 +703,7 @@ test.describe('Launch.json Cleanup E2E', () => {
         sourceMaps: true,
         restart: true,
         skipFiles: ['<node_internals>/**'],
-        outFiles: ['/tmp/stale/**/*.js'],
+        outFiles: ['/tmp/stale/gen/srv/**/*.js'],
       },
       {
         name: 'CDS Managed Marker',
@@ -715,7 +715,7 @@ test.describe('Launch.json Cleanup E2E', () => {
         sourceMaps: true,
         restart: true,
         skipFiles: ['<node_internals>/**'],
-        outFiles: ['/tmp/stale-2/**/*.js'],
+        outFiles: ['/tmp/stale-2/gen/srv/**/*.js'],
         cdsDebugManaged: true,
       },
       {

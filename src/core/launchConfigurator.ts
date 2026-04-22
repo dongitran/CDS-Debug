@@ -6,6 +6,7 @@ import { readCapDebugConfig } from './capDebugConfig';
 export { readCapDebugConfig } from './capDebugConfig';
 
 const LAUNCH_JSON_VERSION = '0.2.0';
+const GENERATED_SRV_PATH = 'gen/srv';
 const SKIP_FILES = ['<node_internals>/**'];
 export const DEBUG_CONFIG_PREFIX = 'Debug: ';
 
@@ -30,6 +31,7 @@ export function buildLaunchConfiguration(
   localRootOverride?: string,
 ): LaunchConfiguration {
   const localRoot = localRootOverride ?? target.folderPath;
+  const outFilesRoot = join(target.folderPath, GENERATED_SRV_PATH);
   const config: LaunchConfiguration = {
     type: 'node',
     request: 'attach',
@@ -41,7 +43,7 @@ export function buildLaunchConfiguration(
     sourceMaps: true,
     restart: true,
     skipFiles: SKIP_FILES,
-    outFiles: [`${localRoot}/**/*.js`],
+    outFiles: [`${outFilesRoot}/**/*.js`],
   };
 
   // Only include remoteRoot when explicitly provided — omitting it avoids
