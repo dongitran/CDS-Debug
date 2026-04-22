@@ -5,6 +5,7 @@
  * Sections: CONSTANTS → STATE → UTILS → RENDERERS → LISTENERS → MESSAGE HANDLER → INIT
  */
 import { getRendererScriptContent } from './webviewRenderers';
+import { getPackageBrowserScriptContent } from './packageBrowserContent';
 
 export function getScript(nonce: string): string {
   return `<script nonce="${nonce}">
@@ -20,6 +21,7 @@ export function getScript(nonce: string): string {
       SELECT_FOLDER: 'select-folder',
       LOADING_APPS: 'loading-apps',
       READY: 'ready',
+      PACKAGES: 'packages',
       BREAKPOINT_SNAPSHOTS: 'breakpoint-snapshots',
       SETTINGS: 'settings',
       PREPARING_BRANCHES: 'preparing-branches',
@@ -98,6 +100,12 @@ export function getScript(nonce: string): string {
       isSavingCreds: false,
       breakpointSnapshots: [],
       selectedBreakpointSnapshotId: null,
+      packageBrowserAppName: null,
+      packageEntries: [],
+      packageBrowserSearchQuery: '',
+      packageBrowserLoading: false,
+      packageBrowserError: null,
+      selectedPackageId: null,
     };
 
     // === UTILS ===
@@ -168,6 +176,7 @@ export function getScript(nonce: string): string {
     // === RENDERERS (injected) ===
 
     ${getRendererScriptContent()}
+    ${getPackageBrowserScriptContent()}
 
     function render() {
       document.getElementById('app').innerHTML = renderScreen();
@@ -183,6 +192,7 @@ export function getScript(nonce: string): string {
         case SCREENS.SELECT_FOLDER:       return renderSelectFolder();
         case SCREENS.LOADING_APPS:        return renderLoadingApps();
         case SCREENS.READY:               return renderReady();
+        case SCREENS.PACKAGES:            return renderPackagesScreen();
         case SCREENS.BREAKPOINT_SNAPSHOTS:return renderBreakpointSnapshotsScreen();
         case SCREENS.SETTINGS:            return renderSettings();
         case SCREENS.PREPARING_BRANCHES:  return renderPreparingBranches();
@@ -306,6 +316,11 @@ export function getScript(nonce: string): string {
             vscode.postMessage({ type: 'RETRY_DEBUG', payload: { appName: retryBtn.dataset.retryApp } });
             return;
           }
+          const packagesBtn = e.target.closest('[data-packages-app]');
+          if (packagesBtn) {
+            openPackagesScreen(packagesBtn.dataset.packagesApp);
+            return;
+          }
           const openBtn = e.target.closest('[data-open-url]');
           if (openBtn) {
             vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: openBtn.dataset.openUrl, source: 'manual' } });
@@ -398,6 +413,8 @@ export function getScript(nonce: string): string {
       attachSettingsListeners();
       // Credential setup screen listeners (defined in webviewRenderers.ts content)
       attachCredentialListeners();
+      // Packages screen listeners (defined in packageBrowserContent.ts content)
+      attachPackageListeners();
     }
 
     // === MESSAGE HANDLER ===
@@ -519,6 +536,7 @@ export function getScript(nonce: string): string {
               refreshActiveSessionsPanel();
               refreshAppListSection();
             }
+            syncPackageBrowserAppSelection();
             return;
           }
           if (!state.activeSessions[appName]) {
@@ -538,6 +556,7 @@ export function getScript(nonce: string): string {
             refreshActiveSessionsPanel();
             refreshAppListSection();
           }
+          syncPackageBrowserAppSelection();
           return;
         }
         case 'DEBUG_ERROR':
@@ -597,6 +616,20 @@ export function getScript(nonce: string): string {
               if (snapshotBtn) snapshotBtn.textContent = snapshotLabel;
             }
           }
+          return;
+        case 'PACKAGE_SOURCES_LOADED':
+          if (msg.payload.appName !== state.packageBrowserAppName) return;
+          state.packageEntries = Array.isArray(msg.payload.packages) ? msg.payload.packages : [];
+          state.packageBrowserLoading = false;
+          state.packageBrowserError = null;
+          syncSelectedPackageEntry();
+          if (state.screen === SCREENS.PACKAGES) refreshPackagesPanel();
+          return;
+        case 'PACKAGE_SOURCES_ERROR':
+          if (msg.payload.appName !== state.packageBrowserAppName) return;
+          state.packageBrowserLoading = false;
+          state.packageBrowserError = msg.payload.message;
+          if (state.screen === SCREENS.PACKAGES) refreshPackagesPanel();
           return;
         case 'CONFIG_LOADED': {
           // Always update credential status first — used to decide initial screen.

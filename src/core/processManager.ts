@@ -146,6 +146,10 @@ export function getSessionParams(appName: string): { folderPath: string; port: n
   return sessionParams.get(appName);
 }
 
+export function getActiveDebugSessionForApp(appName: string): vscode.DebugSession | undefined {
+  return activeDebugSessions.get(`${DEBUG_SESSION_PREFIX}${appName}`);
+}
+
 export function getActiveAppNames(): string[] {
   return Array.from(sessionStates.keys());
 }

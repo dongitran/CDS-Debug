@@ -187,6 +187,29 @@ export interface BreakpointContextSnapshot {
   captureError?: string;
 }
 
+export interface LoadedPackageSource {
+  name?: string;
+  path?: string;
+  sourceReference?: number;
+  origin?: string;
+  presentationHint?: string;
+}
+
+export interface LoadedPackageFile {
+  id: string;
+  label: string;
+  relativePath: string;
+  source: LoadedPackageSource;
+}
+
+export interface LoadedPackageEntry {
+  id: string;
+  name: string;
+  displayName: string;
+  version?: string;
+  files: LoadedPackageFile[];
+}
+
 // Messages from webview → extension
 export type WebviewMessage =
   | { type: 'SELECT_GROUP_FOLDER' }
@@ -210,7 +233,9 @@ export type WebviewMessage =
   | { type: 'GET_CREDENTIALS_STATUS' }
   | { type: 'CLEAR_CREDENTIALS' }
   | { type: 'RETRY_DEBUG'; payload: { appName: string } }
-  | { type: 'CLEAR_BREAKPOINT_SNAPSHOTS' };
+  | { type: 'CLEAR_BREAKPOINT_SNAPSHOTS' }
+  | { type: 'LOAD_PACKAGE_SOURCES'; payload: { appName: string } }
+  | { type: 'OPEN_PACKAGE_SOURCE'; payload: { appName: string; source: LoadedPackageSource } };
 
 // Messages from logs webview → logs extension panel
 export type LogsWebviewMessage =
@@ -249,4 +274,6 @@ export type ExtensionMessage =
   | { type: 'CREDENTIALS_STATUS'; payload: CredentialStatus }
   | { type: 'CREDENTIALS_REVOKED'; payload: { message: string } }
   | { type: 'BREAKPOINT_SNAPSHOTS'; payload: { snapshots: BreakpointContextSnapshot[] } }
-  | { type: 'BREAKPOINT_SNAPSHOT_ADDED'; payload: { snapshot: BreakpointContextSnapshot } };
+  | { type: 'BREAKPOINT_SNAPSHOT_ADDED'; payload: { snapshot: BreakpointContextSnapshot } }
+  | { type: 'PACKAGE_SOURCES_LOADED'; payload: { appName: string; packages: LoadedPackageEntry[] } }
+  | { type: 'PACKAGE_SOURCES_ERROR'; payload: { appName: string; message: string } };

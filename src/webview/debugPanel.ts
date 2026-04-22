@@ -1,5 +1,18 @@
 import * as vscode from 'vscode';
-import type { BranchPrepService, BranchPrepStep, BreakpointContextSnapshot, CacheSettings, CapDebugConfig, CredentialStatus, DebugTarget, ExtensionMessage, OrgGroupMapping, SyncProgress, WebviewMessage } from '../types/index';
+import type {
+  BranchPrepService,
+  BranchPrepStep,
+  BreakpointContextSnapshot,
+  CacheSettings,
+  CapDebugConfig,
+  CredentialStatus,
+  DebugTarget,
+  ExtensionMessage,
+  LoadedPackageSource,
+  OrgGroupMapping,
+  SyncProgress,
+  WebviewMessage,
+} from '../types/index';
 import { DEFAULT_CACHE_SETTINGS } from '../types/index';
 import { CfCliError, cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
 import { findRepoFolder } from '../core/folderScanner';
@@ -18,8 +31,17 @@ import { getCachedApps, getCacheSettings, getDebugPreferences, saveCacheSettings
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
-import { startTunnelAndAttach, stopProcess, stopAllProcesses, debugProcessEvents, getActiveSessions, getSessionParams } from '../core/processManager';
+import {
+  startTunnelAndAttach,
+  stopProcess,
+  stopAllProcesses,
+  debugProcessEvents,
+  getActiveDebugSessionForApp,
+  getActiveSessions,
+  getSessionParams,
+} from '../core/processManager';
 import { breakpointSnapshotEvents, clearBreakpointSnapshots, getBreakpointSnapshots } from '../core/breakpointSnapshotManager';
+import { loadPackageEntries, openPackageSource } from '../core/packageSourceBrowser';
 import {
   checkoutBranch,
   getCurrentBranch,
@@ -151,6 +173,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
         break;
 
+      case 'LOAD_PACKAGE_SOURCES':
+        await this.handleLoadPackageSources(raw.payload.appName);
+        break;
+
+      case 'OPEN_PACKAGE_SOURCE':
+        await this.handleOpenPackageSource(raw.payload.appName, raw.payload.source);
+        break;
+
       case 'STOP_ALL_DEBUG': {
         stopAllProcesses();
         break;
@@ -230,6 +260,39 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     void startTunnelAndAttach(appName, params.folderPath, params.port, params.launchConfigName).catch((err: unknown) => {
       logError(`[Retry] Tunnel restart failed for ${appName}: ${err instanceof Error ? err.message : String(err)}`);
     });
+  }
+
+  private async handleLoadPackageSources(appName: string): Promise<void> {
+    const session = getActiveDebugSessionForApp(appName);
+    if (!session) {
+      this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message: `No attached debug session found for ${appName}.` } });
+      return;
+    }
+
+    try {
+      const packages = await loadPackageEntries(session);
+      this.post({ type: 'PACKAGE_SOURCES_LOADED', payload: { appName, packages } });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError(`Failed to load package sources for ${appName}: ${message}`);
+      this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
+    }
+  }
+
+  private async handleOpenPackageSource(appName: string, source: LoadedPackageSource): Promise<void> {
+    const session = getActiveDebugSessionForApp(appName);
+    if (!session) {
+      this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message: `No attached debug session found for ${appName}.` } });
+      return;
+    }
+
+    try {
+      await openPackageSource(session, source);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError(`Failed to open package source for ${appName}: ${message}`);
+      this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
+    }
   }
 
   private async handleSelectGroupFolder(): Promise<void> {

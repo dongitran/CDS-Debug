@@ -1,3 +1,5 @@
+import { getPackageBrowserStyles } from './packageBrowserStyles';
+
 /** CSS styles for the CDS Debug Launcher webview panel. */
 export function getStyles(): string {
   return `
@@ -456,6 +458,26 @@ export function getStyles(): string {
     }
     .active-open-btn:hover {
       background: var(--vscode-button-hoverBackground);
+    }
+    .active-packages-btn {
+      flex-shrink: 0;
+      height: 26px;
+      padding: 0 8px;
+      margin-left: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .active-packages-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+      border-color: var(--vscode-focusBorder);
     }
     .active-retry-btn {
       flex-shrink: 0;
@@ -1095,5 +1117,7 @@ export function getStyles(): string {
       padding: 0 3px;
       border-radius: 2px;
     }
+
+    ${getPackageBrowserStyles()}
   `;
 }

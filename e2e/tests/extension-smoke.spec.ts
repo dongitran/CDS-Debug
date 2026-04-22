@@ -1575,6 +1575,179 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
   });
 
+  test.describe('Packages Browser', () => {
+    test('User can open Packages from an attached session card and filter package entries', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await injectMessage(webview, {
+          type: 'DEBUG_CONNECTING',
+          payload: { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } },
+        });
+        await injectMessage(webview, {
+          type: 'APP_DEBUG_STATUS',
+          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
+        });
+
+        const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
+        await expect(activeCard.locator('.active-packages-btn')).toBeVisible({ timeout: 3_000 });
+        await expect(activeCard.locator('.active-open-btn')).toBeVisible({ timeout: 3_000 });
+
+        const buttonOrder = await activeCard.locator('button').evaluateAll((nodes) =>
+          nodes.map((node) => Array.from(node.classList).join(' ')),
+        );
+        expect(buttonOrder.indexOf('active-packages-btn')).toBeLessThan(buttonOrder.indexOf('active-open-btn'));
+
+        await activeCard.locator('.active-packages-btn').click();
+
+        await expect(webview.locator('.step-title')).toContainText('Packages');
+        await expect(webview.locator('#packages-app-select')).toBeVisible();
+        await expect(webview.locator('#packages-search-input')).toBeVisible();
+        // This test injects webview-side debug session state only. The extension host has
+        // no real vscode.DebugSession here, so the automatic LOAD_PACKAGE_SOURCES request
+        // can resolve to an inline error before we inject the package payload below.
+
+        await injectMessage(webview, {
+          type: 'PACKAGE_SOURCES_LOADED',
+          payload: {
+            appName: 'mock-service-a',
+            packages: [
+              {
+                id: 'sample-client',
+                name: 'sample-client',
+                displayName: 'sample-client',
+                files: [
+                  {
+                    id: 'sample-client:dist/client.js',
+                    label: 'dist/client.js',
+                    relativePath: 'dist/client.js',
+                    source: {
+                      name: 'client.js',
+                      path: '/workspace/node_modules/sample-client/dist/client.js',
+                    },
+                  },
+                ],
+              },
+              {
+                id: '@sample-org/demo-kit',
+                name: '@sample-org/demo-kit',
+                displayName: '@sample-org/demo-kit',
+                files: [
+                  {
+                    id: '@sample-org/demo-kit:dist/main.js',
+                    label: 'dist/main.js',
+                    relativePath: 'dist/main.js',
+                    source: {
+                      name: 'main.js',
+                      path: '/workspace/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        });
+
+        await expect(webview.locator('.packages-package-item')).toHaveCount(2, { timeout: 3_000 });
+        await webview.locator('#packages-search-input').fill('@sample-org');
+        await expect(webview.locator('.packages-package-item')).toHaveCount(1, { timeout: 3_000 });
+        await expect(webview.locator('.packages-package-item', { hasText: '@sample-org/demo-kit' })).toBeVisible();
+
+        await webview.locator('.packages-package-item', { hasText: '@sample-org/demo-kit' }).click();
+        await expect(webview.locator('.packages-file-item', { hasText: 'dist/main.js' })).toBeVisible({ timeout: 3_000 });
+
+        await webview.locator('#btn-back-packages').click();
+        await expectReadyScreen(webview);
+      });
+    });
+
+    test('User can switch apps inside Packages and see each app package list independently', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await injectMessage(webview, {
+          type: 'DEBUG_CONNECTING',
+          payload: {
+            appNames: ['mock-service-a', 'mock-service-c'],
+            ports: { 'mock-service-a': 20000, 'mock-service-c': 20001 },
+          },
+        });
+        await injectMessage(webview, {
+          type: 'APP_DEBUG_STATUS',
+          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
+        });
+        await injectMessage(webview, {
+          type: 'APP_DEBUG_STATUS',
+          payload: { appName: 'mock-service-c', status: 'ATTACHED' },
+        });
+
+        await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+        await expect(webview.locator('#packages-app-select')).toBeVisible();
+
+        await injectMessage(webview, {
+          type: 'PACKAGE_SOURCES_LOADED',
+          payload: {
+            appName: 'mock-service-a',
+            packages: [
+              {
+                id: 'sample-alpha',
+                name: 'sample-alpha',
+                displayName: 'sample-alpha',
+                files: [
+                  {
+                    id: 'sample-alpha:index.js',
+                    label: 'index.js',
+                    relativePath: 'index.js',
+                    source: {
+                      name: 'index.js',
+                      path: '/workspace/node_modules/sample-alpha/index.js',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        });
+
+        await expect(webview.locator('.packages-package-item', { hasText: 'sample-alpha' })).toBeVisible({ timeout: 3_000 });
+
+        await webview.locator('#packages-app-select').selectOption('mock-service-c');
+        // Same harness limitation as above: app switching posts LOAD_PACKAGE_SOURCES, but
+        // the extension host does not have an actual debug session for injected cards.
+
+        await injectMessage(webview, {
+          type: 'PACKAGE_SOURCES_LOADED',
+          payload: {
+            appName: 'mock-service-c',
+            packages: [
+              {
+                id: '@sample-org/demo-worker',
+                name: '@sample-org/demo-worker',
+                displayName: '@sample-org/demo-worker',
+                files: [
+                  {
+                    id: '@sample-org/demo-worker:dist/worker.js',
+                    label: 'dist/worker.js',
+                    relativePath: 'dist/worker.js',
+                    source: {
+                      name: 'worker.js',
+                      path: '/workspace/node_modules/.pnpm/@sample-org+demo-worker@2.0.0/node_modules/@sample-org/demo-worker/dist/worker.js',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        });
+
+        await expect(webview.locator('.packages-package-item', { hasText: '@sample-org/demo-worker' })).toBeVisible({ timeout: 3_000 });
+        await expect(webview.locator('.packages-package-item', { hasText: 'sample-alpha' })).toHaveCount(0);
+      });
+    });
+  });
+
   // ─── Ready Screen — Actions and Navigation ─────────────────────────────────
 
   test.describe('Ready Screen — Actions and Navigation', () => {

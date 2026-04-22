@@ -167,12 +167,21 @@ export function getRendererScriptContent(): string {
       return rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl;
     }
 
+    function buildPackagesButtonHtml(appName) {
+      return '<button class="active-packages-btn" data-packages-app="' + escape(appName) + '"'
+        + ' title="Open loaded packages" aria-label="Open packages for ' + escape(appName) + '">'
+        + 'Packages</button>';
+    }
+
     function renderActiveCard(appName) {
       const session = state.activeSessions[appName];
       const appInfo = state.apps.find(a => a.name === appName);
       const rawUrl = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
       const appUrl = normalizeUrl(rawUrl);
       const portText = session.port ? '<span class="active-card-port">:' + session.port + '</span>' : '';
+      const packagesBtn = session.status === 'ATTACHED'
+        ? buildPackagesButtonHtml(appName)
+        : '';
 
       const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
         <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
@@ -192,6 +201,7 @@ export function getRendererScriptContent(): string {
             <div class="active-card-title" title="\${escape(appName)}">\${escape(appName)}\${portText}</div>
             <div class="active-card-status">\${getStatusInnerHtml(session)}</div>
           </div>
+          \${packagesBtn}
           \${openBtn}
           \${retryBtn}
           <button class="active-stop-btn" data-stop-app="\${escape(appName)}"
@@ -261,8 +271,17 @@ export function getRendererScriptContent(): string {
         // Handle open button visibility for ATTACHED state
         const appInfo = state.apps.find(function(a) { return a.name === appName; });
         const appUrl = normalizeUrl(appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '');
+        const existingPackagesBtn = card.querySelector('[data-packages-app]');
         const existingOpenBtn = card.querySelector('[data-open-url]');
         const stopBtn = card.querySelector('[data-stop-app]');
+
+        if (session.status === 'ATTACHED' && !existingPackagesBtn && stopBtn) {
+          const tmp = document.createElement('div');
+          tmp.innerHTML = buildPackagesButtonHtml(appName);
+          stopBtn.parentNode.insertBefore(tmp.firstChild, existingOpenBtn || stopBtn);
+        } else if (session.status !== 'ATTACHED' && existingPackagesBtn) {
+          existingPackagesBtn.remove();
+        }
 
         if (session.status === 'ATTACHED' && appUrl && !existingOpenBtn && stopBtn) {
           const tmp = document.createElement('div');
