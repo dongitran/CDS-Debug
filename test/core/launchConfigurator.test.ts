@@ -84,14 +84,14 @@ describe('buildLaunchConfiguration', () => {
     });
   });
 
-  it('appends gen/srv to localRoot', () => {
+  it('uses the repository root as localRoot', () => {
     const config = buildLaunchConfiguration(target, undefined);
-    expect(config.localRoot).toBe('/group/sub-a/myapp_svc_one/gen/srv');
+    expect(config.localRoot).toBe('/group/sub-a/myapp_svc_one');
   });
 
-  it('sets outFiles using the gen/srv path', () => {
+  it('sets outFiles using the repository root', () => {
     const config = buildLaunchConfiguration(target, undefined);
-    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/gen/srv/**/*.js');
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/**/*.js');
   });
 
   it('sets sourceMaps to true', () => {
@@ -104,10 +104,9 @@ describe('buildLaunchConfiguration', () => {
     expect(config.cdsDebugManaged).toBe(true);
   });
 
-  it('includes both skipFiles entries', () => {
+  it('includes only the node internals skipFiles entry', () => {
     const config = buildLaunchConfiguration(target, undefined);
-    expect(config.skipFiles).toContain('<node_internals>/**');
-    expect(config.skipFiles).toContain('**/node_modules/**');
+    expect(config.skipFiles).toEqual(['<node_internals>/**']);
   });
 
   it('includes remoteRoot when explicitly provided', () => {
@@ -162,7 +161,7 @@ describe('generateLaunchConfigurations', () => {
     expect(configs).toEqual([]);
   });
 
-  it('falls back to app root when gen/srv does not exist', async () => {
+  it('uses the repository root even when generated output folders are absent', async () => {
     vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     vi.mocked(fs.access).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
 
@@ -211,11 +210,11 @@ describe('getExistingLaunchConfigs', () => {
           request: 'attach',
           address: '127.0.0.1',
           port: 9229,
-          localRoot: '/group/sub-a/myapp_svc_one/gen/srv',
+          localRoot: '/group/sub-a/myapp_svc_one',
           sourceMaps: true,
           restart: true,
-          skipFiles: ['<node_internals>/**', '**/node_modules/**'],
-          outFiles: ['/group/sub-a/myapp_svc_one/gen/srv/**/*.js'],
+          skipFiles: ['<node_internals>/**'],
+          outFiles: ['/group/sub-a/myapp_svc_one/**/*.js'],
         },
       ],
     };

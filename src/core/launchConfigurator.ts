@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, access } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import type { CapDebugConfig, DebugTarget, LaunchConfiguration, LaunchJson } from '../types/index';
 import { readCapDebugConfig } from './capDebugConfig';
@@ -6,8 +6,7 @@ import { readCapDebugConfig } from './capDebugConfig';
 export { readCapDebugConfig } from './capDebugConfig';
 
 const LAUNCH_JSON_VERSION = '0.2.0';
-const SKIP_FILES = ['<node_internals>/**', '**/node_modules/**'];
-const GEN_SRV_SUFFIX = 'gen/srv';
+const SKIP_FILES = ['<node_internals>/**'];
 export const DEBUG_CONFIG_PREFIX = 'Debug: ';
 
 let launchJsonLock = Promise.resolve();
@@ -30,7 +29,7 @@ export function buildLaunchConfiguration(
   remoteRoot: string | undefined,
   localRootOverride?: string,
 ): LaunchConfiguration {
-  const localRoot = localRootOverride ?? join(target.folderPath, GEN_SRV_SUFFIX);
+  const localRoot = localRootOverride ?? target.folderPath;
   const config: LaunchConfiguration = {
     type: 'node',
     request: 'attach',
@@ -54,18 +53,6 @@ export function buildLaunchConfiguration(
   return config;
 }
 
-async function resolveLocalRoot(folderPath: string): Promise<string> {
-  const generatedSrvPath = join(folderPath, GEN_SRV_SUFFIX);
-  try {
-    await access(generatedSrvPath);
-    return generatedSrvPath;
-  } catch {
-    // When `gen/srv` is missing (project not built yet), fall back to the app
-    // source root to avoid debugger source-map path errors.
-    return folderPath;
-  }
-}
-
 export async function generateLaunchConfigurations(
   targets: DebugTarget[],
   fallbackConfig: CapDebugConfig | null = null,
@@ -75,8 +62,7 @@ export async function generateLaunchConfigurations(
     const appConfig = await readCapDebugConfig(target.folderPath);
     // Per-app config takes priority; workspace-level .vscode/cap-debug-config.json is the fallback
     const remoteRoot = appConfig?.remoteRoot ?? fallbackConfig?.remoteRoot;
-    const localRoot = await resolveLocalRoot(target.folderPath);
-    configs.push(buildLaunchConfiguration(target, remoteRoot, localRoot));
+    configs.push(buildLaunchConfiguration(target, remoteRoot));
   }
   return configs;
 }
