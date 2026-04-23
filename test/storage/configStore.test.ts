@@ -20,6 +20,31 @@ function makeContext() {
   };
 }
 
+function makeDeferredContext() {
+  const store = new Map<string, unknown>();
+  let resolveUpdate: (() => void) | undefined;
+  const updateStarted = new Promise<void>((resolve) => {
+    resolveUpdate = resolve;
+  });
+
+  return {
+    context: {
+      globalState: {
+        get: (key: string): unknown => store.get(key),
+        update: async (key: string, value: unknown): Promise<void> => {
+          await updateStarted;
+          if (value === undefined) {
+            store.delete(key);
+          } else {
+            store.set(key, value);
+          }
+        },
+      },
+    },
+    resolveUpdate: (): void => resolveUpdate?.(),
+  };
+}
+
 describe('configStore', () => {
   beforeEach(() => {
     initConfigStore(makeContext() as unknown as Parameters<typeof initConfigStore>[0]);
@@ -69,6 +94,25 @@ describe('configStore', () => {
     await saveConfig(second);
 
     expect(getConfig()).toEqual(second);
+  });
+
+  it('saveConfig updates the in-memory config before persistence resolves', async () => {
+    const deferred = makeDeferredContext();
+    initConfigStore(deferred.context as unknown as Parameters<typeof initConfigStore>[0]);
+
+    const config: ExtensionConfig = {
+      apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+      orgs: ['org-a'],
+      orgGroupMappings: [{ cfOrg: 'org-a', groupFolderPath: '/projects/group' }],
+    };
+
+    const savePromise = saveConfig(config);
+
+    expect(getConfig()).toEqual(config);
+
+    deferred.resolveUpdate();
+    await savePromise;
+    expect(getConfig()).toEqual(config);
   });
 
   it('throws when getConfig is called before initConfigStore', () => {

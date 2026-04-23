@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { test, type Page } from '@playwright/test';
+import { test, type Frame, type Page } from '@playwright/test';
 
 export interface SessionDiagnostics {
   vscodeStdout: string[];
@@ -76,6 +76,23 @@ async function attachArtifact(name: string, path: string, contentType: string): 
   await test.info().attach(name, { path, contentType });
 }
 
+function getArtifactFrames(page: Page): Frame[] {
+  return page.frames().filter((frame) => !frame.url().includes('workbench.html'));
+}
+
+async function persistFrameHtmlArtifacts(page: Page, prefix: string): Promise<void> {
+  const frames = getArtifactFrames(page);
+  for (const [index, frame] of frames.entries()) {
+    try {
+      const htmlPath = test.info().outputPath(`${prefix}-frame-${index + 1}.html`);
+      await writeArtifactFile(htmlPath, await frame.content());
+      await attachArtifact(`${prefix}-frame-${index + 1}-html`, htmlPath, 'text/html');
+    } catch {
+      // Some frames may be torn down while the workbench is closing.
+    }
+  }
+}
+
 export function buildFailureError(error: unknown, diagnostics: SessionDiagnostics): Error {
   return new Error(`E2E failure with diagnostics\n\n${createDiagnosticsReport(error, diagnostics)}`);
 }
@@ -113,6 +130,8 @@ export async function persistSessionArtifacts(options: {
   } catch {
     // HTML capture is best-effort only.
   }
+
+  await persistFrameHtmlArtifacts(options.page, prefix);
 }
 
 export async function captureStepEvidence(page: Page, label: string): Promise<void> {

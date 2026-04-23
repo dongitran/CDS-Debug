@@ -4,9 +4,13 @@ import type { ExtensionConfig, OrgGroupMapping } from '../types/index';
 const CONFIG_KEY = 'cds-debug.config';
 
 let _context: vscode.ExtensionContext | undefined;
+let _configCache: ExtensionConfig | undefined;
 
-export function initConfigStore(context: vscode.ExtensionContext): void {
+export function initConfigStore(context: vscode.ExtensionContext | undefined): void {
   _context = context;
+  _configCache = context === undefined
+    ? undefined
+    : context.globalState.get<ExtensionConfig>(CONFIG_KEY);
 }
 
 function getContext(): vscode.ExtensionContext {
@@ -17,15 +21,32 @@ function getContext(): vscode.ExtensionContext {
 }
 
 export function getConfig(): ExtensionConfig | undefined {
-  return getContext().globalState.get<ExtensionConfig>(CONFIG_KEY);
+  getContext();
+  return _configCache;
 }
 
 export async function saveConfig(config: ExtensionConfig): Promise<void> {
-  await getContext().globalState.update(CONFIG_KEY, config);
+  const context = getContext();
+  // Update the in-memory snapshot first so back-to-back webview messages
+  // (save mapping -> load apps -> start debug) all observe the latest config.
+  _configCache = config;
+  try {
+    await context.globalState.update(CONFIG_KEY, config);
+  } catch (error: unknown) {
+    _configCache = context.globalState.get<ExtensionConfig>(CONFIG_KEY);
+    throw error;
+  }
 }
 
 export async function clearConfig(): Promise<void> {
-  await getContext().globalState.update(CONFIG_KEY, undefined);
+  const context = getContext();
+  _configCache = undefined;
+  try {
+    await context.globalState.update(CONFIG_KEY, undefined);
+  } catch (error: unknown) {
+    _configCache = context.globalState.get<ExtensionConfig>(CONFIG_KEY);
+    throw error;
+  }
 }
 
 /**

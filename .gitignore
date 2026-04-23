@@ -5,3 +5,5 @@ dist/
 coverage/
 sample/
 .vscode/
+notes/
+implementation_plan.md

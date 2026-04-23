@@ -721,18 +721,26 @@ async function clearPackageFixtures(webview: Frame): Promise<void> {
 }
 
 async function startPackagesErrorMonitor(webview: Frame): Promise<void> {
-  await webview.evaluate(() => {
-    type PackagesErrorMonitor = {
+  await startDomTextMonitor(webview, '__cdsDebugPackagesErrorMonitor', '.packages-error');
+}
+
+async function startErrorBoxMonitor(webview: Frame): Promise<void> {
+  await startDomTextMonitor(webview, '__cdsDebugErrorBoxMonitor', '.error-box');
+}
+
+async function startDomTextMonitor(webview: Frame, key: string, selector: string): Promise<void> {
+  await webview.evaluate(({ key: monitorKey, selector: monitorSelector }) => {
+    type DomTextMonitor = {
       events: string[];
       observer?: MutationObserver;
     };
 
-    const monitorWindow = window as Window & { __cdsDebugPackagesErrorMonitor?: PackagesErrorMonitor };
-    monitorWindow.__cdsDebugPackagesErrorMonitor?.observer?.disconnect();
+    const monitorWindow = window as Window & Record<string, DomTextMonitor | undefined>;
+    monitorWindow[monitorKey]?.observer?.disconnect();
 
     const events: string[] = [];
     const capture = (): void => {
-      const messages = Array.from(document.querySelectorAll('.packages-error'))
+      const messages = Array.from(document.querySelectorAll(monitorSelector))
         .map((node) => node.textContent?.trim() ?? '')
         .filter(Boolean);
       for (const message of messages) {
@@ -751,34 +759,50 @@ async function startPackagesErrorMonitor(webview: Frame): Promise<void> {
     });
 
     capture();
-    monitorWindow.__cdsDebugPackagesErrorMonitor = { events, observer };
-  });
+    monitorWindow[monitorKey] = { events, observer };
+  }, { key, selector });
 }
 
 async function readPackagesErrorEvents(webview: Frame): Promise<string[]> {
-  return webview.evaluate(() => {
-    type PackagesErrorMonitor = {
+  return readDomTextMonitorEvents(webview, '__cdsDebugPackagesErrorMonitor');
+}
+
+async function readErrorBoxEvents(webview: Frame): Promise<string[]> {
+  return readDomTextMonitorEvents(webview, '__cdsDebugErrorBoxMonitor');
+}
+
+async function readDomTextMonitorEvents(webview: Frame, key: string): Promise<string[]> {
+  return webview.evaluate((monitorKey) => {
+    type DomTextMonitor = {
       events: string[];
       observer?: MutationObserver;
     };
 
-    const monitorWindow = window as Window & { __cdsDebugPackagesErrorMonitor?: PackagesErrorMonitor };
-    return monitorWindow.__cdsDebugPackagesErrorMonitor?.events.slice() ?? [];
-  });
+    const monitorWindow = window as Window & Record<string, DomTextMonitor | undefined>;
+    return monitorWindow[monitorKey]?.events.slice() ?? [];
+  }, key);
 }
 
 async function stopPackagesErrorMonitor(webview: Frame): Promise<string[]> {
-  const events = await readPackagesErrorEvents(webview);
-  await webview.evaluate(() => {
-    type PackagesErrorMonitor = {
+  return stopDomTextMonitor(webview, '__cdsDebugPackagesErrorMonitor');
+}
+
+async function stopErrorBoxMonitor(webview: Frame): Promise<string[]> {
+  return stopDomTextMonitor(webview, '__cdsDebugErrorBoxMonitor');
+}
+
+async function stopDomTextMonitor(webview: Frame, key: string): Promise<string[]> {
+  const events = await readDomTextMonitorEvents(webview, key);
+  await webview.evaluate((monitorKey) => {
+    type DomTextMonitor = {
       events: string[];
       observer?: MutationObserver;
     };
 
-    const monitorWindow = window as Window & { __cdsDebugPackagesErrorMonitor?: PackagesErrorMonitor };
-    monitorWindow.__cdsDebugPackagesErrorMonitor?.observer?.disconnect();
-    delete monitorWindow.__cdsDebugPackagesErrorMonitor;
-  });
+    const monitorWindow = window as Window & Record<string, DomTextMonitor | undefined>;
+    monitorWindow[monitorKey]?.observer?.disconnect();
+    delete monitorWindow[monitorKey];
+  }, key);
   return events;
 }
 
@@ -1042,9 +1066,26 @@ test.describe('CAP Debug Config Precedence E2E', () => {
           await startDebugForApp(webview, 'mock-service-a');
 
           await expect.poll(
-            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            async () => {
+              try {
+                const launchJson = await readLaunchJson(workspaceDir);
+                return launchJson.configurations
+                  .filter((item) => item.name === 'Debug: mock-service-a')
+                  .map((item) => ({
+                    cdsDebugManaged: item.cdsDebugManaged,
+                    remoteRoot: item.remoteRoot,
+                  }));
+              } catch {
+                return [];
+              }
+            },
             { timeout: 15_000 },
-          ).toBe('/sample/global-root');
+          ).toEqual([
+            {
+              cdsDebugManaged: true,
+              remoteRoot: '/sample/global-root',
+            },
+          ]);
         },
         workspaceDir,
       );
@@ -1067,9 +1108,26 @@ test.describe('CAP Debug Config Precedence E2E', () => {
           await startDebugForApp(webview, 'mock-service-a');
 
           await expect.poll(
-            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            async () => {
+              try {
+                const launchJson = await readLaunchJson(workspaceDir);
+                return launchJson.configurations
+                  .filter((item) => item.name === 'Debug: mock-service-a')
+                  .map((item) => ({
+                    cdsDebugManaged: item.cdsDebugManaged,
+                    remoteRoot: item.remoteRoot,
+                  }));
+              } catch {
+                return [];
+              }
+            },
             { timeout: 15_000 },
-          ).toBe('/sample/workspace-root');
+          ).toEqual([
+            {
+              cdsDebugManaged: true,
+              remoteRoot: '/sample/workspace-root',
+            },
+          ]);
         },
         workspaceDir,
       );
@@ -1101,9 +1159,26 @@ test.describe('CAP Debug Config Precedence E2E', () => {
           await startDebugForApp(webview, 'mock-service-a');
 
           await expect.poll(
-            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            async () => {
+              try {
+                const launchJson = await readLaunchJson(workspaceDir);
+                return launchJson.configurations
+                  .filter((item) => item.name === 'Debug: mock-service-a')
+                  .map((item) => ({
+                    cdsDebugManaged: item.cdsDebugManaged,
+                    remoteRoot: item.remoteRoot,
+                  }));
+              } catch {
+                return [];
+              }
+            },
             { timeout: 15_000 },
-          ).toBe('/sample/service-root');
+          ).toEqual([
+            {
+              cdsDebugManaged: true,
+              remoteRoot: '/sample/service-root',
+            },
+          ]);
         },
         workspaceDir,
       );
@@ -1134,9 +1209,26 @@ test.describe('CAP Debug Config Precedence E2E', () => {
           await startDebugForApp(webview, 'mock-service-a');
 
           await expect.poll(
-            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            async () => {
+              try {
+                const launchJson = await readLaunchJson(workspaceDir);
+                return launchJson.configurations
+                  .filter((item) => item.name === 'Debug: mock-service-a')
+                  .map((item) => ({
+                    cdsDebugManaged: item.cdsDebugManaged,
+                    remoteRoot: item.remoteRoot,
+                  }));
+              } catch {
+                return [];
+              }
+            },
             { timeout: 15_000 },
-          ).toBe('/sample/workspace-root');
+          ).toEqual([
+            {
+              cdsDebugManaged: true,
+              remoteRoot: '/sample/workspace-root',
+            },
+          ]);
         },
         workspaceDir,
       );
@@ -1153,6 +1245,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expectRegionScreen(webview);
       // Default region eu10 shows its endpoint URL below the region cards
       await expect(webview.locator('.radio-desc', { hasText: 'api.cf.eu10.hana.ondemand.com' })).toBeVisible();
+      await startErrorBoxMonitor(webview);
       await goToOrgSelection(webview);
 
       // Verify all SELECT_ORG screen structural elements
@@ -1167,18 +1260,30 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.locator('.org-item', { hasText: 'mock-org-beta' })).toBeVisible();
       await expect(webview.locator('input[name="cf-org"][value="mock-org-alpha"]')).toBeAttached();
       await expect(webview.locator('input[name="cf-org"][value="mock-org-beta"]')).toBeAttached();
+      await expect(webview.locator('.error-box')).toHaveCount(0);
+      await expect(webview.locator('#btn-login')).toHaveCount(0);
+      await expect(webview.locator('#btn-save-creds')).toHaveCount(0);
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
     });
   });
 
   test('User can see setup screen when credentials are missing', async () => {
     await withVsCodeSession({ credentialMode: 'none', cfScenario: 'success' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
+      await startErrorBoxMonitor(webview);
       await expectSetupCredentialsScreen(webview);
       // Setup mode: env-var hint shown, no "Back to Settings" button
       await expect(webview.locator('.cred-env-hint')).toBeVisible();
       await expect(webview.locator('.cred-env-hint')).toContainText('SAP_EMAIL');
       await expect(webview.locator('.cred-env-hint')).toContainText('SAP_PASSWORD');
       await expect(webview.locator('#btn-cancel-creds')).toHaveCount(0);
+      await expect(webview.locator('.error-box')).toHaveCount(0);
+      await expect(webview.locator('.step-title', { hasText: 'CF Region' })).toHaveCount(0);
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
     });
   });
 
@@ -1191,14 +1296,22 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
       await saveButton.click();
       await expect(webview.getByText('Email is required.')).toBeVisible();
+      await expect(webview.locator('.step-title', { hasText: 'Setup Credentials' })).toBeVisible();
+      await expect(saveButton).toBeEnabled();
 
       await webview.getByPlaceholder('your.name@company.com').fill('invalid-email');
       await saveButton.click();
       await expect(webview.getByText('Please enter a valid email address.')).toBeVisible();
+      await expect(webview.locator('.step-title', { hasText: 'Setup Credentials' })).toBeVisible();
+      await expect(saveButton).toBeEnabled();
 
       await webview.getByPlaceholder('your.name@company.com').fill('valid.user@example.com');
       await saveButton.click();
       await expect(webview.getByText('Password is required.')).toBeVisible();
+      await expect(webview.locator('.step-title', { hasText: 'Setup Credentials' })).toBeVisible();
+      await expect(webview.locator('#btn-login')).toHaveCount(0);
+      await expect(webview.locator('#search-input')).toHaveCount(0);
+      await expect(saveButton).toBeEnabled();
     });
   });
 
@@ -1219,6 +1332,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await loginFromRegionScreen(webview);
       await expect(webview.getByText('API endpoint must start with https://')).toBeVisible();
       await expectRegionScreen(webview);
+      await expect(webview.locator('#api-endpoint-custom')).toBeVisible();
+      await expect(webview.locator('#api-endpoint-custom')).toHaveValue('http://api.cf.invalid.hana.ondemand.com');
+      await expect(webview.locator('#btn-cancel-login')).toHaveCount(0);
+      await expect(webview.getByText('Logging in…')).toHaveCount(0);
     });
   });
 
@@ -1230,9 +1347,17 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await webview.locator('input[name="cf-region"][value="custom"]').check({ force: true });
       await webview.locator('#api-endpoint-custom').fill('https://api.cf.us10.hana.ondemand.com');
 
+      await startErrorBoxMonitor(webview);
       await loginFromRegionScreen(webview);
       await expect(webview.getByText('Select CF Org')).toBeVisible();
       await expect(webview.getByText('mock-org-alpha')).toBeVisible();
+      await expect(webview.locator('.error-box')).toHaveCount(0);
+      await expect(webview.locator('#btn-login')).toHaveCount(0);
+      await expect(webview.locator('#api-endpoint-custom')).toHaveCount(0);
+      await expect(webview.locator('#btn-cancel-login')).toHaveCount(0);
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
     });
   });
 
@@ -1244,6 +1369,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await loginFromRegionScreen(webview);
       await expect(webview.getByText(/mock auth failed|Command failed|authentication failed/i)).toBeVisible();
       await expectRegionScreen(webview);
+      await expect(webview.locator('.error-box')).toHaveCount(1);
+      await expect(webview.locator('.spinner')).toHaveCount(0);
+      await expect(webview.locator('#btn-cancel-login')).toHaveCount(0);
+      await expect(webview.getByText('Logging in…')).toHaveCount(0);
     });
   });
 
@@ -1252,6 +1381,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await expectRegionScreen(webview);
 
+      await startErrorBoxMonitor(webview);
       await loginFromRegionScreen(webview);
       // Verify all LOGGING_IN screen elements: spinner, heading, endpoint URL, cancel button
       await expect(webview.locator('.spinner')).toBeVisible();
@@ -1261,7 +1391,13 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await webview.locator('#btn-cancel-login').click();
 
       await expectRegionScreen(webview);
+      await expect(webview.locator('.spinner')).toHaveCount(0);
+      await expect(webview.getByText('Logging in…')).toHaveCount(0);
       await expect(webview.locator('#btn-cancel-login')).toHaveCount(0);
+      await expect(webview.locator('.error-box')).toHaveCount(0);
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
     });
   });
 
@@ -1272,6 +1408,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-auth' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await expectRegionScreen(webview);
+      await startErrorBoxMonitor(webview);
 
       // Inject CONFIG_LOADED with existing mappings → webview sets isRestoringSession=true,
       // transitions to LOADING_APPS, and sends LOAD_APPS to the extension.
@@ -1300,6 +1437,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.getByText(/Session expired. Reconnecting/i)).toBeVisible();
       await expect(webview.locator('.radio-desc', { hasText: 'api.cf.eu10.hana.ondemand.com' })).toBeVisible();
       await expect(webview.locator('#btn-cancel-login')).toHaveCount(0);
+      await expect(webview.getByText('Logging in…')).toHaveCount(0);
+      await expect(webview.getByText(/Loading apps for/i)).toHaveCount(0);
+      await expect(webview.locator('.error-box')).toHaveCount(0);
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
     });
   });
 
@@ -1310,7 +1453,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
       const nextButton = webview.locator('#btn-next-org');
       await expect(webview.getByText('No orgs found.')).toBeVisible();
+      await expect(webview.locator('.org-item')).toHaveCount(0);
+      await expect(webview.locator('.error-box')).toHaveCount(0);
       await expectButtonDisabled(nextButton);
+      await expect(webview.locator('#btn-back-region')).toBeVisible();
 
       await webview.locator('#btn-back-region').click();
       await expectRegionScreen(webview);
@@ -1321,9 +1467,13 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await expectRegionScreen(webview);
+      await startErrorBoxMonitor(webview);
 
       await loginFromRegionScreen(webview);
       await expect(webview.getByText('Select CF Org')).toBeVisible();
+      await expect(webview.locator('#btn-back-region')).toBeVisible();
+      await expect(webview.locator('#btn-next-org')).toBeDisabled();
+      await expect(webview.locator('#btn-back-select-org')).toHaveCount(0);
 
       await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
       // Surgical DOM update: selected org gets the "selected" CSS class on its label
@@ -1334,12 +1484,18 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
       await expect(webview.getByText('Select Local Folder')).toBeVisible();
       await expect(webview.getByRole('button', { name: /Browse/i })).toBeVisible();
+      await expect(webview.locator('#btn-back-region')).toHaveCount(0);
 
       await webview.locator('#btn-back-select-org').click();
       await expect(webview.getByText('Select CF Org')).toBeVisible();
+      await expect(webview.locator('#btn-save-mapping')).toHaveCount(0);
+      await expect(webview.locator('#btn-back-region')).toBeVisible();
 
       await webview.locator('#btn-back-region').click();
       await expectRegionScreen(webview);
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
     });
   });
 
@@ -1347,8 +1503,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await completeMappingToReady(webview);
+      await startErrorBoxMonitor(webview);
 
       // Verify all READY screen structural elements
+      await expect(webview.locator('#search-input')).toBeVisible();
+      await expect(webview.locator('#chk-select-all')).toBeVisible();
+      await expectButtonDisabled(webview.locator('#btn-start-debug'));
       await expect(webview.locator('#btn-refresh-apps')).toBeVisible();
       await expect(webview.locator('#btn-gear')).toBeVisible();
       await expect(webview.locator('#btn-remap')).toBeVisible();
@@ -1367,6 +1527,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.getByText('mock-service-a')).toBeVisible();
       await expect(webview.getByText('mock-service-b')).toBeVisible();
       await expect(webview.getByText('mock-service-c')).toBeVisible();
+      await expect(webview.locator('#btn-save-mapping')).toHaveCount(0);
+      await expect(webview.locator('#btn-back-region')).toHaveCount(0);
+      await expect(webview.getByText('Settings')).toHaveCount(0);
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
     });
   });
 
@@ -1374,6 +1540,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await completeMappingToReady(webview);
+      await startErrorBoxMonitor(webview);
 
       const startButton = webview.locator('#btn-start-debug');
       await expectButtonDisabled(startButton);
@@ -1387,6 +1554,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await webview.locator('#search-input').fill('mock-service-c');
       await expect(webview.locator('.app-name', { hasText: 'mock-service-c' })).toHaveCount(1);
       await expect(webview.locator('.app-name', { hasText: 'mock-service-a' })).toHaveCount(0);
+      await expect(webview.locator('.app-name', { hasText: 'mock-service-b' })).toHaveCount(0);
 
       await webview.locator('#chk-select-all').uncheck();
       await expectButtonDisabled(startButton);
@@ -1405,6 +1573,11 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expectButtonDisabled(startButton);
       // Active sessions panel is present (empty by default)
       await expect(webview.locator('#active-sessions-panel')).toBeAttached();
+      await expect(webview.locator('.active-card')).toHaveCount(0);
+      await expect(webview.locator('#btn-retry-apps')).toHaveCount(0);
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
     });
   });
 
@@ -1418,6 +1591,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.locator('.error-box')).toContainText(/mock apps load failed|Command failed/i);
       // Retry button uses the specific #btn-retry-apps ID
       await expect(webview.locator('#btn-retry-apps')).toBeVisible();
+      await expect(webview.locator('#search-input')).toBeVisible();
+      await expect(webview.locator('.spinner')).toHaveCount(0);
+      await expect(webview.locator('.active-card')).toHaveCount(0);
+      await expectButtonDisabled(webview.locator('#btn-start-debug'));
     });
   });
 
@@ -1426,6 +1603,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await goToFolderSelection(webview);
       await injectSelectedFolder(webview, MOCK_GROUP_FOLDER);
+      await startErrorBoxMonitor(webview);
 
       await webview.locator('#btn-save-mapping').click();
       await expect(webview.getByText(/Loading apps for/i)).toBeVisible();
@@ -1438,6 +1616,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
       await expect(webview.getByText('Select Local Folder')).toBeVisible();
       await expect(webview.getByRole('button', { name: /Save & Continue/i })).toBeVisible();
+      await expect(webview.locator('.spinner')).toHaveCount(0);
+      await expect(webview.locator('#btn-cancel-load-apps')).toHaveCount(0);
+      await expect(webview.locator('.error-box')).toHaveCount(0);
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
     });
   });
 
@@ -1449,6 +1633,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await webview.locator('#btn-gear').click();
       await expect(webview.getByText('Settings')).toBeVisible();
       await expect(webview.getByText('SAP Credentials')).toBeVisible();
+      await expect(webview.locator('#chk-open-browser')).toBeVisible();
+      await expect(webview.locator('#chk-breakpoint-snapshot-handling')).toBeVisible();
+      await expect(webview.locator('#btn-back-settings')).toBeVisible();
+      await expect(webview.locator('#btn-logout-settings')).toBeVisible();
+      await expect(webview.locator('#search-input')).toHaveCount(0);
+      await expect(webview.locator('#btn-start-debug')).toHaveCount(0);
 
       await webview.locator('#btn-logout-settings').click();
       await expectRegionScreen(webview);
@@ -1462,6 +1652,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-target-after-apps' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await completeMappingToReady(webview);
+      await startErrorBoxMonitor(webview);
 
       // Select all started apps and start debug
       await webview.locator('#chk-select-all').check();
@@ -1477,6 +1668,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(
         webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.status-text-anim')
       ).toContainText('Preparing');
+      await expect(webview.locator('[data-packages-app]')).toHaveCount(0);
+      await expect(webview.locator('[data-retry-app]')).toHaveCount(0);
 
       // Apps should now be shown as disabled in the started list (no longer selectable)
       const serviceACheckbox = webview.locator('input[type="checkbox"][data-app="mock-service-a"]');
@@ -1486,6 +1679,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
       // Start button must be disabled since no more selectable started apps remain
       await expectButtonDisabled(webview.locator('#btn-start-debug'));
+      await expect(webview.locator('.footer-info')).toContainText('No started apps');
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
     });
   });
 
@@ -1504,6 +1701,9 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const stoppedRow = webview.locator('.app-row', { hasText: 'mock-service-b' });
         await expect(stoppedRow.locator('.badge-stopped')).toBeVisible();
         await expect(webview.locator('.app-row.stopped', { hasText: 'mock-service-b' })).toBeVisible();
+        await expect(stoppedRow.locator('.badge-started')).toHaveCount(0);
+        await expect(stoppedRow.locator('.badge-debug')).toHaveCount(0);
+        await expect(stoppedRow.locator('[data-stop-app]')).toHaveCount(0);
 
         // App list shows both "Started" and "Stopped" section labels
         const appList = webview.locator('.app-list');
@@ -1520,10 +1720,13 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const cfInfoBox = webview.locator('.cf-info-box');
         await expect(cfInfoBox.locator('.cf-info-label', { hasText: 'Region' })).toBeVisible();
         // Default selected region is eu10 — full display includes the region name
-        await expect(cfInfoBox.locator('.cf-info-value', { hasText: 'eu10' })).toBeVisible();
-        await expect(cfInfoBox.locator('.cf-info-value', { hasText: 'Europe (Frankfurt)' })).toBeVisible();
+        const regionValue = cfInfoBox.locator('.cf-info-value').first();
+        await expect(regionValue).toContainText('eu10');
+        await expect(regionValue).toContainText('Europe (Frankfurt)');
+        await expect(regionValue).toHaveAttribute('title', 'https://api.cf.eu10.hana.ondemand.com');
         await expect(cfInfoBox.locator('.cf-info-label', { hasText: 'Org' })).toBeVisible();
         await expect(cfInfoBox.locator('.cf-info-value', { hasText: 'mock-org-alpha' })).toBeVisible();
+        await expect(webview.locator('.error-box')).toHaveCount(0);
       });
     });
 
@@ -1547,6 +1750,9 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         // Footer switches to "No started apps" when no non-active started app remains
         await expect(webview.locator('.footer-info')).toContainText('No started apps', { timeout: 3_000 });
+        await expect(webview.locator('.active-card')).toHaveCount(2, { timeout: 3_000 });
+        await expect(webview.locator('.active-card', { hasText: 'mock-service-a' })).toBeVisible();
+        await expect(webview.locator('.active-card', { hasText: 'mock-service-c' })).toBeVisible();
         // Select-all row stays in DOM (surgical update) but count drops to (0)
         await expect(webview.locator('.select-all-row span')).toContainText('(0)', { timeout: 3_000 });
         // Start button is disabled — no selectable apps remain
@@ -1573,8 +1779,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         // After session: "debugging" badge, disabled checkbox, and "in-debug" CSS class on row
         await expect(serviceARow.locator('.badge-debug')).toBeVisible({ timeout: 3_000 });
+        await expect(serviceARow.locator('.badge-started')).toHaveCount(0);
         await expect(webview.locator('input[type="checkbox"][data-app="mock-service-a"]')).toBeDisabled({ timeout: 3_000 });
         await expect(webview.locator('.app-row.in-debug', { hasText: 'mock-service-a' })).toBeVisible({ timeout: 3_000 });
+        await expect(webview.locator('.active-card', { hasText: 'mock-service-a' })).toBeVisible({ timeout: 3_000 });
 
         // Select-all count updates — only mock-service-c remains selectable
         await expect(webview.locator('.select-all-row span')).toContainText('(1)', { timeout: 3_000 });
@@ -1605,9 +1813,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         // Card internal structure: .active-card-main > .active-card-title + .active-card-status
         await expect(activeCard.locator('.active-card-main')).toBeVisible();
         await expect(activeCard.locator('.active-card-title')).toContainText('mock-service-a');
+        await expect(activeCard.locator('.active-card-port')).toContainText(':20000');
         await expect(activeCard.locator('.active-card-status')).toBeVisible();
         await expect(activeCard.locator('.active-card-status .spinner')).toBeVisible();
         await expect(activeCard.locator('.active-card-status .status-text-anim')).toBeVisible();
+        await expect(activeCard.locator('[data-packages-app]')).toHaveCount(0);
+        await expect(activeCard.locator('[data-retry-app]')).toHaveCount(0);
         // "Active Sessions" header label is shown above the cards
         await expect(webview.locator('.section-label', { hasText: 'Active Sessions' })).toBeVisible();
         // The stop button is always present on every card
@@ -1683,6 +1894,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(activeCard.getByText('SSH tunnel failed')).toBeVisible({ timeout: 3_000 });
         // Retry button must appear for ERROR state
         await expect(activeCard.locator('[data-retry-app="mock-service-a"]')).toBeVisible({ timeout: 3_000 });
+        await expect(activeCard.locator('[data-packages-app]')).toHaveCount(0);
         // Stop button still present
         await expect(activeCard.locator('[data-stop-app="mock-service-a"]')).toBeVisible();
       });
@@ -1704,6 +1916,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await expect(webview.locator('.active-card', { hasText: 'mock-service-a' })).not.toBeVisible({ timeout: 5_000 });
         await expect(webview.locator('.active-card')).toHaveCount(0, { timeout: 5_000 });
+        await expect(webview.locator('input[type="checkbox"][data-app="mock-service-a"]')).toBeEnabled({ timeout: 5_000 });
+        await expect(webview.locator('#btn-stop-all-sessions')).toHaveCount(0);
       });
     });
 
