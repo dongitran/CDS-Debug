@@ -321,10 +321,6 @@ export function getScript(nonce: string): string {
             openPackagesScreen(packagesBtn.dataset.packagesApp);
             return;
           }
-          const openBtn = e.target.closest('[data-open-url]');
-          if (openBtn) {
-            vscode.postMessage({ type: 'OPEN_APP_URL', payload: { url: openBtn.dataset.openUrl, source: 'manual' } });
-          }
         });
       }
 
@@ -582,6 +578,10 @@ export function getScript(nonce: string): string {
           return;
         case 'DEBUG_PREFS':
           state.debugPrefs = msg.payload;
+          if (state.screen === SCREENS.READY) {
+            render();
+            return;
+          }
           // Always sync both panels so active-session cards and the app-list
           // (which grays-out apps currently being debugged) stay consistent
           // whenever prefs are pushed from the extension.

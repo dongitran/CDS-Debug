@@ -162,33 +162,18 @@ export function getRendererScriptContent(): string {
       return '';
     }
 
-    function normalizeUrl(rawUrl) {
-      if (!rawUrl) return '';
-      return rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : 'https://' + rawUrl;
-    }
-
     function buildPackagesButtonHtml(appName) {
       return '<button class="active-packages-btn" data-packages-app="' + escape(appName) + '"'
         + ' title="Open loaded packages" aria-label="Open packages for ' + escape(appName) + '">'
-        + 'Packages</button>';
+        + 'Package</button>';
     }
 
     function renderActiveCard(appName) {
       const session = state.activeSessions[appName];
-      const appInfo = state.apps.find(a => a.name === appName);
-      const rawUrl = appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '';
-      const appUrl = normalizeUrl(rawUrl);
       const portText = session.port ? '<span class="active-card-port">:' + session.port + '</span>' : '';
       const packagesBtn = session.status === 'ATTACHED'
         ? buildPackagesButtonHtml(appName)
         : '';
-
-      const openBtn = (session.status === 'ATTACHED' && appUrl) ? \`
-        <button class="active-open-btn" data-open-url="\${escape(appUrl)}"
-          title="Open App in Browser" aria-label="Open \${escape(appName)} in browser">
-          &#8599; Open App
-        </button>
-      \` : '';
 
       const retryBtn = session.status === 'ERROR' ? \`
         <button class="active-retry-btn" data-retry-app="\${escape(appName)}"
@@ -202,7 +187,6 @@ export function getRendererScriptContent(): string {
             <div class="active-card-status">\${getStatusInnerHtml(session)}</div>
           </div>
           \${packagesBtn}
-          \${openBtn}
           \${retryBtn}
           <button class="active-stop-btn" data-stop-app="\${escape(appName)}"
             title="Stop Debug Session" aria-label="Stop debug for \${escape(appName)}">&#9632;</button>
@@ -268,29 +252,15 @@ export function getRendererScriptContent(): string {
           if (statusEl.innerHTML !== newHtml) statusEl.innerHTML = newHtml;
         }
 
-        // Handle open button visibility for ATTACHED state
-        const appInfo = state.apps.find(function(a) { return a.name === appName; });
-        const appUrl = normalizeUrl(appInfo && appInfo.urls && appInfo.urls.length > 0 ? appInfo.urls[0] : '');
         const existingPackagesBtn = card.querySelector('[data-packages-app]');
-        const existingOpenBtn = card.querySelector('[data-open-url]');
         const stopBtn = card.querySelector('[data-stop-app]');
 
         if (session.status === 'ATTACHED' && !existingPackagesBtn && stopBtn) {
           const tmp = document.createElement('div');
           tmp.innerHTML = buildPackagesButtonHtml(appName);
-          stopBtn.parentNode.insertBefore(tmp.firstChild, existingOpenBtn || stopBtn);
+          stopBtn.parentNode.insertBefore(tmp.firstChild, stopBtn);
         } else if (session.status !== 'ATTACHED' && existingPackagesBtn) {
           existingPackagesBtn.remove();
-        }
-
-        if (session.status === 'ATTACHED' && appUrl && !existingOpenBtn && stopBtn) {
-          const tmp = document.createElement('div');
-          tmp.innerHTML = '<button class="active-open-btn" data-open-url="' + escape(appUrl) + '"'
-            + ' title="Open App in Browser" aria-label="Open ' + escape(appName) + ' in browser">'
-            + '&#8599; Open App</button>';
-          stopBtn.parentNode.insertBefore(tmp.firstChild, stopBtn);
-        } else if (session.status !== 'ATTACHED' && existingOpenBtn) {
-          existingOpenBtn.remove();
         }
 
         // Retry button: show on ERROR, hide otherwise
@@ -567,15 +537,20 @@ export function getRendererScriptContent(): string {
       const snapshotButtonLabel = snapshotCount > 0
         ? 'Breakpoint Snapshots (' + snapshotCount + ')'
         : 'Breakpoint Snapshots';
+      const snapshotButton = state.debugPrefs.enableBreakpointSnapshotHandling
+        ? \`
+            <button class="header-nav-btn" id="btn-open-breakpoint-snapshots"
+              title="Open breakpoint snapshots" aria-label="Open breakpoint snapshots">
+              \${escape(snapshotButtonLabel)}
+            </button>
+          \`
+        : '';
 
       return \`
         <div class="ready-layout">
           <div class="step-header ready-step-header">
             <span class="step-title">Debug Launcher</span>
-            <button class="header-nav-btn" id="btn-open-breakpoint-snapshots"
-              title="Open breakpoint snapshots" aria-label="Open breakpoint snapshots">
-              \${escape(snapshotButtonLabel)}
-            </button>
+            \${snapshotButton}
             <button class="gear-btn" id="btn-refresh-apps" title="Refresh app list" aria-label="Refresh apps" style="font-size:13px">&#8635;</button>
             <button class="gear-btn" id="btn-gear" title="Settings" aria-label="Open settings">&#9881;</button>
           </div>
@@ -738,7 +713,7 @@ export function getRendererScriptContent(): string {
                 \${state.debugPrefs.openBrowserOnAttach ? 'enabled' : 'off by default'}
               </span>
             </span>
-            <span class="pref-row-desc">When enabled, this extension opens the app URL in your browser the moment the debugger attaches. Disabled by default &mdash; use the &ldquo;&#8599;&nbsp;Open&rdquo; button on each session card for manual control.</span>
+            <span class="pref-row-desc">When enabled, this extension opens the app URL in your browser the moment the debugger attaches. Disabled by default so the launcher stays focused until you opt in.</span>
           </div>
           <div class="toggle-switch \${state.debugPrefs.openBrowserOnAttach ? 'on' : ''}">
             <input type="checkbox" id="chk-open-browser" \${state.debugPrefs.openBrowserOnAttach ? 'checked' : ''} />

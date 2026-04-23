@@ -26,17 +26,6 @@ export function getPackageBrowserStyles(): string {
       gap: 8px;
     }
 
-    .packages-summary {
-      display: flex;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 8px;
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-
     .packages-columns {
       display: flex;
       flex-direction: column;

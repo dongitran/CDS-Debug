@@ -683,6 +683,19 @@ async function openBreakpointSnapshotsScreen(webview: Frame): Promise<void> {
   await expect(webview.locator('#btn-back-breakpoint-snapshots')).toBeVisible();
 }
 
+async function enableBreakpointSnapshotHandlingFromSettings(webview: Frame): Promise<void> {
+  await webview.locator('#btn-gear').click();
+  await expect(webview.getByText('Settings')).toBeVisible();
+  const toggle = webview.locator('#chk-breakpoint-snapshot-handling');
+  if (!(await toggle.isChecked())) {
+    await toggle.check({ force: true });
+    await delay(300);
+  }
+  await webview.locator('#btn-back-settings').click();
+  await expectReadyScreen(webview);
+  await expect(webview.locator('#btn-open-breakpoint-snapshots')).toBeVisible();
+}
+
 async function expectButtonDisabled(button: Locator): Promise<void> {
   await expect(button).toBeDisabled();
 }
@@ -1462,7 +1475,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         });
         await expect(activeCard.locator('.spinner')).toBeVisible({ timeout: 3_000 });
         await expect(activeCard.getByText(/Enabling SSH/)).toBeVisible({ timeout: 3_000 });
-        // Stop button present, no Open App or Retry buttons
+        // Stop button present, with no extra action button or retry button
         await expect(activeCard.locator('[data-stop-app="mock-service-a"]')).toBeVisible();
         await expect(activeCard.locator('.active-open-btn')).toHaveCount(0);
         await expect(activeCard.locator('[data-retry-app]')).toHaveCount(0);
@@ -1477,12 +1490,11 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       });
     });
 
-    test('ATTACHED state with app URL shows Open App button and port in card title', async () => {
+    test('ATTACHED state keeps Package button and port in card title without Open App button', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
-        // mock-service-a has URL mock-service-a.cfapps.example.com in the mock CF output
         await injectMessage(webview, {
           type: 'DEBUG_CONNECTING',
           payload: { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } },
@@ -1491,7 +1503,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
         // Port shown in card title even in TUNNELING state
         await expect(activeCard.locator('.active-card-port')).toContainText(':20000');
-        // No Open App button yet — only appears on ATTACHED
+        // No secondary action is shown before the debugger reaches ATTACHED
         await expect(activeCard.locator('.active-open-btn')).toHaveCount(0);
 
         await injectMessage(webview, {
@@ -1499,9 +1511,9 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           payload: { appName: 'mock-service-a', status: 'ATTACHED' },
         });
 
-        // Open App button must appear now that app is ATTACHED and has a URL
-        await expect(activeCard.locator('.active-open-btn')).toBeVisible({ timeout: 3_000 });
-        await expect(activeCard.locator('.active-open-btn')).toContainText('Open App');
+        await expect(activeCard.locator('.active-open-btn')).toHaveCount(0);
+        await expect(activeCard.locator('.active-packages-btn')).toBeVisible({ timeout: 3_000 });
+        await expect(activeCard.locator('.active-packages-btn')).toContainText('Package');
         // Stop button still present, no retry button (not ERROR)
         await expect(activeCard.locator('[data-stop-app="mock-service-a"]')).toBeVisible();
         await expect(activeCard.locator('[data-retry-app]')).toHaveCount(0);
@@ -1593,16 +1605,15 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
         await expect(activeCard.locator('.active-packages-btn')).toBeVisible({ timeout: 3_000 });
-        await expect(activeCard.locator('.active-open-btn')).toBeVisible({ timeout: 3_000 });
-
-        const buttonOrder = await activeCard.locator('button').evaluateAll((nodes) =>
-          nodes.map((node) => Array.from(node.classList).join(' ')),
-        );
-        expect(buttonOrder.indexOf('active-packages-btn')).toBeLessThan(buttonOrder.indexOf('active-open-btn'));
+        await expect(activeCard.locator('.active-open-btn')).toHaveCount(0);
+        await expect(activeCard.locator('.active-packages-btn')).toContainText('Package');
 
         await activeCard.locator('.active-packages-btn').click();
 
-        await expect(webview.locator('.step-title')).toContainText('Packages');
+        await expect(webview.locator('.step-header .step-title')).toHaveCount(0);
+        await expect(
+          webview.getByText('Browse loaded package sources for the current debug session and filter them before opening files.'),
+        ).toHaveCount(0);
         await expect(webview.locator('#packages-app-select')).toBeVisible();
         await expect(webview.locator('#packages-search-input')).toBeVisible();
         // This test injects webview-side debug session state only. The extension host has
@@ -1651,6 +1662,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         });
 
         await expect(webview.locator('.packages-package-item')).toHaveCount(2, { timeout: 3_000 });
+        await expect(webview.locator('.packages-summary')).toHaveCount(0);
         await webview.locator('#packages-search-input').fill('@sample-org');
         await expect(webview.locator('.packages-package-item')).toHaveCount(1, { timeout: 3_000 });
         await expect(webview.locator('.packages-package-item', { hasText: '@sample-org/demo-kit' })).toBeVisible();
@@ -1865,6 +1877,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
+        await enableBreakpointSnapshotHandlingFromSettings(webview);
         await openBreakpointSnapshotsScreen(webview);
         await expect(webview.locator('.bp-section-label')).toContainText('Breakpoint Snapshots');
 
@@ -1877,6 +1890,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
+        await enableBreakpointSnapshotHandlingFromSettings(webview);
         await openBreakpointSnapshotsScreen(webview);
 
         await injectMessage(webview, {
@@ -1964,6 +1978,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
+        await enableBreakpointSnapshotHandlingFromSettings(webview);
         await openBreakpointSnapshotsScreen(webview);
 
         await injectMessage(webview, {
@@ -1999,6 +2014,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
+        await enableBreakpointSnapshotHandlingFromSettings(webview);
         await openBreakpointSnapshotsScreen(webview);
 
         // Panel starts empty
@@ -2254,6 +2270,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
+        await expect(webview.locator('#btn-open-breakpoint-snapshots')).toHaveCount(0);
 
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
@@ -2269,6 +2286,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('#btn-back-settings').click();
         await expectReadyScreen(webview);
+        await expect(webview.locator('#btn-open-breakpoint-snapshots')).toBeVisible();
         await webview.locator('#btn-gear').click();
 
         await expect(webview.getByText('Settings')).toBeVisible();

@@ -155,13 +155,8 @@ export function getPackageBrowserScriptContent(): string {
           + '</div>';
 
       return errorBox
-        + '<div class="packages-summary">'
-        + '<span>' + visiblePackages.length + ' package' + (visiblePackages.length === 1 ? '' : 's') + '</span>'
-        + '<span>' + escape(state.packageBrowserAppName || '') + '</span>'
-        + '</div>'
         + '<div class="packages-columns">'
         + '<div class="packages-section">'
-        + '<div class="section-label packages-section-label">Packages</div>'
         + '<div class="packages-list">' + packageListHtml + '</div>'
         + '</div>'
         + '<div class="packages-section">'
@@ -181,10 +176,8 @@ export function getPackageBrowserScriptContent(): string {
       return \`
         <div class="ready-layout">
           <div class="step-header">
-            <span class="step-title">Packages</span>
             <button class="gear-btn" id="btn-refresh-packages" title="Refresh packages" aria-label="Refresh packages">&#8635;</button>
           </div>
-          <div class="info-box">Browse loaded package sources for the current debug session and filter them before opening files.</div>
           <div class="section-label">Debug Session</div>
           <select class="select" id="packages-app-select" aria-label="Select debug session" \${appNames.length === 0 ? 'disabled' : ''}>
             \${options || '<option value="">No attached sessions</option>'}

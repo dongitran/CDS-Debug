@@ -42,8 +42,8 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
 23. APP_DEBUG_STATUS EXITED removes the card and re-enables the app checkbox.
 24. APP_DEBUG_STATUS ERROR shows error message and retry button.
 25. Stop single session click removes the active card.
-26. SSH_ENABLING and SSH_RESTARTING show correct spinner + status text; no Open App or Retry buttons.
-27. ATTACHED state with app URL shows Open App button and port number in card title.
+26. SSH_ENABLING and SSH_RESTARTING show correct spinner + status text; no extra action button beyond stop/retry.
+27. ATTACHED state keeps the Package button and port number in the card title without showing Open App.
 28. ATTACHED with unmappedApps shows `.active-card-no-src` "no src" badge (debug console only, no local source folder).
 29. Stop All button absent with one session; visible with count ≥ 2; disappears again when count drops back to 1 via EXITED.
 

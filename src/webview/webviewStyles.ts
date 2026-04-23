@@ -440,7 +440,7 @@ export function getStyles(): string {
       background: var(--vscode-testing-iconFailed);
       color: white;
     }
-    .active-open-btn {
+    .active-packages-btn {
       flex-shrink: 0;
       height: 26px;
       padding: 0 8px;
@@ -456,28 +456,8 @@ export function getStyles(): string {
       font-size: 11px;
       transition: background 0.2s;
     }
-    .active-open-btn:hover {
-      background: var(--vscode-button-hoverBackground);
-    }
-    .active-packages-btn {
-      flex-shrink: 0;
-      height: 26px;
-      padding: 0 8px;
-      margin-left: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-      border: 1px solid var(--vscode-input-border, transparent);
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 11px;
-      transition: background 0.2s, border-color 0.2s;
-    }
     .active-packages-btn:hover {
-      background: var(--vscode-button-secondaryHoverBackground);
-      border-color: var(--vscode-focusBorder);
+      background: var(--vscode-button-hoverBackground);
     }
     .active-retry-btn {
       flex-shrink: 0;
