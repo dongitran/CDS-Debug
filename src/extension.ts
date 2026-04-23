@@ -13,7 +13,9 @@ export function activate(context: vscode.ExtensionContext): void {
   initConfigStore(context);
   initCacheStore(context);
   setSecretStorage(context.secrets);
-  initCacheSync();
+  if (process.env.CDS_DEBUG_DISABLE_BACKGROUND_SYNC !== '1') {
+    initCacheSync();
+  }
   initializeProcessManager();
   initializeBreakpointSnapshotManager();
 

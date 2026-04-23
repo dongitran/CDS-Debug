@@ -299,6 +299,7 @@ function buildVsCodeEnv(mockBinDir: string, credentialMode: CredentialMode): Nod
   return {
     ...process.env,
     ...credentials,
+    CDS_DEBUG_DISABLE_BACKGROUND_SYNC: '1',
     SHELL: '/usr/bin/false',
     PATH: `${mockBinDir}${delimiter}${inheritedPath}`,
   };
@@ -2158,8 +2159,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         // Sync running: spinner + progress bar, Sync Now button disabled
         const runningRow = webview.locator('.sync-status-row.running');
         await expect(runningRow.locator('.spinner')).toBeVisible();
-        await expect(webview.locator('.progress-bar-wrap')).toBeVisible();
-        await expect(webview.locator('.progress-bar-fill')).toBeVisible();
+        await expect(webview.locator('.progress-bar-wrap')).toHaveCount(1);
+        await expect(webview.locator('.progress-bar-fill')).toHaveAttribute('style', /width:\s*21%/);
         await expect(webview.locator('#btn-trigger-sync')).toBeDisabled();
         await expect.poll(async () => {
           return ((await runningRow.textContent()) ?? '').trim();
