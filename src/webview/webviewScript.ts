@@ -105,7 +105,8 @@ export function getScript(nonce: string): string {
       packageBrowserSearchQuery: '',
       packageBrowserLoading: false,
       packageBrowserError: null,
-      selectedPackageId: null,
+      expandedPackageBranchIds: [],
+      selectedPackageFileId: null,
     };
 
     // === UTILS ===
@@ -622,7 +623,6 @@ export function getScript(nonce: string): string {
           state.packageEntries = Array.isArray(msg.payload.packages) ? msg.payload.packages : [];
           state.packageBrowserLoading = false;
           state.packageBrowserError = null;
-          syncSelectedPackageEntry();
           if (state.screen === SCREENS.PACKAGES) refreshPackagesPanel();
           return;
         case 'PACKAGE_SOURCES_ERROR':

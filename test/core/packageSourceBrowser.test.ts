@@ -65,10 +65,30 @@ vi.mock('vscode', () => ({
 
 import {
   buildPackageEntries,
+  buildPackageFileTree,
   loadPackageEntries,
   loadPackageEntriesFromSessions,
   openPackageSource,
 } from '../../src/core/packageSourceBrowser';
+import type { LoadedPackageTreeNode } from '../../src/types/index';
+
+function simplifyTree(nodes: LoadedPackageTreeNode[]): unknown[] {
+  return nodes.map((node) => {
+    if (node.kind === 'folder') {
+      return {
+        kind: 'folder',
+        name: node.name,
+        path: node.path,
+        children: simplifyTree(node.children),
+      };
+    }
+    return {
+      kind: 'file',
+      name: node.name,
+      path: node.path,
+    };
+  });
+}
 
 beforeEach(() => {
   vscodeMockState.asDebugSourceUri.mockReset();
@@ -137,6 +157,110 @@ describe('packageSourceBrowser', () => {
     expect(entries[0]?.files.map((file) => file.relativePath)).toEqual([
       'lib/index.d.ts',
       'lib/index.js',
+    ]);
+  });
+
+  it('builds explorer-style folder trees from package file paths', () => {
+    const tree = buildPackageFileTree([
+      {
+        id: 'sample-client:dist/client.js',
+        label: 'dist/client.js',
+        relativePath: 'dist/client.js',
+        source: {
+          name: 'client.js',
+          path: '/workspace/node_modules/sample-client/dist/client.js',
+        },
+      },
+      {
+        id: 'sample-client:dist/utils/format.js',
+        label: 'dist/utils/format.js',
+        relativePath: 'dist/utils/format.js',
+        source: {
+          name: 'format.js',
+          path: '/workspace/node_modules/sample-client/dist/utils/format.js',
+        },
+      },
+      {
+        id: 'sample-client:README.md',
+        label: 'README.md',
+        relativePath: 'README.md',
+        source: {
+          name: 'README.md',
+          path: '/workspace/node_modules/sample-client/README.md',
+        },
+      },
+    ]);
+
+    expect(simplifyTree(tree)).toEqual([
+      {
+        kind: 'folder',
+        name: 'dist',
+        path: 'dist',
+        children: [
+          {
+            kind: 'folder',
+            name: 'utils',
+            path: 'dist/utils',
+            children: [
+              {
+                kind: 'file',
+                name: 'format.js',
+                path: 'dist/utils/format.js',
+              },
+            ],
+          },
+          {
+            kind: 'file',
+            name: 'client.js',
+            path: 'dist/client.js',
+          },
+        ],
+      },
+      {
+        kind: 'file',
+        name: 'README.md',
+        path: 'README.md',
+      },
+    ]);
+  });
+
+  it('attaches nested trees to package entries', () => {
+    const entries = buildPackageEntries([
+      {
+        name: 'main.js',
+        path: '/workspace/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
+      },
+      {
+        name: 'worker.js',
+        path: '/workspace/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/tasks/worker.js',
+      },
+    ]);
+
+    expect(simplifyTree(entries[0]?.tree ?? [])).toEqual([
+      {
+        kind: 'folder',
+        name: 'dist',
+        path: 'dist',
+        children: [
+          {
+            kind: 'folder',
+            name: 'tasks',
+            path: 'dist/tasks',
+            children: [
+              {
+                kind: 'file',
+                name: 'worker.js',
+                path: 'dist/tasks/worker.js',
+              },
+            ],
+          },
+          {
+            kind: 'file',
+            name: 'main.js',
+            path: 'dist/main.js',
+          },
+        ],
+      },
     ]);
   });
 

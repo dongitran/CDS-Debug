@@ -7,6 +7,16 @@ export function getPackageBrowserStyles(): string {
       flex-direction: column;
     }
 
+    .packages-tree {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 4px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      background: var(--vscode-editorGroupHeader-tabsBackground);
+    }
+
     .packages-loading,
     .packages-empty {
       display: flex;
@@ -26,66 +36,57 @@ export function getPackageBrowserStyles(): string {
       gap: 8px;
     }
 
-    .packages-columns {
+    .packages-tree-branch,
+    .packages-tree-children {
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      min-height: 0;
-      flex: 1;
     }
 
-    .packages-section {
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
+    .packages-tree-children {
+      position: relative;
     }
 
-    .packages-section-label {
-      margin-top: 0;
-      margin-bottom: 6px;
-    }
-
-    .packages-list,
-    .packages-files {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      min-height: 0;
-      max-height: 180px;
-      overflow-y: auto;
-      padding-right: 2px;
-    }
-
-    .packages-package-item,
-    .packages-file-item {
+    .packages-tree-row {
       width: 100%;
+      min-height: 28px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 6px;
-      border: 1px solid var(--vscode-input-border, transparent);
-      background: var(--vscode-editorGroupHeader-tabsBackground);
+      gap: 7px;
+      padding: 5px 8px;
+      padding-left: calc(8px + (var(--packages-tree-level, 1) - 1) * 14px);
+      border: 1px solid transparent;
+      border-radius: 4px;
+      background: transparent;
       color: var(--vscode-foreground);
       cursor: pointer;
       text-align: left;
+      font-size: 12px;
     }
 
-    .packages-package-item:hover,
-    .packages-file-item:hover {
+    .packages-tree-row:hover {
       background: var(--vscode-list-hoverBackground);
       border-color: var(--vscode-focusBorder);
     }
 
-    .packages-package-item.selected {
+    .packages-tree-row:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: -1px;
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .packages-tree-file-row.selected,
+    .packages-tree-file-row[aria-selected="true"] {
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
       border-color: var(--vscode-focusBorder);
     }
 
-    .packages-package-name,
-    .packages-file-path {
+    .packages-tree-package-row {
+      font-weight: 600;
+    }
+
+    .packages-tree-label {
+      flex: 1;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -93,7 +94,7 @@ export function getPackageBrowserStyles(): string {
       font-size: 12px;
     }
 
-    .packages-package-count {
+    .packages-tree-badge {
       flex-shrink: 0;
       min-width: 22px;
       height: 22px;
@@ -107,8 +108,84 @@ export function getPackageBrowserStyles(): string {
       font-weight: 700;
     }
 
-    .packages-files-empty {
-      min-height: 72px;
+    .packages-tree-disclosure {
+      width: 10px;
+      height: 10px;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .packages-tree-disclosure::before {
+      content: '';
+      position: absolute;
+      left: 1px;
+      top: 1px;
+      width: 0;
+      height: 0;
+      border-top: 4px solid transparent;
+      border-bottom: 4px solid transparent;
+      border-left: 5px solid var(--vscode-descriptionForeground);
+      transform-origin: 2px 4px;
+      transition: transform 0.12s ease;
+    }
+
+    .packages-tree-disclosure.expanded::before {
+      transform: rotate(90deg);
+    }
+
+    .packages-tree-disclosure.leaf::before {
+      opacity: 0;
+    }
+
+    .packages-tree-icon {
+      width: 12px;
+      height: 12px;
+      flex-shrink: 0;
+      position: relative;
+      opacity: 0.9;
+    }
+
+    .packages-tree-icon-package {
+      border: 1px solid var(--vscode-symbolIcon-packageForeground, var(--vscode-descriptionForeground));
+      border-radius: 2px;
+      background: color-mix(in srgb, var(--vscode-button-background) 30%, transparent);
+    }
+
+    .packages-tree-icon-folder {
+      border: 1px solid var(--vscode-symbolIcon-folderForeground, var(--vscode-descriptionForeground));
+      border-radius: 2px;
+      background: color-mix(in srgb, var(--vscode-textLink-foreground) 16%, transparent);
+    }
+
+    .packages-tree-icon-folder::before {
+      content: '';
+      position: absolute;
+      left: 1px;
+      top: -2px;
+      width: 5px;
+      height: 3px;
+      border: 1px solid var(--vscode-symbolIcon-folderForeground, var(--vscode-descriptionForeground));
+      border-bottom: none;
+      border-radius: 2px 2px 0 0;
+      background: inherit;
+    }
+
+    .packages-tree-icon-file {
+      border: 1px solid var(--vscode-symbolIcon-fileForeground, var(--vscode-descriptionForeground));
+      border-radius: 2px;
+      background: color-mix(in srgb, var(--vscode-editor-foreground) 8%, transparent);
+    }
+
+    .packages-tree-icon-file::before {
+      content: '';
+      position: absolute;
+      right: -1px;
+      top: -1px;
+      width: 4px;
+      height: 4px;
+      border-top: 1px solid var(--vscode-symbolIcon-fileForeground, var(--vscode-descriptionForeground));
+      border-right: 1px solid var(--vscode-symbolIcon-fileForeground, var(--vscode-descriptionForeground));
+      background: var(--vscode-editorGroupHeader-tabsBackground);
     }
 
     .packages-error {

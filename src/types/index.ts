@@ -204,12 +204,31 @@ export interface LoadedPackageFile {
   source: LoadedPackageSource;
 }
 
+export interface LoadedPackageFolderNode {
+  id: string;
+  kind: 'folder';
+  name: string;
+  path: string;
+  children: LoadedPackageTreeNode[];
+}
+
+export interface LoadedPackageLeafNode {
+  id: string;
+  kind: 'file';
+  name: string;
+  path: string;
+  file: LoadedPackageFile;
+}
+
+export type LoadedPackageTreeNode = LoadedPackageFolderNode | LoadedPackageLeafNode;
+
 export interface LoadedPackageEntry {
   id: string;
   name: string;
   displayName: string;
   version?: string;
   files: LoadedPackageFile[];
+  tree: LoadedPackageTreeNode[];
 }
 
 // Messages from webview → extension

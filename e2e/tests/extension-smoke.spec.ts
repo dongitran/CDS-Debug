@@ -1589,7 +1589,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
   });
 
   test.describe('Packages Browser', () => {
-    test('User can open Packages from an attached session card and filter package entries', async () => {
+    test('User can open Packages from an attached session card and browse an inline tree', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
@@ -1640,6 +1640,31 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
                     },
                   },
                 ],
+                tree: [
+                  {
+                    id: 'folder:sample-client:dist',
+                    kind: 'folder',
+                    name: 'dist',
+                    path: 'dist',
+                    children: [
+                      {
+                        id: 'sample-client:dist/client.js',
+                        kind: 'file',
+                        name: 'client.js',
+                        path: 'dist/client.js',
+                        file: {
+                          id: 'sample-client:dist/client.js',
+                          label: 'dist/client.js',
+                          relativePath: 'dist/client.js',
+                          source: {
+                            name: 'client.js',
+                            path: '/workspace/node_modules/sample-client/dist/client.js',
+                          },
+                        },
+                      },
+                    ],
+                  },
+                ],
               },
               {
                 id: '@sample-org/demo-kit',
@@ -1656,19 +1681,49 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
                     },
                   },
                 ],
+                tree: [
+                  {
+                    id: 'folder:@sample-org/demo-kit:dist',
+                    kind: 'folder',
+                    name: 'dist',
+                    path: 'dist',
+                    children: [
+                      {
+                        id: '@sample-org/demo-kit:dist/main.js',
+                        kind: 'file',
+                        name: 'main.js',
+                        path: 'dist/main.js',
+                        file: {
+                          id: '@sample-org/demo-kit:dist/main.js',
+                          label: 'dist/main.js',
+                          relativePath: 'dist/main.js',
+                          source: {
+                            name: 'main.js',
+                            path: '/workspace/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
+                          },
+                        },
+                      },
+                    ],
+                  },
+                ],
               },
             ],
           },
         });
 
-        await expect(webview.locator('.packages-package-item')).toHaveCount(2, { timeout: 3_000 });
-        await expect(webview.locator('.packages-summary')).toHaveCount(0);
-        await webview.locator('#packages-search-input').fill('@sample-org');
-        await expect(webview.locator('.packages-package-item')).toHaveCount(1, { timeout: 3_000 });
-        await expect(webview.locator('.packages-package-item', { hasText: '@sample-org/demo-kit' })).toBeVisible();
+        await expect(webview.locator('.packages-tree-package-row')).toHaveCount(2, { timeout: 3_000 });
+        await webview.locator('.packages-tree-package-row', { hasText: 'sample-client' }).click();
+        await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toHaveCount(1, { timeout: 3_000 });
+        await webview.locator('.packages-tree-folder-row', { hasText: 'dist' }).click();
+        await expect(webview.locator('.packages-tree-file-row', { hasText: 'client.js' })).toBeVisible({ timeout: 3_000 });
 
-        await webview.locator('.packages-package-item', { hasText: '@sample-org/demo-kit' }).click();
-        await expect(webview.locator('.packages-file-item', { hasText: 'dist/main.js' })).toBeVisible({ timeout: 3_000 });
+        await webview.locator('#packages-search-input').fill('@sample-org');
+        await expect(webview.locator('.packages-tree-package-row')).toHaveCount(1, { timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' })).toBeVisible();
+        await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toBeVisible({ timeout: 3_000 });
+
+        await webview.locator('.packages-tree-folder-row', { hasText: 'dist' }).click();
+        await expect(webview.locator('.packages-tree-file-row', { hasText: 'main.js' })).toBeVisible({ timeout: 3_000 });
 
         await webview.locator('#btn-back-packages').click();
         await expectReadyScreen(webview);
@@ -1719,12 +1774,29 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
                     },
                   },
                 ],
+                tree: [
+                  {
+                    id: 'sample-alpha:index.js',
+                    kind: 'file',
+                    name: 'index.js',
+                    path: 'index.js',
+                    file: {
+                      id: 'sample-alpha:index.js',
+                      label: 'index.js',
+                      relativePath: 'index.js',
+                      source: {
+                        name: 'index.js',
+                        path: '/workspace/node_modules/sample-alpha/index.js',
+                      },
+                    },
+                  },
+                ],
               },
             ],
           },
         });
 
-        await expect(webview.locator('.packages-package-item', { hasText: 'sample-alpha' })).toBeVisible({ timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-alpha' })).toBeVisible({ timeout: 3_000 });
 
         await webview.locator('#packages-app-select').selectOption('mock-service-c');
         // Same harness limitation as above: app switching posts LOAD_PACKAGE_SOURCES, but
@@ -1750,13 +1822,38 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
                     },
                   },
                 ],
+                tree: [
+                  {
+                    id: 'folder:@sample-org/demo-worker:dist',
+                    kind: 'folder',
+                    name: 'dist',
+                    path: 'dist',
+                    children: [
+                      {
+                        id: '@sample-org/demo-worker:dist/worker.js',
+                        kind: 'file',
+                        name: 'worker.js',
+                        path: 'dist/worker.js',
+                        file: {
+                          id: '@sample-org/demo-worker:dist/worker.js',
+                          label: 'dist/worker.js',
+                          relativePath: 'dist/worker.js',
+                          source: {
+                            name: 'worker.js',
+                            path: '/workspace/node_modules/.pnpm/@sample-org+demo-worker@2.0.0/node_modules/@sample-org/demo-worker/dist/worker.js',
+                          },
+                        },
+                      },
+                    ],
+                  },
+                ],
               },
             ],
           },
         });
 
-        await expect(webview.locator('.packages-package-item', { hasText: '@sample-org/demo-worker' })).toBeVisible({ timeout: 3_000 });
-        await expect(webview.locator('.packages-package-item', { hasText: 'sample-alpha' })).toHaveCount(0);
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-worker' })).toBeVisible({ timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-alpha' })).toHaveCount(0);
       });
     });
   });

@@ -1,5 +1,12 @@
 import * as vscode from 'vscode';
-import type { LoadedPackageEntry, LoadedPackageFile, LoadedPackageSource } from '../types/index';
+import type {
+  LoadedPackageEntry,
+  LoadedPackageFile,
+  LoadedPackageFolderNode,
+  LoadedPackageLeafNode,
+  LoadedPackageSource,
+  LoadedPackageTreeNode,
+} from '../types/index';
 
 type PackageBrowserLogFn = (message: string) => void;
 
@@ -10,6 +17,13 @@ interface ParsedPackageFile {
   version?: string;
   relativePath: string;
   source: LoadedPackageSource;
+}
+
+interface FolderBuilderNode {
+  name: string;
+  path: string;
+  folders: Map<string, FolderBuilderNode>;
+  files: LoadedPackageLeafNode[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -103,6 +117,79 @@ function getLoadedSourcesResponseSources(response: unknown): LoadedPackageSource
     .filter((source): source is LoadedPackageSource => source !== null);
 }
 
+function createFolderBuilder(name: string, path: string): FolderBuilderNode {
+  return {
+    name,
+    path,
+    folders: new Map<string, FolderBuilderNode>(),
+    files: [],
+  };
+}
+
+function createFileLeafNode(fileName: string, file: LoadedPackageFile): LoadedPackageLeafNode {
+  return {
+    id: file.id,
+    kind: 'file',
+    name: fileName,
+    path: file.relativePath,
+    file,
+  };
+}
+
+function getOrCreateFolderBuilder(
+  parent: FolderBuilderNode,
+  segment: string,
+  path: string,
+): FolderBuilderNode {
+  const existing = parent.folders.get(segment);
+  if (existing) return existing;
+  const next = createFolderBuilder(segment, path);
+  parent.folders.set(segment, next);
+  return next;
+}
+
+function insertFileIntoFolderTree(root: FolderBuilderNode, file: LoadedPackageFile): void {
+  const segments = file.relativePath.split('/').filter(Boolean);
+  const fileName = segments.pop();
+  if (!fileName) return;
+
+  let cursor = root;
+  for (const segment of segments) {
+    const nextPath = cursor.path ? `${cursor.path}/${segment}` : segment;
+    cursor = getOrCreateFolderBuilder(cursor, segment, nextPath);
+  }
+
+  cursor.files.push(createFileLeafNode(fileName, file));
+}
+
+function compareTreeNodeNames(left: { name: string }, right: { name: string }): number {
+  return left.name.localeCompare(right.name);
+}
+
+function toFolderTreeNodes(builder: FolderBuilderNode): LoadedPackageTreeNode[] {
+  const folders: LoadedPackageFolderNode[] = Array.from(builder.folders.values())
+    .sort(compareTreeNodeNames)
+    .map((folder) => ({
+      id: `folder:${folder.path}`,
+      kind: 'folder',
+      name: folder.name,
+      path: folder.path,
+      children: toFolderTreeNodes(folder),
+    }));
+  const files = builder.files
+    .slice()
+    .sort(compareTreeNodeNames);
+  return [...folders, ...files];
+}
+
+export function buildPackageFileTree(files: LoadedPackageFile[]): LoadedPackageTreeNode[] {
+  const root = createFolderBuilder('', '');
+  for (const file of files) {
+    insertFileIntoFolderTree(root, file);
+  }
+  return toFolderTreeNodes(root);
+}
+
 function describeSession(session: vscode.DebugSession): string {
   const type = session.type || 'unknown';
   return `"${session.name}" [${session.id}] type=${type}`;
@@ -183,6 +270,7 @@ export function buildPackageEntries(sources: LoadedPackageSource[]): LoadedPacka
         name: parsed.packageName,
         displayName: parsed.displayName,
         files: [file],
+        tree: [],
       };
       if (parsed.version) entry.version = parsed.version;
       entriesById.set(parsed.packageId, {
@@ -198,10 +286,16 @@ export function buildPackageEntries(sources: LoadedPackageSource[]): LoadedPacka
   }
 
   return Array.from(entriesById.values())
-    .map(({ entry }) => ({
-      ...entry,
-      files: entry.files.sort((left, right) => left.relativePath.localeCompare(right.relativePath)),
-    }))
+    .map(({ entry }) => {
+      const files = entry.files
+        .slice()
+        .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+      return {
+        ...entry,
+        files,
+        tree: buildPackageFileTree(files),
+      };
+    })
     .sort((left, right) => left.displayName.localeCompare(right.displayName));
 }
 

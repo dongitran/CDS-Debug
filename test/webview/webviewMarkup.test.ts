@@ -19,5 +19,10 @@ describe('webview markup contracts', () => {
     expect(packageScript).not.toContain('<span class="step-title">Packages</span>');
     expect(packageScript).not.toContain('Browse loaded package sources for the current debug session and filter them before opening files.');
     expect(packageScript).not.toContain('packages-summary');
+    expect(packageScript).not.toContain('packages-columns');
+    expect(packageScript).not.toContain('packages-file-item');
+    expect(packageScript).toContain('packages-tree');
+    expect(packageScript).toContain('data-tree-branch-id');
+    expect(packageScript).toContain('packages-tree-package-row');
   });
 });

@@ -10,41 +10,128 @@ export function getPackageBrowserScriptContent(): string {
       return (state.packageBrowserSearchQuery || '').trim().toLowerCase();
     }
 
-    function getVisiblePackageEntries() {
-      var query = getPackageSearchQuery();
-      if (!query) return state.packageEntries.slice();
-      return state.packageEntries.filter(function(entry) {
-        if (entry.displayName.toLowerCase().includes(query) || entry.name.toLowerCase().includes(query)) {
-          return true;
-        }
-        return entry.files.some(function(file) {
-          return file.relativePath.toLowerCase().includes(query) || file.label.toLowerCase().includes(query);
-        });
-      });
+    function resetPackageTreeState() {
+      state.expandedPackageBranchIds = [];
+      state.selectedPackageFileId = null;
     }
 
-    function getVisibleFilesForPackage(entry) {
-      var query = getPackageSearchQuery();
-      if (!query) return entry.files;
-      var matchesPackage = entry.displayName.toLowerCase().includes(query) || entry.name.toLowerCase().includes(query);
-      if (matchesPackage) return entry.files;
-      return entry.files.filter(function(file) {
-        return file.relativePath.toLowerCase().includes(query) || file.label.toLowerCase().includes(query);
-      });
+    function getPackageEntryTree(entry) {
+      return Array.isArray(entry.tree) ? entry.tree : [];
     }
 
-    function getSelectedPackageEntry() {
-      var visibleEntries = getVisiblePackageEntries();
-      if (visibleEntries.length === 0) return null;
-      for (var i = 0; i < visibleEntries.length; i++) {
-        if (visibleEntries[i].id === state.selectedPackageId) return visibleEntries[i];
+    function getPackageRootBranchId(entry) {
+      return 'package:' + entry.id;
+    }
+
+    function getFolderBranchId(entry, node) {
+      return 'folder:' + entry.id + ':' + node.path;
+    }
+
+    function getFileTreeNodeId(file) {
+      return 'file:' + file.id;
+    }
+
+    function uniqueValues(values) {
+      var seen = Object.create(null);
+      var result = [];
+      for (var i = 0; i < values.length; i++) {
+        var value = values[i];
+        if (!value || seen[value]) continue;
+        seen[value] = true;
+        result.push(value);
       }
-      return visibleEntries[0];
+      return result;
     }
 
-    function syncSelectedPackageEntry() {
-      var selected = getSelectedPackageEntry();
-      state.selectedPackageId = selected ? selected.id : null;
+    function isExpandedPackageBranch(branchId) {
+      return Array.isArray(state.expandedPackageBranchIds)
+        && state.expandedPackageBranchIds.indexOf(branchId) !== -1;
+    }
+
+    function setExpandedPackageBranch(branchId, expanded) {
+      var next = Array.isArray(state.expandedPackageBranchIds)
+        ? state.expandedPackageBranchIds.slice()
+        : [];
+      var index = next.indexOf(branchId);
+      if (expanded && index === -1) next.push(branchId);
+      if (!expanded && index !== -1) next.splice(index, 1);
+      state.expandedPackageBranchIds = next;
+    }
+
+    function toggleExpandedPackageBranch(branchId) {
+      setExpandedPackageBranch(branchId, !isExpandedPackageBranch(branchId));
+    }
+
+    function matchesPackageFile(node, query) {
+      return node.name.toLowerCase().includes(query)
+        || node.path.toLowerCase().includes(query)
+        || node.file.relativePath.toLowerCase().includes(query);
+    }
+
+    function filterPackageTreeNodes(entry, nodes, query) {
+      var visibleNodes = [];
+      var autoExpandedBranchIds = [];
+
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        if (node.kind === 'file') {
+          if (matchesPackageFile(node, query)) visibleNodes.push(node);
+          continue;
+        }
+
+        var folderMatches = node.name.toLowerCase().includes(query) || node.path.toLowerCase().includes(query);
+        var childResult = filterPackageTreeNodes(entry, node.children || [], query);
+        if (!folderMatches && childResult.nodes.length === 0) continue;
+
+        visibleNodes.push(folderMatches ? node : {
+          id: node.id,
+          kind: node.kind,
+          name: node.name,
+          path: node.path,
+          children: childResult.nodes,
+        });
+
+        autoExpandedBranchIds.push(getFolderBranchId(entry, node));
+        autoExpandedBranchIds = autoExpandedBranchIds.concat(childResult.autoExpandedBranchIds);
+      }
+
+      return {
+        nodes: visibleNodes,
+        autoExpandedBranchIds: uniqueValues(autoExpandedBranchIds),
+      };
+    }
+
+    function getVisiblePackageViews() {
+      var query = getPackageSearchQuery();
+      return state.packageEntries
+        .map(function(entry) {
+          var packageMatches = !query
+            || entry.displayName.toLowerCase().includes(query)
+            || entry.name.toLowerCase().includes(query);
+          if (!query) {
+            return {
+              entry: entry,
+              nodes: getPackageEntryTree(entry),
+              autoExpandedBranchIds: [],
+            };
+          }
+
+          var filteredTree = filterPackageTreeNodes(entry, getPackageEntryTree(entry), query);
+          if (!packageMatches && filteredTree.nodes.length === 0) return null;
+
+          var autoExpandedBranchIds = filteredTree.autoExpandedBranchIds.slice();
+          autoExpandedBranchIds.push(getPackageRootBranchId(entry));
+          return {
+            entry: entry,
+            nodes: packageMatches ? getPackageEntryTree(entry) : filteredTree.nodes,
+            autoExpandedBranchIds: uniqueValues(autoExpandedBranchIds),
+          };
+        })
+        .filter(function(entryView) { return entryView !== null; });
+    }
+
+    function isTreeBranchExpanded(branchId, autoExpandedBranchIds) {
+      return autoExpandedBranchIds.indexOf(branchId) !== -1 || isExpandedPackageBranch(branchId);
     }
 
     function findPackageFileById(fileId) {
@@ -64,7 +151,7 @@ export function getPackageBrowserScriptContent(): string {
       state.packageBrowserLoading = true;
       state.packageBrowserError = null;
       state.packageEntries = [];
-      state.selectedPackageId = null;
+      resetPackageTreeState();
     }
 
     function requestPackageSources(appName, resetSearch) {
@@ -91,7 +178,7 @@ export function getPackageBrowserScriptContent(): string {
         state.packageBrowserLoading = false;
         state.packageBrowserError = null;
         state.packageEntries = [];
-        state.selectedPackageId = null;
+        resetPackageTreeState();
         render();
         return;
       }
@@ -106,16 +193,165 @@ export function getPackageBrowserScriptContent(): string {
       vscode.postMessage({ type: 'LOAD_PACKAGE_SOURCES', payload: { appName: nextAppName } });
     }
 
+    function findTreeRowById(panel, nodeId) {
+      var rows = panel.querySelectorAll('[data-tree-node-id]');
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].dataset.treeNodeId === nodeId) return rows[i];
+      }
+      return null;
+    }
+
+    function getVisibleTreeRows(panel) {
+      return Array.prototype.slice.call(panel.querySelectorAll('[data-tree-node-id]'));
+    }
+
+    function focusAdjacentTreeRow(panel, currentRow, delta) {
+      var rows = getVisibleTreeRows(panel);
+      var index = rows.indexOf(currentRow);
+      if (index === -1) return;
+      var next = rows[index + delta];
+      if (next) next.focus();
+    }
+
+    function focusBoundaryTreeRow(panel, index) {
+      var rows = getVisibleTreeRows(panel);
+      var next = rows[index];
+      if (next) next.focus();
+    }
+
+    function focusParentTreeRow(panel, currentRow) {
+      var parentId = currentRow.dataset.treeParentBranchId;
+      if (!parentId) return;
+      var parentRow = findTreeRowById(panel, parentId);
+      if (parentRow) parentRow.focus();
+    }
+
+    function focusFirstChildTreeRow(panel, branchId) {
+      var rows = getVisibleTreeRows(panel);
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].dataset.treeParentBranchId === branchId) {
+          rows[i].focus();
+          return;
+        }
+      }
+    }
+
+    function refreshPackagesPanel(focusNodeId) {
+      var panel = document.getElementById('packages-panel');
+      if (!panel) return;
+      panel.innerHTML = renderPackagesPanelContent();
+      if (!focusNodeId) return;
+      var row = findTreeRowById(panel, focusNodeId);
+      if (row) row.focus();
+    }
+
+    function renderTreeDisclosure(isExpanded, isLeaf) {
+      var className = 'packages-tree-disclosure'
+        + (isExpanded ? ' expanded' : '')
+        + (isLeaf ? ' leaf' : '');
+      return '<span class="' + className + '" aria-hidden="true"></span>';
+    }
+
+    function renderTreeIcon(kind) {
+      return '<span class="packages-tree-icon packages-tree-icon-' + kind + '" aria-hidden="true"></span>';
+    }
+
+    function renderTreeBranchRow(options) {
+      var className = 'packages-tree-row packages-tree-branch-row ' + options.rowClassName;
+      return '<button class="' + className + '"'
+        + ' data-tree-node-id="' + escape(options.branchId) + '"'
+        + ' data-tree-branch-id="' + escape(options.branchId) + '"'
+        + (options.parentBranchId ? ' data-tree-parent-branch-id="' + escape(options.parentBranchId) + '"' : '')
+        + ' role="treeitem"'
+        + ' aria-expanded="' + (options.isExpanded ? 'true' : 'false') + '"'
+        + ' aria-level="' + options.level + '"'
+        + ' style="--packages-tree-level:' + options.level + ';">'
+        + renderTreeDisclosure(options.isExpanded, false)
+        + renderTreeIcon(options.iconKind)
+        + '<span class="packages-tree-label">' + escape(options.label) + '</span>'
+        + (options.badgeText
+          ? '<span class="packages-tree-badge">' + escape(options.badgeText) + '</span>'
+          : '')
+        + '</button>';
+    }
+
+    function renderTreeFileRow(node, level, parentBranchId) {
+      var file = node.file;
+      var isSelected = state.selectedPackageFileId === file.id;
+      return '<button class="packages-tree-row packages-tree-file-row' + (isSelected ? ' selected' : '') + '"'
+        + ' data-tree-node-id="' + escape(getFileTreeNodeId(file)) + '"'
+        + ' data-tree-parent-branch-id="' + escape(parentBranchId) + '"'
+        + ' data-package-file-id="' + escape(file.id) + '"'
+        + ' role="treeitem"'
+        + ' aria-level="' + level + '"'
+        + ' aria-selected="' + (isSelected ? 'true' : 'false') + '"'
+        + ' style="--packages-tree-level:' + level + ';">'
+        + renderTreeDisclosure(false, true)
+        + renderTreeIcon('file')
+        + '<span class="packages-tree-label">' + escape(node.name) + '</span>'
+        + '</button>';
+    }
+
+    function renderPackageTreeNodes(entry, nodes, level, parentBranchId, autoExpandedBranchIds) {
+      return nodes.map(function(node) {
+        if (node.kind === 'file') {
+          return renderTreeFileRow(node, level, parentBranchId);
+        }
+
+        var branchId = getFolderBranchId(entry, node);
+        var isExpanded = isTreeBranchExpanded(branchId, autoExpandedBranchIds);
+        var childrenHtml = isExpanded
+          ? '<div class="packages-tree-children" role="group">'
+            + renderPackageTreeNodes(entry, node.children || [], level + 1, branchId, autoExpandedBranchIds)
+            + '</div>'
+          : '';
+
+        return '<div class="packages-tree-branch">'
+          + renderTreeBranchRow({
+            branchId: branchId,
+            parentBranchId: parentBranchId,
+            level: level,
+            isExpanded: isExpanded,
+            iconKind: 'folder',
+            label: node.name,
+            rowClassName: 'packages-tree-folder-row',
+          })
+          + childrenHtml
+          + '</div>';
+      }).join('');
+    }
+
+    function renderPackageEntryTree(entryView) {
+      var entry = entryView.entry;
+      var branchId = getPackageRootBranchId(entry);
+      var isExpanded = isTreeBranchExpanded(branchId, entryView.autoExpandedBranchIds);
+      var childrenHtml = isExpanded
+        ? '<div class="packages-tree-children" role="group">'
+          + renderPackageTreeNodes(entry, entryView.nodes, 2, branchId, entryView.autoExpandedBranchIds)
+          + '</div>'
+        : '';
+
+      return '<div class="packages-tree-branch packages-tree-package">'
+        + renderTreeBranchRow({
+          branchId: branchId,
+          parentBranchId: '',
+          level: 1,
+          isExpanded: isExpanded,
+          iconKind: 'package',
+          label: entry.displayName,
+          badgeText: String(entry.files.length),
+          rowClassName: 'packages-tree-package-row',
+        })
+        + childrenHtml
+        + '</div>';
+    }
+
     function renderPackagesPanelContent() {
       var appNames = getPackageBrowserAppNames();
       if (appNames.length === 0) {
         return '<div class="packages-empty">No attached debug sessions are available.</div>';
       }
 
-      syncSelectedPackageEntry();
-      var selectedPackage = getSelectedPackageEntry();
-      var visiblePackages = getVisiblePackageEntries();
-      var query = getPackageSearchQuery();
       var errorBox = state.packageBrowserError
         ? '<div class="error-box packages-error">' + escape(state.packageBrowserError) + '</div>'
         : '';
@@ -129,40 +365,14 @@ export function getPackageBrowserScriptContent(): string {
         return errorBox + '<div class="packages-empty">No loaded package sources found for this debug session.</div>';
       }
 
-      if (visiblePackages.length === 0) {
-        return errorBox + '<div class="packages-empty">No packages match the current filter.</div>';
+      var visiblePackageViews = getVisiblePackageViews();
+      if (visiblePackageViews.length === 0) {
+        return errorBox + '<div class="packages-empty">No packages or files match the current filter.</div>';
       }
 
-      var packageListHtml = visiblePackages.map(function(entry) {
-        var selectedClass = entry.id === state.selectedPackageId ? ' selected' : '';
-        return '<button class="packages-package-item' + selectedClass + '" data-package-entry-id="' + escape(entry.id)
-          + '" aria-label="Open package ' + escape(entry.displayName) + '">'
-          + '<span class="packages-package-name">' + escape(entry.displayName) + '</span>'
-          + '<span class="packages-package-count">' + entry.files.length + '</span>'
-          + '</button>';
-      }).join('');
-
-      var files = selectedPackage ? getVisibleFilesForPackage(selectedPackage) : [];
-      var filesHtml = files.length > 0
-        ? files.map(function(file) {
-          return '<button class="packages-file-item" data-package-file-id="' + escape(file.id)
-            + '" aria-label="Open package file ' + escape(file.relativePath) + '">'
-            + '<span class="packages-file-path">' + escape(file.relativePath) + '</span>'
-            + '</button>';
-        }).join('')
-        : '<div class="packages-empty packages-files-empty">'
-          + (query ? 'No files in this package match the current filter.' : 'Select a package to inspect its files.')
-          + '</div>';
-
       return errorBox
-        + '<div class="packages-columns">'
-        + '<div class="packages-section">'
-        + '<div class="packages-list">' + packageListHtml + '</div>'
-        + '</div>'
-        + '<div class="packages-section">'
-        + '<div class="section-label packages-section-label">Files</div>'
-        + '<div class="packages-files">' + filesHtml + '</div>'
-        + '</div>'
+        + '<div class="packages-tree" role="tree" aria-label="Loaded package sources">'
+        + visiblePackageViews.map(renderPackageEntryTree).join('')
         + '</div>';
     }
 
@@ -194,12 +404,6 @@ export function getPackageBrowserScriptContent(): string {
       \`;
     }
 
-    function refreshPackagesPanel() {
-      var panel = document.getElementById('packages-panel');
-      if (!panel) return;
-      panel.innerHTML = renderPackagesPanelContent();
-    }
-
     function attachPackageListeners() {
       var appSelect = document.getElementById('packages-app-select');
       if (appSelect) {
@@ -212,7 +416,6 @@ export function getPackageBrowserScriptContent(): string {
       if (searchInput) {
         searchInput.addEventListener('input', function(e) {
           state.packageBrowserSearchQuery = e.target.value;
-          syncSelectedPackageEntry();
           refreshPackagesPanel();
         });
       }
@@ -229,10 +432,11 @@ export function getPackageBrowserScriptContent(): string {
       var panel = document.getElementById('packages-panel');
       if (!panel) return;
       panel.addEventListener('click', function(e) {
-        var packageBtn = e.target.closest('[data-package-entry-id]');
-        if (packageBtn) {
-          state.selectedPackageId = packageBtn.dataset.packageEntryId;
-          refreshPackagesPanel();
+        var branchBtn = e.target.closest('[data-tree-branch-id]');
+        if (branchBtn) {
+          var branchId = branchBtn.dataset.treeBranchId;
+          toggleExpandedPackageBranch(branchId);
+          refreshPackagesPanel(branchId);
           return;
         }
 
@@ -240,6 +444,8 @@ export function getPackageBrowserScriptContent(): string {
         if (!fileBtn || !state.packageBrowserAppName) return;
         var file = findPackageFileById(fileBtn.dataset.packageFileId);
         if (!file) return;
+        state.selectedPackageFileId = file.id;
+        refreshPackagesPanel(getFileTreeNodeId(file));
         vscode.postMessage({
           type: 'OPEN_PACKAGE_SOURCE',
           payload: {
@@ -247,6 +453,58 @@ export function getPackageBrowserScriptContent(): string {
             source: file.source,
           },
         });
+      });
+
+      panel.addEventListener('keydown', function(e) {
+        var row = e.target.closest('[data-tree-node-id]');
+        if (!row) return;
+
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          focusAdjacentTreeRow(panel, row, 1);
+          return;
+        }
+
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          focusAdjacentTreeRow(panel, row, -1);
+          return;
+        }
+
+        if (e.key === 'Home') {
+          e.preventDefault();
+          focusBoundaryTreeRow(panel, 0);
+          return;
+        }
+
+        if (e.key === 'End') {
+          e.preventDefault();
+          var rows = getVisibleTreeRows(panel);
+          if (rows.length > 0) rows[rows.length - 1].focus();
+          return;
+        }
+
+        var branchId = row.dataset.treeBranchId;
+        if (e.key === 'ArrowRight' && branchId) {
+          e.preventDefault();
+          if (row.getAttribute('aria-expanded') === 'false') {
+            setExpandedPackageBranch(branchId, true);
+            refreshPackagesPanel(branchId);
+            return;
+          }
+          focusFirstChildTreeRow(panel, branchId);
+          return;
+        }
+
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          if (branchId && row.getAttribute('aria-expanded') === 'true') {
+            setExpandedPackageBranch(branchId, false);
+            refreshPackagesPanel(branchId);
+            return;
+          }
+          focusParentTreeRow(panel, row);
+        }
       });
     }
   `;
