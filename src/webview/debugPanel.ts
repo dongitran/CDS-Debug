@@ -7,6 +7,7 @@ import type {
   CapDebugConfig,
   CredentialStatus,
   DebugTarget,
+  E2eBridgeCommand,
   ExtensionMessage,
   LoadedPackageSource,
   OrgGroupMapping,
@@ -45,6 +46,13 @@ import {
 } from '../core/processManager';
 import { breakpointSnapshotEvents, clearBreakpointSnapshots, getBreakpointSnapshots } from '../core/breakpointSnapshotManager';
 import { loadPackageEntriesFromSessions, openPackageSource } from '../core/packageSourceBrowser';
+import {
+  applyE2eBridgeCommand,
+  getE2eActiveDebugSessionForApp,
+  getE2eDebugSessionById,
+  getE2eDebugSessionsForApp,
+  isE2eModeEnabled,
+} from '../testing/e2eBridge';
 import {
   checkoutBranch,
   getCurrentBranch,
@@ -184,6 +192,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         await this.handleOpenPackageSource(raw.payload.appName, raw.payload.source);
         break;
 
+      case 'E2E_BRIDGE':
+        this.handleE2eBridge(raw.payload);
+        break;
+
       case 'STOP_ALL_DEBUG': {
         stopAllProcesses();
         break;
@@ -277,14 +289,34 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     };
   }
 
+  private handleE2eBridge(command: E2eBridgeCommand): void {
+    if (!isE2eModeEnabled()) return;
+
+    switch (command.action) {
+      case 'EMIT_DEBUG_CONNECTING':
+        this.post({ type: 'DEBUG_CONNECTING', payload: command.payload });
+        return;
+      case 'EMIT_APP_DEBUG_STATUS':
+        this.post({ type: 'APP_DEBUG_STATUS', payload: command.payload });
+        return;
+      case 'SET_PACKAGE_FIXTURE':
+      case 'CLEAR_PACKAGE_FIXTURES':
+        applyE2eBridgeCommand(command);
+        return;
+      default:
+        return;
+    }
+  }
+
   private async handleLoadPackageSources(appName: string): Promise<void> {
-    const sessions = getDebugSessionsForApp(appName);
+    const e2eSessions = getE2eDebugSessionsForApp(appName);
+    const sessions = e2eSessions.length > 0 ? e2eSessions : getDebugSessionsForApp(appName);
     if (sessions.length === 0) {
       this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message: `No attached debug session found for ${appName}.` } });
       return;
     }
 
-    const rootSession = getActiveDebugSessionForApp(appName);
+    const rootSession = getE2eActiveDebugSessionForApp(appName) ?? getActiveDebugSessionForApp(appName);
     const log = this.buildPackageLogger(appName);
     log(`Packages requested. Root session: ${rootSession ? `${rootSession.name} [${rootSession.id}]` : 'none'}`);
 
@@ -301,8 +333,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   private async handleOpenPackageSource(appName: string, source: LoadedPackageSource): Promise<void> {
     const session = source.debugSessionId
-      ? getDebugSessionById(source.debugSessionId)
-      : getActiveDebugSessionForApp(appName);
+      ? (getE2eDebugSessionById(source.debugSessionId) ?? getDebugSessionById(source.debugSessionId))
+      : (getE2eActiveDebugSessionForApp(appName) ?? getActiveDebugSessionForApp(appName));
     if (!session) {
       this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message: `No attached debug session found for ${appName}.` } });
       return;

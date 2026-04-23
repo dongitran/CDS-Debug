@@ -332,6 +332,7 @@ function buildVsCodeEnv(mockBinDir: string, credentialMode: CredentialMode): Nod
     ...process.env,
     ...credentials,
     CDS_DEBUG_DISABLE_BACKGROUND_SYNC: '1',
+    CDS_DEBUG_E2E_MODE: '1',
     SHELL: '/usr/bin/false',
     PATH: `${mockBinDir}${delimiter}${inheritedPath}`,
   };
@@ -689,6 +690,59 @@ async function injectMessage(webview: Frame, message: Record<string, unknown>): 
   await webview.evaluate((msg) => {
     window.dispatchEvent(new MessageEvent('message', { data: msg }));
   }, message);
+}
+
+async function postExtensionMessage(webview: Frame, message: Record<string, unknown>): Promise<void> {
+  await webview.evaluate((msg) => {
+    type BridgeWindow = Window & {
+      __cdsDebugPostMessage?: (payload: Record<string, unknown>) => void;
+    };
+
+    const bridgeWindow = window as BridgeWindow;
+    if (typeof bridgeWindow.__cdsDebugPostMessage !== 'function') {
+      throw new Error('CDS Debug test bridge is not available in the webview.');
+    }
+    bridgeWindow.__cdsDebugPostMessage(msg);
+  }, message);
+}
+
+async function sendE2eBridgeCommand(webview: Frame, payload: Record<string, unknown>): Promise<void> {
+  await postExtensionMessage(webview, { type: 'E2E_BRIDGE', payload });
+}
+
+async function emitDebugConnecting(
+  webview: Frame,
+  payload: { appNames: string[]; ports: Record<string, number>; unmappedApps?: string[] },
+): Promise<void> {
+  await sendE2eBridgeCommand(webview, {
+    action: 'EMIT_DEBUG_CONNECTING',
+    payload,
+  });
+}
+
+async function emitAppDebugStatus(
+  webview: Frame,
+  payload: { appName: string; status: string; message?: string },
+): Promise<void> {
+  await sendE2eBridgeCommand(webview, {
+    action: 'EMIT_APP_DEBUG_STATUS',
+    payload,
+  });
+}
+
+async function setPackageFixture(
+  webview: Frame,
+  appName: string,
+  packages: Record<string, unknown>[],
+): Promise<void> {
+  await sendE2eBridgeCommand(webview, {
+    action: 'SET_PACKAGE_FIXTURE',
+    payload: { appName, packages },
+  });
+}
+
+async function clearPackageFixtures(webview: Frame): Promise<void> {
+  await sendE2eBridgeCommand(webview, { action: 'CLEAR_PACKAGE_FIXTURES' });
 }
 
 async function startPackagesErrorMonitor(webview: Frame): Promise<void> {
@@ -1816,14 +1870,23 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
-        await injectMessage(webview, {
-          type: 'DEBUG_CONNECTING',
-          payload: { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } },
+        await emitDebugConnecting(webview, {
+          appNames: ['mock-service-a'],
+          ports: { 'mock-service-a': 20000 },
         });
-        await injectMessage(webview, {
-          type: 'APP_DEBUG_STATUS',
-          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
-        });
+        await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+        await setPackageFixture(webview, 'mock-service-a', [
+          createPackageFixture({
+            name: 'sample-client',
+            files: ['dist/client.js'],
+          }),
+          createPackageFixture({
+            name: '@sample-org/demo-kit',
+            version: '1.4.0',
+            files: ['dist/main.js'],
+          }),
+        ]);
+        await startPackagesErrorMonitor(webview);
 
         const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
         await expect(activeCard.locator('.active-packages-btn')).toBeVisible({ timeout: 3_000 });
@@ -1838,100 +1901,6 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         ).toHaveCount(0);
         await expect(webview.locator('#packages-app-select')).toBeVisible();
         await expect(webview.locator('#packages-search-input')).toBeVisible();
-        // This test injects webview-side debug session state only. The extension host has
-        // no real vscode.DebugSession here, so the automatic LOAD_PACKAGE_SOURCES request
-        // can resolve to an inline error before we inject the package payload below.
-
-        await injectMessage(webview, {
-          type: 'PACKAGE_SOURCES_LOADED',
-          payload: {
-            appName: 'mock-service-a',
-            packages: [
-              {
-                id: 'sample-client',
-                name: 'sample-client',
-                displayName: 'sample-client',
-                files: [
-                  {
-                    id: 'sample-client:dist/client.js',
-                    label: 'dist/client.js',
-                    relativePath: 'dist/client.js',
-                    source: {
-                      name: 'client.js',
-                      path: '/workspace/node_modules/sample-client/dist/client.js',
-                    },
-                  },
-                ],
-                tree: [
-                  {
-                    id: 'folder:sample-client:dist',
-                    kind: 'folder',
-                    name: 'dist',
-                    path: 'dist',
-                    children: [
-                      {
-                        id: 'sample-client:dist/client.js',
-                        kind: 'file',
-                        name: 'client.js',
-                        path: 'dist/client.js',
-                        file: {
-                          id: 'sample-client:dist/client.js',
-                          label: 'dist/client.js',
-                          relativePath: 'dist/client.js',
-                          source: {
-                            name: 'client.js',
-                            path: '/workspace/node_modules/sample-client/dist/client.js',
-                          },
-                        },
-                      },
-                    ],
-                  },
-                ],
-              },
-              {
-                id: '@sample-org/demo-kit',
-                name: '@sample-org/demo-kit',
-                displayName: '@sample-org/demo-kit',
-                files: [
-                  {
-                    id: '@sample-org/demo-kit:dist/main.js',
-                    label: 'dist/main.js',
-                    relativePath: 'dist/main.js',
-                    source: {
-                      name: 'main.js',
-                      path: '/workspace/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
-                    },
-                  },
-                ],
-                tree: [
-                  {
-                    id: 'folder:@sample-org/demo-kit:dist',
-                    kind: 'folder',
-                    name: 'dist',
-                    path: 'dist',
-                    children: [
-                      {
-                        id: '@sample-org/demo-kit:dist/main.js',
-                        kind: 'file',
-                        name: 'main.js',
-                        path: 'dist/main.js',
-                        file: {
-                          id: '@sample-org/demo-kit:dist/main.js',
-                          label: 'dist/main.js',
-                          relativePath: 'dist/main.js',
-                          source: {
-                            name: 'main.js',
-                            path: '/workspace/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
-                          },
-                        },
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        });
 
         await expect(webview.locator('.packages-tree-package-row')).toHaveCount(2, { timeout: 3_000 });
         await webview.locator('.packages-tree-package-row', { hasText: 'sample-client' }).click();
@@ -1942,6 +1911,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await webview.locator('#packages-search-input').fill('@sample-org');
         await expect(webview.locator('.packages-tree-package-row')).toHaveCount(1, { timeout: 3_000 });
         await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' })).toBeVisible();
+        await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toHaveCount(0, {
+          timeout: 3_000,
+        });
+        await webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' }).click();
         await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toBeVisible({ timeout: 3_000 });
 
         await webview.locator('.packages-tree-folder-row', { hasText: 'dist' }).click();
@@ -1949,6 +1922,9 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('#btn-back-packages').click();
         await expectReadyScreen(webview);
+        const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+        expect(packageErrorEvents).toEqual([]);
+        await clearPackageFixtures(webview);
       });
     });
 
@@ -1957,125 +1933,39 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
-        await injectMessage(webview, {
-          type: 'DEBUG_CONNECTING',
-          payload: {
-            appNames: ['mock-service-a', 'mock-service-c'],
-            ports: { 'mock-service-a': 20000, 'mock-service-c': 20001 },
-          },
+        await emitDebugConnecting(webview, {
+          appNames: ['mock-service-a', 'mock-service-c'],
+          ports: { 'mock-service-a': 20000, 'mock-service-c': 20001 },
         });
-        await injectMessage(webview, {
-          type: 'APP_DEBUG_STATUS',
-          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
-        });
-        await injectMessage(webview, {
-          type: 'APP_DEBUG_STATUS',
-          payload: { appName: 'mock-service-c', status: 'ATTACHED' },
-        });
+        await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+        await emitAppDebugStatus(webview, { appName: 'mock-service-c', status: 'ATTACHED' });
+        await setPackageFixture(webview, 'mock-service-a', [
+          createPackageFixture({
+            name: 'sample-alpha',
+            files: ['index.js'],
+          }),
+        ]);
+        await setPackageFixture(webview, 'mock-service-c', [
+          createPackageFixture({
+            name: '@sample-org/demo-worker',
+            version: '2.0.0',
+            files: ['dist/worker.js'],
+          }),
+        ]);
+        await startPackagesErrorMonitor(webview);
 
         await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
         await expect(webview.locator('#packages-app-select')).toBeVisible();
 
-        await injectMessage(webview, {
-          type: 'PACKAGE_SOURCES_LOADED',
-          payload: {
-            appName: 'mock-service-a',
-            packages: [
-              {
-                id: 'sample-alpha',
-                name: 'sample-alpha',
-                displayName: 'sample-alpha',
-                files: [
-                  {
-                    id: 'sample-alpha:index.js',
-                    label: 'index.js',
-                    relativePath: 'index.js',
-                    source: {
-                      name: 'index.js',
-                      path: '/workspace/node_modules/sample-alpha/index.js',
-                    },
-                  },
-                ],
-                tree: [
-                  {
-                    id: 'sample-alpha:index.js',
-                    kind: 'file',
-                    name: 'index.js',
-                    path: 'index.js',
-                    file: {
-                      id: 'sample-alpha:index.js',
-                      label: 'index.js',
-                      relativePath: 'index.js',
-                      source: {
-                        name: 'index.js',
-                        path: '/workspace/node_modules/sample-alpha/index.js',
-                      },
-                    },
-                  },
-                ],
-              },
-            ],
-          },
-        });
-
         await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-alpha' })).toBeVisible({ timeout: 3_000 });
 
         await webview.locator('#packages-app-select').selectOption('mock-service-c');
-        // Same harness limitation as above: app switching posts LOAD_PACKAGE_SOURCES, but
-        // the extension host does not have an actual debug session for injected cards.
-
-        await injectMessage(webview, {
-          type: 'PACKAGE_SOURCES_LOADED',
-          payload: {
-            appName: 'mock-service-c',
-            packages: [
-              {
-                id: '@sample-org/demo-worker',
-                name: '@sample-org/demo-worker',
-                displayName: '@sample-org/demo-worker',
-                files: [
-                  {
-                    id: '@sample-org/demo-worker:dist/worker.js',
-                    label: 'dist/worker.js',
-                    relativePath: 'dist/worker.js',
-                    source: {
-                      name: 'worker.js',
-                      path: '/workspace/node_modules/.pnpm/@sample-org+demo-worker@2.0.0/node_modules/@sample-org/demo-worker/dist/worker.js',
-                    },
-                  },
-                ],
-                tree: [
-                  {
-                    id: 'folder:@sample-org/demo-worker:dist',
-                    kind: 'folder',
-                    name: 'dist',
-                    path: 'dist',
-                    children: [
-                      {
-                        id: '@sample-org/demo-worker:dist/worker.js',
-                        kind: 'file',
-                        name: 'worker.js',
-                        path: 'dist/worker.js',
-                        file: {
-                          id: '@sample-org/demo-worker:dist/worker.js',
-                          label: 'dist/worker.js',
-                          relativePath: 'dist/worker.js',
-                          source: {
-                            name: 'worker.js',
-                            path: '/workspace/node_modules/.pnpm/@sample-org+demo-worker@2.0.0/node_modules/@sample-org/demo-worker/dist/worker.js',
-                          },
-                        },
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        });
 
         await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-worker' })).toBeVisible({ timeout: 3_000 });
         await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-alpha' })).toHaveCount(0);
+        const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+        expect(packageErrorEvents).toEqual([]);
+        await clearPackageFixtures(webview);
       });
     });
 
@@ -2085,20 +1975,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await completeMappingToReady(webview);
         await waitForObservation();
 
-        await injectMessage(webview, {
-          type: 'DEBUG_CONNECTING',
-          payload: { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } },
+        await emitDebugConnecting(webview, {
+          appNames: ['mock-service-a'],
+          ports: { 'mock-service-a': 20000 },
         });
-        await injectMessage(webview, {
-          type: 'APP_DEBUG_STATUS',
-          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
-        });
+        await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
         await waitForObservation();
-        await startPackagesErrorMonitor(webview);
-
-        await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
-        await expect(webview.locator('#packages-app-select')).toBeVisible();
-
         const packages = Array.from({ length: 14 }, (_, index) =>
           createPackageFixture({
             name: index === 8 ? 'sample-scroll-target' : `sample-bucket-${String(index + 1).padStart(2, '0')}`,
@@ -2117,11 +1999,11 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
               : ['dist/index.js'],
           }),
         );
+        await setPackageFixture(webview, 'mock-service-a', packages);
+        await startPackagesErrorMonitor(webview);
 
-        await injectMessage(webview, {
-          type: 'PACKAGE_SOURCES_LOADED',
-          payload: { appName: 'mock-service-a', packages },
-        });
+        await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+        await expect(webview.locator('#packages-app-select')).toBeVisible();
         await expect(webview.locator('.packages-error')).toHaveCount(0);
         await waitForObservation();
         await expect(webview.locator('.packages-error')).toHaveCount(0);
@@ -2152,6 +2034,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         const packageErrorEvents = await stopPackagesErrorMonitor(webview);
         expect(packageErrorEvents).toEqual([]);
+        await clearPackageFixtures(webview);
       });
     });
 
@@ -2161,40 +2044,30 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await completeMappingToReady(webview);
         await waitForObservation();
 
-        await injectMessage(webview, {
-          type: 'DEBUG_CONNECTING',
-          payload: { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } },
+        await emitDebugConnecting(webview, {
+          appNames: ['mock-service-a'],
+          ports: { 'mock-service-a': 20000 },
         });
-        await injectMessage(webview, {
-          type: 'APP_DEBUG_STATUS',
-          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
-        });
+        await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
         await waitForObservation();
+        await setPackageFixture(webview, 'mock-service-a', [
+          createPackageFixture({
+            name: '@sample-org/demo-kit',
+            version: '1.4.0',
+            files: [
+              'dist/main.js',
+              'dist/tasks/worker.js',
+            ],
+          }),
+          createPackageFixture({
+            name: 'sample-client',
+            files: ['dist/client.js'],
+          }),
+        ]);
         await startPackagesErrorMonitor(webview);
 
         await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
         await expect(webview.locator('#packages-app-select')).toBeVisible();
-
-        await injectMessage(webview, {
-          type: 'PACKAGE_SOURCES_LOADED',
-          payload: {
-            appName: 'mock-service-a',
-            packages: [
-              createPackageFixture({
-                name: '@sample-org/demo-kit',
-                version: '1.4.0',
-                files: [
-                  'dist/main.js',
-                  'dist/tasks/worker.js',
-                ],
-              }),
-              createPackageFixture({
-                name: 'sample-client',
-                files: ['dist/client.js'],
-              }),
-            ],
-          },
-        });
         await expect(webview.locator('.packages-error')).toHaveCount(0);
         await waitForObservation();
         await expect(webview.locator('.packages-error')).toHaveCount(0);
@@ -2214,6 +2087,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         const packageErrorEvents = await stopPackagesErrorMonitor(webview);
         expect(packageErrorEvents).toEqual([]);
+        await clearPackageFixtures(webview);
       });
     });
 
@@ -2223,36 +2097,26 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await completeMappingToReady(webview);
         await waitForObservation();
 
-        await injectMessage(webview, {
-          type: 'DEBUG_CONNECTING',
-          payload: { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } },
+        await emitDebugConnecting(webview, {
+          appNames: ['mock-service-a'],
+          ports: { 'mock-service-a': 20000 },
         });
-        await injectMessage(webview, {
-          type: 'APP_DEBUG_STATUS',
-          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
-        });
+        await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
         await waitForObservation();
+        await setPackageFixture(webview, 'mock-service-a', [
+          createPackageFixture({
+            name: '@sample-org/demo-kit',
+            version: '1.4.0',
+            files: [
+              'dist/main.js',
+              'dist/tasks/worker.js',
+            ],
+          }),
+        ]);
         await startPackagesErrorMonitor(webview);
 
         await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
         await expect(webview.locator('#packages-app-select')).toBeVisible();
-
-        await injectMessage(webview, {
-          type: 'PACKAGE_SOURCES_LOADED',
-          payload: {
-            appName: 'mock-service-a',
-            packages: [
-              createPackageFixture({
-                name: '@sample-org/demo-kit',
-                version: '1.4.0',
-                files: [
-                  'dist/main.js',
-                  'dist/tasks/worker.js',
-                ],
-              }),
-            ],
-          },
-        });
         await expect(webview.locator('.packages-error')).toHaveCount(0);
         await waitForObservation();
         await expect(webview.locator('.packages-error')).toHaveCount(0);
@@ -2271,6 +2135,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         const packageErrorEvents = await stopPackagesErrorMonitor(webview);
         expect(packageErrorEvents).toEqual([]);
+        await clearPackageFixtures(webview);
       });
     });
   });

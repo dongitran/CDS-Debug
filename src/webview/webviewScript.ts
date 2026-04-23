@@ -10,6 +10,9 @@ import { getPackageBrowserScriptContent } from './packageBrowserContent';
 export function getScript(nonce: string): string {
   return `<script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    window.__cdsDebugPostMessage = function(message) {
+      vscode.postMessage(message);
+    };
 
     // === CONSTANTS ===
 

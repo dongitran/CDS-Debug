@@ -231,6 +231,23 @@ export interface LoadedPackageEntry {
   tree: LoadedPackageTreeNode[];
 }
 
+export type E2eBridgeCommand =
+  | {
+    action: 'EMIT_DEBUG_CONNECTING';
+    payload: { appNames: string[]; ports: Record<string, number>; unmappedApps?: string[] };
+  }
+  | {
+    action: 'EMIT_APP_DEBUG_STATUS';
+    payload: { appName: string; status: string; message?: string };
+  }
+  | {
+    action: 'SET_PACKAGE_FIXTURE';
+    payload: { appName: string; packages: LoadedPackageEntry[] };
+  }
+  | {
+    action: 'CLEAR_PACKAGE_FIXTURES';
+  };
+
 // Messages from webview → extension
 export type WebviewMessage =
   | { type: 'SELECT_GROUP_FOLDER' }
@@ -256,7 +273,8 @@ export type WebviewMessage =
   | { type: 'RETRY_DEBUG'; payload: { appName: string } }
   | { type: 'CLEAR_BREAKPOINT_SNAPSHOTS' }
   | { type: 'LOAD_PACKAGE_SOURCES'; payload: { appName: string } }
-  | { type: 'OPEN_PACKAGE_SOURCE'; payload: { appName: string; source: LoadedPackageSource } };
+  | { type: 'OPEN_PACKAGE_SOURCE'; payload: { appName: string; source: LoadedPackageSource } }
+  | { type: 'E2E_BRIDGE'; payload: E2eBridgeCommand };
 
 // Messages from logs webview → logs extension panel
 export type LogsWebviewMessage =
