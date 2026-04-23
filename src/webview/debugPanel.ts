@@ -37,11 +37,14 @@ import {
   stopAllProcesses,
   debugProcessEvents,
   getActiveDebugSessionForApp,
+  getDebugSessionById,
+  getDebugSessionsForApp,
   getActiveSessions,
+  getProcessOutputChannel,
   getSessionParams,
 } from '../core/processManager';
 import { breakpointSnapshotEvents, clearBreakpointSnapshots, getBreakpointSnapshots } from '../core/breakpointSnapshotManager';
-import { loadPackageEntries, openPackageSource } from '../core/packageSourceBrowser';
+import { loadPackageEntriesFromSessions, openPackageSource } from '../core/packageSourceBrowser';
 import {
   checkoutBranch,
   getCurrentBranch,
@@ -262,35 +265,59 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private logPackageDiagnostic(appName: string, message: string): void {
+    const line = `[Packages][${appName}] ${message}`;
+    logInfo(line);
+    getProcessOutputChannel(appName)?.appendLine(`[Extension] ${line}`);
+  }
+
+  private buildPackageLogger(appName: string): (message: string) => void {
+    return (message: string): void => {
+      this.logPackageDiagnostic(appName, message);
+    };
+  }
+
   private async handleLoadPackageSources(appName: string): Promise<void> {
-    const session = getActiveDebugSessionForApp(appName);
-    if (!session) {
+    const sessions = getDebugSessionsForApp(appName);
+    if (sessions.length === 0) {
       this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message: `No attached debug session found for ${appName}.` } });
       return;
     }
 
+    const rootSession = getActiveDebugSessionForApp(appName);
+    const log = this.buildPackageLogger(appName);
+    log(`Packages requested. Root session: ${rootSession ? `${rootSession.name} [${rootSession.id}]` : 'none'}`);
+
     try {
-      const packages = await loadPackageEntries(session);
+      const packages = await loadPackageEntriesFromSessions(appName, sessions, log);
       this.post({ type: 'PACKAGE_SOURCES_LOADED', payload: { appName, packages } });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logError(`Failed to load package sources for ${appName}: ${message}`);
+      log(`Load failed: ${message}`);
       this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
     }
   }
 
   private async handleOpenPackageSource(appName: string, source: LoadedPackageSource): Promise<void> {
-    const session = getActiveDebugSessionForApp(appName);
+    const session = source.debugSessionId
+      ? getDebugSessionById(source.debugSessionId)
+      : getActiveDebugSessionForApp(appName);
     if (!session) {
       this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message: `No attached debug session found for ${appName}.` } });
       return;
     }
 
     try {
+      this.logPackageDiagnostic(
+        appName,
+        `Opening source from ${session.name} [${session.id}] path="${source.path ?? source.name ?? 'unknown'}" sourceRef=${String(source.sourceReference ?? 0)}`,
+      );
       await openPackageSource(session, source);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logError(`Failed to open package source for ${appName}: ${message}`);
+      this.logPackageDiagnostic(appName, `Open failed: ${message}`);
       this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
     }
   }

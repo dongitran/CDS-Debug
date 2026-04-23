@@ -2140,7 +2140,9 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
 
-        // Inject SYNC_STATUS with isRunning=true and a currentOrg
+        // Inject SYNC_STATUS with isRunning=true and a currentOrg. Background cache
+        // sync can also emit real progress updates in the same session, so this test
+        // only asserts stable "running" UI signals plus generic progress text.
         await injectMessage(webview, {
           type: 'SYNC_STATUS',
           payload: {
@@ -2154,12 +2156,17 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         });
 
         // Sync running: spinner + progress bar, Sync Now button disabled
-        await expect(webview.locator('.sync-status-row.running .spinner')).toBeVisible();
+        const runningRow = webview.locator('.sync-status-row.running');
+        await expect(runningRow.locator('.spinner')).toBeVisible();
         await expect(webview.locator('.progress-bar-wrap')).toBeVisible();
         await expect(webview.locator('.progress-bar-fill')).toBeVisible();
         await expect(webview.locator('#btn-trigger-sync')).toBeDisabled();
-        // Status text includes current org/region
-        await expect(webview.locator('.sync-status-row.running')).toContainText('mock-org-alpha');
+        await expect.poll(async () => {
+          return ((await runningRow.textContent()) ?? '').trim();
+        }).toMatch(/(mock-org-alpha|Scanning|Logging into)/);
+        await expect.poll(async () => {
+          return ((await runningRow.textContent()) ?? '').trim();
+        }).toMatch(/\(\d+\/\d+.*%\)/);
       });
     });
 

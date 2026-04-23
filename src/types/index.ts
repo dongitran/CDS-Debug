@@ -193,6 +193,8 @@ export interface LoadedPackageSource {
   sourceReference?: number;
   origin?: string;
   presentationHint?: string;
+  debugSessionId?: string;
+  debugSessionName?: string;
 }
 
 export interface LoadedPackageFile {

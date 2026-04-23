@@ -150,6 +150,43 @@ export function getActiveDebugSessionForApp(appName: string): vscode.DebugSessio
   return activeDebugSessions.get(`${DEBUG_SESSION_PREFIX}${appName}`);
 }
 
+function sessionBelongsToApp(session: vscode.DebugSession, appName: string): boolean {
+  const rootSessionName = `${DEBUG_SESSION_PREFIX}${appName}`;
+  if (session.name === rootSessionName) return true;
+  let parent = session.parentSession;
+  while (parent) {
+    if (parent.name === rootSessionName) return true;
+    parent = parent.parentSession;
+  }
+  return false;
+}
+
+function sessionDepthWithinApp(session: vscode.DebugSession, appName: string): number {
+  const rootSessionName = `${DEBUG_SESSION_PREFIX}${appName}`;
+  let depth = 0;
+  let current: vscode.DebugSession | undefined = session;
+  while (current) {
+    if (current.name === rootSessionName) return depth;
+    current = current.parentSession;
+    depth += 1;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
+export function getDebugSessionsForApp(appName: string): vscode.DebugSession[] {
+  return Array.from(activeDebugSessions.values())
+    .filter((session) => sessionBelongsToApp(session, appName))
+    .sort((left, right) => sessionDepthWithinApp(left, appName) - sessionDepthWithinApp(right, appName));
+}
+
+export function getDebugSessionById(sessionId: string): vscode.DebugSession | undefined {
+  return Array.from(activeDebugSessions.values()).find((session) => session.id === sessionId);
+}
+
+export function getProcessOutputChannel(appName: string): vscode.OutputChannel | undefined {
+  return channels.get(appName);
+}
+
 export function getActiveAppNames(): string[] {
   return Array.from(sessionStates.keys());
 }

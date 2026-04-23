@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import type { LoadedPackageEntry, LoadedPackageFile, LoadedPackageSource } from '../types/index';
 
+type PackageBrowserLogFn = (message: string) => void;
+
 interface ParsedPackageFile {
   packageId: string;
   packageName: string;
@@ -101,6 +103,51 @@ function getLoadedSourcesResponseSources(response: unknown): LoadedPackageSource
     .filter((source): source is LoadedPackageSource => source !== null);
 }
 
+function describeSession(session: vscode.DebugSession): string {
+  const type = session.type || 'unknown';
+  return `"${session.name}" [${session.id}] type=${type}`;
+}
+
+function stampSourceSession(
+  source: LoadedPackageSource,
+  session: vscode.DebugSession,
+): LoadedPackageSource {
+  return {
+    ...source,
+    debugSessionId: session.id,
+    debugSessionName: session.name,
+  };
+}
+
+async function requestLoadedSources(
+  session: vscode.DebugSession,
+  log?: PackageBrowserLogFn,
+): Promise<LoadedPackageSource[]> {
+  const response = await session.customRequest('loadedSources', {}) as unknown;
+  const sources = getLoadedSourcesResponseSources(response)
+    .map((source) => stampSourceSession(source, session));
+  log?.(`[Packages] loadedSources from ${describeSession(session)} -> ${sources.length.toString()} source(s)`);
+  return sources;
+}
+
+function logSessionCandidates(
+  appName: string,
+  sessions: readonly vscode.DebugSession[],
+  log?: PackageBrowserLogFn,
+): void {
+  if (!log) return;
+  log(`[Packages] Resolving session tree for ${appName}: ${sessions.length.toString()} candidate(s)`);
+  for (const session of sessions) {
+    const parentName = session.parentSession?.name ?? 'none';
+    const parentId = session.parentSession?.id ?? 'none';
+    log(`[Packages] Candidate ${describeSession(session)} parent="${parentName}" [${parentId}]`);
+  }
+}
+
+function mergeLoadedSources(batches: readonly LoadedPackageSource[][]): LoadedPackageSource[] {
+  return batches.flat();
+}
+
 function toOpenUri(session: vscode.DebugSession, source: LoadedPackageSource): vscode.Uri {
   if (typeof source.sourceReference === 'number' && source.sourceReference > 0) {
     return vscode.debug.asDebugSourceUri(source as vscode.DebugProtocolSource, session);
@@ -159,9 +206,46 @@ export function buildPackageEntries(sources: LoadedPackageSource[]): LoadedPacka
 }
 
 export async function loadPackageEntries(session: vscode.DebugSession): Promise<LoadedPackageEntry[]> {
-  const response = await session.customRequest('loadedSources', {}) as unknown;
-  const sources = getLoadedSourcesResponseSources(response);
+  const sources = await requestLoadedSources(session);
   return buildPackageEntries(sources);
+}
+
+export async function loadPackageEntriesFromSessions(
+  appName: string,
+  sessions: readonly vscode.DebugSession[],
+  log?: PackageBrowserLogFn,
+): Promise<LoadedPackageEntry[]> {
+  if (sessions.length === 0) {
+    throw new Error(`No active debug session found for ${appName}.`);
+  }
+
+  logSessionCandidates(appName, sessions, log);
+  const loadedSourceBatches: LoadedPackageSource[][] = [];
+
+  for (const session of sessions) {
+    try {
+      const sources = await requestLoadedSources(session, log);
+      if (sources.length > 0) {
+        loadedSourceBatches.push(sources);
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      log?.(`[Packages] loadedSources failed for ${describeSession(session)}: ${message}`);
+    }
+  }
+
+  const sources = mergeLoadedSources(loadedSourceBatches);
+  if (sources.length === 0) {
+    throw new Error(`No loaded sources were returned by any debug session for ${appName}.`);
+  }
+
+  const packages = buildPackageEntries(sources);
+  const packageLabel = packages.length === 1 ? 'package entry' : 'package entries';
+  log?.(`[Packages] Parsed ${packages.length.toString()} ${packageLabel} from ${sources.length.toString()} loaded source(s)`);
+  if (packages.length === 0) {
+    log?.('[Packages] Loaded sources exist, but none matched node_modules package paths.');
+  }
+  return packages;
 }
 
 export async function openPackageSource(

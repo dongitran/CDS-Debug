@@ -4,6 +4,8 @@ import type { DebugSession } from 'vscode';
 interface MockDebugSession {
   id: string;
   name: string;
+  type?: string;
+  parentSession?: MockDebugSession;
   customRequest: (command: string, args: unknown) => Promise<unknown>;
 }
 
@@ -64,6 +66,7 @@ vi.mock('vscode', () => ({
 import {
   buildPackageEntries,
   loadPackageEntries,
+  loadPackageEntriesFromSessions,
   openPackageSource,
 } from '../../src/core/packageSourceBrowser';
 
@@ -162,6 +165,196 @@ describe('packageSourceBrowser', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.name).toBe('sample-client');
     expect(entries[0]?.files[0]?.relativePath).toBe('dist/client.js');
+  });
+
+  it('prefers child sessions when the parent CDS session has no loaded sources', async () => {
+    const parentCalls: string[] = [];
+    const childCalls: string[] = [];
+    const parentSession: MockDebugSession = {
+      id: 'session-parent',
+      name: 'Debug: sample-service',
+      type: 'pwa-node',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        void args;
+        parentCalls.push(command);
+        return Promise.resolve({ sources: [] });
+      },
+    };
+    const childSession: MockDebugSession = {
+      id: 'session-child',
+      name: 'Remote Process [0]',
+      type: 'pwa-node',
+      parentSession,
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        void args;
+        childCalls.push(command);
+        return Promise.resolve({
+          sources: [
+            {
+              name: 'worker.js',
+              path: '/workspace/node_modules/sample-worker/dist/worker.js',
+            },
+          ],
+        });
+      },
+    };
+
+    const entries = await loadPackageEntriesFromSessions(
+      'sample-service',
+      [asDebugSession(parentSession), asDebugSession(childSession)],
+    );
+
+    expect(parentCalls).toEqual(['loadedSources']);
+    expect(childCalls).toEqual(['loadedSources']);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.name).toBe('sample-worker');
+    expect(entries[0]?.files[0]?.source.debugSessionId).toBe('session-child');
+  });
+
+  it('merges loaded sources from multiple descendant sessions and dedupes package files', async () => {
+    const parentSession: MockDebugSession = {
+      id: 'session-parent',
+      name: 'Debug: sample-service',
+      type: 'pwa-node',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+    const childA: MockDebugSession = {
+      id: 'session-child-a',
+      name: 'Remote Process [0]',
+      type: 'pwa-node',
+      parentSession,
+      customRequest: (): Promise<unknown> => Promise.resolve({
+        sources: [
+          {
+            name: 'index.js',
+            path: '/workspace/node_modules/sample-alpha/index.js',
+          },
+        ],
+      }),
+    };
+    const childB: MockDebugSession = {
+      id: 'session-child-b',
+      name: 'Remote Process [1]',
+      type: 'pwa-node',
+      parentSession,
+      customRequest: (): Promise<unknown> => Promise.resolve({
+        sources: [
+          {
+            name: 'index.js',
+            path: '/workspace/node_modules/sample-alpha/index.js',
+          },
+          {
+            name: 'main.js',
+            path: '/workspace/node_modules/.pnpm/sample-beta@1.0.0/node_modules/sample-beta/dist/main.js',
+          },
+        ],
+      }),
+    };
+
+    const entries = await loadPackageEntriesFromSessions(
+      'sample-service',
+      [asDebugSession(parentSession), asDebugSession(childA), asDebugSession(childB)],
+    );
+
+    expect(entries.map((entry) => entry.name)).toEqual(['sample-alpha', 'sample-beta']);
+    expect(entries[0]?.files).toHaveLength(1);
+    expect(entries[1]?.files[0]?.source.debugSessionId).toBe('session-child-b');
+  });
+
+  it('continues across session errors and records diagnostics when another child session has sources', async () => {
+    const logs: string[] = [];
+    const parentSession: MockDebugSession = {
+      id: 'session-parent',
+      name: 'Debug: sample-service',
+      type: 'pwa-node',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+    const brokenChild: MockDebugSession = {
+      id: 'session-child-broken',
+      name: 'Remote Process [0]',
+      type: 'pwa-node',
+      parentSession,
+      customRequest: (): Promise<unknown> => Promise.reject(new Error('adapter failed')),
+    };
+    const goodChild: MockDebugSession = {
+      id: 'session-child-good',
+      name: 'Remote Process [1]',
+      type: 'pwa-node',
+      parentSession,
+      customRequest: (): Promise<unknown> => Promise.resolve({
+        sources: [
+          {
+            name: 'index.js',
+            path: '/workspace/node_modules/sample-client/index.js',
+          },
+        ],
+      }),
+    };
+
+    const entries = await loadPackageEntriesFromSessions(
+      'sample-service',
+      [asDebugSession(parentSession), asDebugSession(brokenChild), asDebugSession(goodChild)],
+      (message: string): void => { logs.push(message); },
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(logs.some((message) => message.includes('adapter failed'))).toBe(true);
+    expect(logs.some((message) => message.includes('Candidate "Remote Process [0]"'))).toBe(true);
+  });
+
+  it('throws when no debug sessions are available for package browsing', async () => {
+    await expect(loadPackageEntriesFromSessions('sample-service', [])).rejects.toThrow(/No active debug session/i);
+  });
+
+  it('throws when every candidate session returns zero loaded sources', async () => {
+    const parentSession: MockDebugSession = {
+      id: 'session-parent-empty',
+      name: 'Debug: sample-service',
+      type: 'pwa-node',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+    const childSession: MockDebugSession = {
+      id: 'session-child-empty',
+      name: 'Remote Process [0]',
+      type: 'pwa-node',
+      parentSession,
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+
+    await expect(loadPackageEntriesFromSessions(
+      'sample-service',
+      [asDebugSession(parentSession), asDebugSession(childSession)],
+    )).rejects.toThrow(/No loaded sources/i);
+  });
+
+  it('logs when loaded sources exist but none match node_modules package paths', async () => {
+    const logs: string[] = [];
+    const parentSession: MockDebugSession = {
+      id: 'session-parent-non-package',
+      name: 'Debug: sample-service',
+      type: 'pwa-node',
+      customRequest: (): Promise<unknown> => Promise.resolve({
+        sources: [
+          {
+            name: 'handler.js',
+            path: '/workspace/srv/handler.js',
+          },
+          {
+            name: 'shim.js',
+            path: '/workspace/node_modules/.bin/sample-shim',
+          },
+        ],
+      }),
+    };
+
+    const entries = await loadPackageEntriesFromSessions(
+      'sample-service',
+      [asDebugSession(parentSession)],
+      (message: string): void => { logs.push(message); },
+    );
+
+    expect(entries).toEqual([]);
+    expect(logs.some((message) => message.includes('none matched node_modules package paths'))).toBe(true);
   });
 
   it('opens package sources via debug URIs when sourceReference is present', async () => {
