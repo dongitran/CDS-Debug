@@ -138,54 +138,98 @@ export function getPackageBrowserStyles(): string {
     }
 
     .packages-tree-icon {
-      width: 12px;
-      height: 12px;
+      width: 14px;
+      height: 14px;
       flex-shrink: 0;
       position: relative;
-      opacity: 0.9;
+      opacity: 0.95;
+      color: var(--vscode-symbolIcon-fileForeground, var(--vscode-descriptionForeground));
     }
 
     .packages-tree-icon-package {
-      border: 1px solid var(--vscode-symbolIcon-packageForeground, var(--vscode-descriptionForeground));
-      border-radius: 2px;
-      background: color-mix(in srgb, var(--vscode-button-background) 30%, transparent);
+      color: var(--vscode-symbolIcon-packageForeground, var(--vscode-descriptionForeground));
+    }
+
+    .packages-tree-icon-package::before {
+      content: '';
+      position: absolute;
+      inset: 1px;
+      border: 1px solid currentColor;
+      border-radius: 3px;
+      background: color-mix(in srgb, currentColor 14%, transparent);
+    }
+
+    .packages-tree-icon-package::after {
+      content: '';
+      position: absolute;
+      left: 3px;
+      right: 3px;
+      top: 5px;
+      height: 1px;
+      background: currentColor;
+      opacity: 0.55;
+    }
+
+    .packages-tree-icon-package.open::before {
+      background: color-mix(in srgb, currentColor 18%, transparent);
     }
 
     .packages-tree-icon-folder {
-      border: 1px solid var(--vscode-symbolIcon-folderForeground, var(--vscode-descriptionForeground));
-      border-radius: 2px;
-      background: color-mix(in srgb, var(--vscode-textLink-foreground) 16%, transparent);
+      color: var(--vscode-symbolIcon-folderForeground, var(--vscode-textLink-foreground));
     }
 
     .packages-tree-icon-folder::before {
       content: '';
       position: absolute;
-      left: 1px;
-      top: -2px;
-      width: 5px;
-      height: 3px;
-      border: 1px solid var(--vscode-symbolIcon-folderForeground, var(--vscode-descriptionForeground));
-      border-bottom: none;
-      border-radius: 2px 2px 0 0;
-      background: inherit;
+      left: 0;
+      right: 0;
+      top: 3px;
+      bottom: 1px;
+      border: 1px solid currentColor;
+      border-radius: 3px;
+      background: color-mix(in srgb, currentColor 15%, transparent);
     }
 
-    .packages-tree-icon-file {
-      border: 1px solid var(--vscode-symbolIcon-fileForeground, var(--vscode-descriptionForeground));
-      border-radius: 2px;
-      background: color-mix(in srgb, var(--vscode-editor-foreground) 8%, transparent);
+    .packages-tree-icon-folder::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      top: 1px;
+      width: 7px;
+      height: 4px;
+      border: 1px solid currentColor;
+      border-bottom: none;
+      border-radius: 3px 3px 0 0;
+      background: color-mix(in srgb, currentColor 11%, transparent);
+    }
+
+    .packages-tree-icon-folder.open::before {
+      background: color-mix(in srgb, currentColor 22%, transparent);
     }
 
     .packages-tree-icon-file::before {
       content: '';
       position: absolute;
-      right: -1px;
-      top: -1px;
-      width: 4px;
-      height: 4px;
-      border-top: 1px solid var(--vscode-symbolIcon-fileForeground, var(--vscode-descriptionForeground));
-      border-right: 1px solid var(--vscode-symbolIcon-fileForeground, var(--vscode-descriptionForeground));
+      left: 1px;
+      right: 2px;
+      top: 1px;
+      bottom: 1px;
+      border: 1px solid currentColor;
+      border-radius: 2px;
+      background: color-mix(in srgb, currentColor 7%, transparent);
+    }
+
+    .packages-tree-icon-file::after {
+      content: '';
+      position: absolute;
+      right: 2px;
+      top: 1px;
+      width: 5px;
+      height: 5px;
+      border-top: 1px solid currentColor;
+      border-right: 1px solid currentColor;
       background: var(--vscode-editorGroupHeader-tabsBackground);
+      clip-path: polygon(0 0, 100% 0, 100% 100%);
     }
 
     .packages-error {

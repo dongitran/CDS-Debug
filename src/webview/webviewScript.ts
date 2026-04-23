@@ -106,6 +106,7 @@ export function getScript(nonce: string): string {
       packageBrowserLoading: false,
       packageBrowserError: null,
       expandedPackageBranchIds: [],
+      searchPackageBranchStates: {},
       selectedPackageFileId: null,
     };
 

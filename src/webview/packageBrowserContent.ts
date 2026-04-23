@@ -12,6 +12,7 @@ export function getPackageBrowserScriptContent(): string {
 
     function resetPackageTreeState() {
       state.expandedPackageBranchIds = [];
+      state.searchPackageBranchStates = {};
       state.selectedPackageFileId = null;
     }
 
@@ -58,14 +59,50 @@ export function getPackageBrowserScriptContent(): string {
       state.expandedPackageBranchIds = next;
     }
 
-    function toggleExpandedPackageBranch(branchId) {
-      setExpandedPackageBranch(branchId, !isExpandedPackageBranch(branchId));
+    function getSearchPackageBranchStates() {
+      return state.searchPackageBranchStates && typeof state.searchPackageBranchStates === 'object'
+        ? state.searchPackageBranchStates
+        : {};
+    }
+
+    function clearSearchPackageBranchStates() {
+      state.searchPackageBranchStates = {};
+    }
+
+    function getSearchPackageBranchState(branchId) {
+      var states = getSearchPackageBranchStates();
+      if (!Object.prototype.hasOwnProperty.call(states, branchId)) return null;
+      return states[branchId] === true;
+    }
+
+    function setSearchPackageBranchState(branchId, expanded) {
+      var next = Object.assign({}, getSearchPackageBranchStates());
+      next[branchId] = !!expanded;
+      state.searchPackageBranchStates = next;
+    }
+
+    function setTreeBranchExpanded(branchId, expanded) {
+      if (getPackageSearchQuery()) {
+        setSearchPackageBranchState(branchId, expanded);
+        return;
+      }
+      setExpandedPackageBranch(branchId, expanded);
     }
 
     function matchesPackageFile(node, query) {
       return node.name.toLowerCase().includes(query)
         || node.path.toLowerCase().includes(query)
         || node.file.relativePath.toLowerCase().includes(query);
+    }
+
+    function cloneVisibleFolderNode(node, children) {
+      return {
+        id: node.id,
+        kind: node.kind,
+        name: node.name,
+        path: node.path,
+        children: children,
+      };
     }
 
     function filterPackageTreeNodes(entry, nodes, query) {
@@ -83,15 +120,13 @@ export function getPackageBrowserScriptContent(): string {
         var childResult = filterPackageTreeNodes(entry, node.children || [], query);
         if (!folderMatches && childResult.nodes.length === 0) continue;
 
-        visibleNodes.push(folderMatches ? node : {
-          id: node.id,
-          kind: node.kind,
-          name: node.name,
-          path: node.path,
-          children: childResult.nodes,
-        });
+        if (childResult.nodes.length > 0) {
+          visibleNodes.push(cloneVisibleFolderNode(node, childResult.nodes));
+          autoExpandedBranchIds.push(getFolderBranchId(entry, node));
+        } else {
+          visibleNodes.push(cloneVisibleFolderNode(node, node.children || []));
+        }
 
-        autoExpandedBranchIds.push(getFolderBranchId(entry, node));
         autoExpandedBranchIds = autoExpandedBranchIds.concat(childResult.autoExpandedBranchIds);
       }
 
@@ -120,10 +155,12 @@ export function getPackageBrowserScriptContent(): string {
           if (!packageMatches && filteredTree.nodes.length === 0) return null;
 
           var autoExpandedBranchIds = filteredTree.autoExpandedBranchIds.slice();
-          autoExpandedBranchIds.push(getPackageRootBranchId(entry));
+          if (filteredTree.nodes.length > 0) {
+            autoExpandedBranchIds.push(getPackageRootBranchId(entry));
+          }
           return {
             entry: entry,
-            nodes: packageMatches ? getPackageEntryTree(entry) : filteredTree.nodes,
+            nodes: filteredTree.nodes.length > 0 ? filteredTree.nodes : getPackageEntryTree(entry),
             autoExpandedBranchIds: uniqueValues(autoExpandedBranchIds),
           };
         })
@@ -131,6 +168,10 @@ export function getPackageBrowserScriptContent(): string {
     }
 
     function isTreeBranchExpanded(branchId, autoExpandedBranchIds) {
+      if (getPackageSearchQuery()) {
+        var searchOverride = getSearchPackageBranchState(branchId);
+        if (searchOverride !== null) return searchOverride;
+      }
       return autoExpandedBranchIds.indexOf(branchId) !== -1 || isExpandedPackageBranch(branchId);
     }
 
@@ -210,39 +251,70 @@ export function getPackageBrowserScriptContent(): string {
       var index = rows.indexOf(currentRow);
       if (index === -1) return;
       var next = rows[index + delta];
-      if (next) next.focus();
+      if (next) focusTreeRow(next, false);
     }
 
     function focusBoundaryTreeRow(panel, index) {
       var rows = getVisibleTreeRows(panel);
       var next = rows[index];
-      if (next) next.focus();
+      if (next) focusTreeRow(next, false);
     }
 
     function focusParentTreeRow(panel, currentRow) {
       var parentId = currentRow.dataset.treeParentBranchId;
       if (!parentId) return;
       var parentRow = findTreeRowById(panel, parentId);
-      if (parentRow) parentRow.focus();
+      if (parentRow) focusTreeRow(parentRow, false);
     }
 
     function focusFirstChildTreeRow(panel, branchId) {
       var rows = getVisibleTreeRows(panel);
       for (var i = 0; i < rows.length; i++) {
         if (rows[i].dataset.treeParentBranchId === branchId) {
-          rows[i].focus();
+          focusTreeRow(rows[i], false);
           return;
         }
       }
     }
 
-    function refreshPackagesPanel(focusNodeId) {
+    function focusTreeRow(row, preventScroll) {
+      if (!row) return;
+      if (preventScroll) {
+        try {
+          row.focus({ preventScroll: true });
+          return;
+        } catch {
+        }
+      }
+      row.focus();
+    }
+
+    function getPackagesTreeScrollPosition(panel) {
+      var tree = panel.querySelector('.packages-tree');
+      if (!tree) return null;
+      return {
+        scrollLeft: tree.scrollLeft,
+        scrollTop: tree.scrollTop,
+      };
+    }
+
+    function restorePackagesTreeScrollPosition(panel, position) {
+      if (!position) return;
+      var tree = panel.querySelector('.packages-tree');
+      if (!tree) return;
+      tree.scrollLeft = position.scrollLeft;
+      tree.scrollTop = position.scrollTop;
+    }
+
+    function refreshPackagesPanel(focusNodeId, preventScroll) {
       var panel = document.getElementById('packages-panel');
       if (!panel) return;
+      var scrollPosition = getPackagesTreeScrollPosition(panel);
       panel.innerHTML = renderPackagesPanelContent();
+      restorePackagesTreeScrollPosition(panel, scrollPosition);
       if (!focusNodeId) return;
       var row = findTreeRowById(panel, focusNodeId);
-      if (row) row.focus();
+      if (row) focusTreeRow(row, !!preventScroll);
     }
 
     function renderTreeDisclosure(isExpanded, isLeaf) {
@@ -252,8 +324,9 @@ export function getPackageBrowserScriptContent(): string {
       return '<span class="' + className + '" aria-hidden="true"></span>';
     }
 
-    function renderTreeIcon(kind) {
-      return '<span class="packages-tree-icon packages-tree-icon-' + kind + '" aria-hidden="true"></span>';
+    function renderTreeIcon(kind, isExpanded) {
+      var className = 'packages-tree-icon packages-tree-icon-' + kind + (isExpanded ? ' open' : '');
+      return '<span class="' + className + '" aria-hidden="true"></span>';
     }
 
     function renderTreeBranchRow(options) {
@@ -267,7 +340,7 @@ export function getPackageBrowserScriptContent(): string {
         + ' aria-level="' + options.level + '"'
         + ' style="--packages-tree-level:' + options.level + ';">'
         + renderTreeDisclosure(options.isExpanded, false)
-        + renderTreeIcon(options.iconKind)
+        + renderTreeIcon(options.iconKind, options.isExpanded)
         + '<span class="packages-tree-label">' + escape(options.label) + '</span>'
         + (options.badgeText
           ? '<span class="packages-tree-badge">' + escape(options.badgeText) + '</span>'
@@ -287,7 +360,7 @@ export function getPackageBrowserScriptContent(): string {
         + ' aria-selected="' + (isSelected ? 'true' : 'false') + '"'
         + ' style="--packages-tree-level:' + level + ';">'
         + renderTreeDisclosure(false, true)
-        + renderTreeIcon('file')
+        + renderTreeIcon('file', false)
         + '<span class="packages-tree-label">' + escape(node.name) + '</span>'
         + '</button>';
     }
@@ -416,6 +489,7 @@ export function getPackageBrowserScriptContent(): string {
       if (searchInput) {
         searchInput.addEventListener('input', function(e) {
           state.packageBrowserSearchQuery = e.target.value;
+          clearSearchPackageBranchStates();
           refreshPackagesPanel();
         });
       }
@@ -435,8 +509,9 @@ export function getPackageBrowserScriptContent(): string {
         var branchBtn = e.target.closest('[data-tree-branch-id]');
         if (branchBtn) {
           var branchId = branchBtn.dataset.treeBranchId;
-          toggleExpandedPackageBranch(branchId);
-          refreshPackagesPanel(branchId);
+          if (!branchId) return;
+          setTreeBranchExpanded(branchId, branchBtn.getAttribute('aria-expanded') === 'false');
+          refreshPackagesPanel(branchId, true);
           return;
         }
 
@@ -445,7 +520,7 @@ export function getPackageBrowserScriptContent(): string {
         var file = findPackageFileById(fileBtn.dataset.packageFileId);
         if (!file) return;
         state.selectedPackageFileId = file.id;
-        refreshPackagesPanel(getFileTreeNodeId(file));
+        refreshPackagesPanel(getFileTreeNodeId(file), true);
         vscode.postMessage({
           type: 'OPEN_PACKAGE_SOURCE',
           payload: {
@@ -488,8 +563,8 @@ export function getPackageBrowserScriptContent(): string {
         if (e.key === 'ArrowRight' && branchId) {
           e.preventDefault();
           if (row.getAttribute('aria-expanded') === 'false') {
-            setExpandedPackageBranch(branchId, true);
-            refreshPackagesPanel(branchId);
+            setTreeBranchExpanded(branchId, true);
+            refreshPackagesPanel(branchId, true);
             return;
           }
           focusFirstChildTreeRow(panel, branchId);
@@ -499,8 +574,8 @@ export function getPackageBrowserScriptContent(): string {
         if (e.key === 'ArrowLeft') {
           e.preventDefault();
           if (branchId && row.getAttribute('aria-expanded') === 'true') {
-            setExpandedPackageBranch(branchId, false);
-            refreshPackagesPanel(branchId);
+            setTreeBranchExpanded(branchId, false);
+            refreshPackagesPanel(branchId, true);
             return;
           }
           focusParentTreeRow(panel, row);
