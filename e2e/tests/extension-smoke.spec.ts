@@ -3407,9 +3407,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expectRegionScreen(webview);
 
         // Inject CONFIG_LOADED with two pre-existing org mappings.
-        // The extension has no real config in this fresh session, so LOAD_APPS
-        // (sent by session-restore code) will return silently — we drive the UI
-        // entirely via injected messages below.
+        // Depending on CI timing, the real LOAD_APPS roundtrip may either leave
+        // the webview on LOADING_APPS briefly or complete before we observe it.
         await injectMessage(webview, {
           type: 'CONFIG_LOADED',
           payload: {
@@ -3426,19 +3425,23 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           },
         });
 
-        // Session restore: webview transitions to LOADING_APPS for mappings[0] (mock-org-alpha).
-        // Extension responds with nothing (no config in store) — safe to inject APPS_LOADED.
-        await expect(webview.getByText(/Loading apps for/i)).toBeVisible();
-        await injectMessage(webview, {
-          type: 'APPS_LOADED',
-          payload: {
-            apps: [
-              { name: 'mock-service-a', state: 'started', urls: ['mock-service-a.cfapps.example.com'] },
-              { name: 'mock-service-b', state: 'stopped', urls: [] },
-              { name: 'mock-service-c', state: 'started', urls: ['mock-service-c.cfapps.example.com'] },
-            ],
-          },
+        await webview.waitForFunction(() => {
+          return document.body?.textContent?.includes('Loading apps for') || !!document.getElementById('search-input');
         });
+
+        const readyAfterRestore = await webview.locator('#search-input').isVisible();
+        if (!readyAfterRestore) {
+          await injectMessage(webview, {
+            type: 'APPS_LOADED',
+            payload: {
+              apps: [
+                { name: 'mock-service-a', state: 'started', urls: ['mock-service-a.cfapps.example.com'] },
+                { name: 'mock-service-b', state: 'stopped', urls: [] },
+                { name: 'mock-service-c', state: 'started', urls: ['mock-service-c.cfapps.example.com'] },
+              ],
+            },
+          });
+        }
         await expectReadyScreen(webview);
 
         // Remap → SELECT_ORG → select org-alpha → folder /cached/alpha is pre-filled
