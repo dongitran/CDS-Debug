@@ -6,6 +6,7 @@ This folder contains a standalone E2E harness for the `cds-debug` VS Code extens
 - Independent from the root test stack (`vitest`)
 - No changes to extension source code (`src/**`)
 - Real UI tests against the VS Code runtime
+- Runtime-correct package-browser coverage via the extension-host E2E bridge instead of webview-only fake state
 
 ## Coverage
 Current suite validates end-to-end user behavior with comprehensive per-screen element verification.
@@ -110,6 +111,12 @@ cd e2e
 pnpm test
 ```
 
+Optional deep-observation run:
+```bash
+cd e2e
+CDS_DEBUG_E2E_CAPTURE_STEPS=1 CDS_DEBUG_E2E_STEP_DELAY_MS=10000 pnpm test -- --grep "Packages Browser"
+```
+
 ## Report
 ```bash
 cd e2e
@@ -120,3 +127,10 @@ pnpm test:report
 - Each test run uses isolated temporary VS Code profile directories.
 - The harness closes VS Code gracefully via CDP (`Browser.close`) and falls back to process signals only if needed.
 - Playwright artifacts are written to `e2e/test-results` and `e2e/playwright-report`.
+- Every test now preserves its output directory and emits a default evidence bundle:
+  - `session-final-diagnostics.txt`
+  - `session-final-workbench.png`
+  - `session-final-workbench.html`
+  - failure runs also emit `session-failure-*`
+- `playwright-report/results.json` is emitted on every run for machine-readable inspection.
+- `CDS_DEBUG_E2E_CAPTURE_STEPS=1` adds best-effort workbench snapshots at key harness checkpoints; combine it with `CDS_DEBUG_E2E_STEP_DELAY_MS=10000` when you want to watch the UI evolve in real time.

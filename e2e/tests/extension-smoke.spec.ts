@@ -15,6 +15,14 @@ import {
   type Locator,
   type Page,
 } from '@playwright/test';
+import {
+  appendDiagnostic,
+  buildFailureError,
+  captureStepEvidence,
+  createSessionDiagnostics,
+  persistSessionArtifacts,
+  type SessionDiagnostics,
+} from '../support/sessionEvidence';
 
 type CredentialMode = 'env' | 'none';
 type CfScenario =
@@ -40,14 +48,6 @@ interface SessionArtifacts {
   userDataDir: string;
   extensionsDir: string;
   mockBinDir: string;
-}
-
-interface SessionDiagnostics {
-  vscodeStdout: string[];
-  vscodeStderr: string[];
-  browserConsole: string[];
-  pageErrors: string[];
-  requestFailures: string[];
 }
 
 interface FixturePackageFile {
@@ -78,7 +78,6 @@ const MOCK_ENV_PASSWORD = 'e2e-mock-password';
 const MOCK_GROUP_FOLDER = '/tmp/cds-debug-e2e-group';
 const WEBSOCKET_TIMEOUT_MS = 90_000;
 const FRAME_TIMEOUT_MS = 90_000;
-const DIAGNOSTIC_TAIL_SIZE = 120;
 const MOCK_SLOW_TARGET_DELAY_SECONDS = 8;
 const STEP_OBSERVE_DELAY_MS = (() => {
   const value = Number(process.env.CDS_DEBUG_E2E_STEP_DELAY_MS ?? '0');
@@ -88,36 +87,6 @@ const STEP_OBSERVE_DELAY_MS = (() => {
 async function waitForObservation(): Promise<void> {
   if (STEP_OBSERVE_DELAY_MS <= 0) return;
   await delay(STEP_OBSERVE_DELAY_MS);
-}
-
-function appendDiagnostic(target: string[], raw: string): void {
-  const normalized = raw.replaceAll('\r', '').split('\n').map((line) => line.trim()).filter(Boolean);
-  for (const line of normalized) {
-    target.push(line);
-  }
-  if (target.length > DIAGNOSTIC_TAIL_SIZE) {
-    target.splice(0, target.length - DIAGNOSTIC_TAIL_SIZE);
-  }
-}
-
-function formatDiagnosticSection(label: string, lines: string[]): string {
-  if (lines.length === 0) {
-    return `${label}: <empty>`;
-  }
-  return `${label}:\n${lines.map((line) => `  ${line}`).join('\n')}`;
-}
-
-function buildFailureError(error: unknown, diagnostics: SessionDiagnostics): Error {
-  const message = error instanceof Error ? error.message : String(error);
-  const report = [
-    `Original error: ${message}`,
-    formatDiagnosticSection('VS Code stdout (tail)', diagnostics.vscodeStdout),
-    formatDiagnosticSection('VS Code stderr (tail)', diagnostics.vscodeStderr),
-    formatDiagnosticSection('Browser console (tail)', diagnostics.browserConsole),
-    formatDiagnosticSection('Page errors (tail)', diagnostics.pageErrors),
-    formatDiagnosticSection('Request failures (tail)', diagnostics.requestFailures),
-  ].join('\n\n');
-  return new Error(`E2E failure with diagnostics\n\n${report}`);
 }
 
 function buildMockCfScript(scenario: CfScenario): string {
@@ -536,13 +505,7 @@ async function withVsCodeSession(
   const repoRoot = resolve(process.cwd(), '..');
   const cdpPort = await allocatePort();
   const artifacts = await createSessionArtifacts(options);
-  const diagnostics: SessionDiagnostics = {
-    vscodeStdout: [],
-    vscodeStderr: [],
-    browserConsole: [],
-    pageErrors: [],
-    requestFailures: [],
-  };
+  const diagnostics: SessionDiagnostics = createSessionDiagnostics();
 
   try {
     const env = buildVsCodeEnv(artifacts.mockBinDir, options.credentialMode);
@@ -586,8 +549,20 @@ async function withVsCodeSession(
       );
     });
     await artifacts.workbenchPage.bringToFront();
+    await captureStepEvidence(artifacts.workbenchPage, 'workbench-opened');
     await run(artifacts.workbenchPage);
+    await persistSessionArtifacts({
+      diagnostics,
+      label: 'session-final',
+      page: artifacts.workbenchPage,
+    });
   } catch (error: unknown) {
+    await persistSessionArtifacts({
+      diagnostics,
+      error,
+      label: 'session-failure',
+      page: artifacts.workbenchPage,
+    }).catch(() => undefined);
     throw buildFailureError(error, diagnostics);
   } finally {
     if (artifacts.appProcess) {

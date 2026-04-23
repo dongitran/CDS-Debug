@@ -6,10 +6,16 @@ export default defineConfig({
   expect: {
     timeout: 45_000,
   },
+  failOnFlakyTests: !!process.env.CI,
   fullyParallel: false,
-  retries: 1,
+  preserveOutput: 'always',
+  retries: process.env.CI ? 1 : 0,
   workers: 1,
-  reporter: [['list'], ['html', { open: 'never' }]],
+  reporter: [
+    ['list'],
+    ['html', { open: 'never' }],
+    ['json', { outputFile: './playwright-report/results.json' }],
+  ],
   outputDir: './test-results',
   use: {
     trace: 'on-first-retry',
