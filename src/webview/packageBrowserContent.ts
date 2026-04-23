@@ -24,6 +24,17 @@ export function getPackageBrowserScriptContent(): string {
       return 'package:' + entry.id;
     }
 
+    function trimPackageDisplayLabel(label) {
+      if (!label) return '';
+      var nextAtIndex = label.indexOf('@', label.charAt(0) === '@' ? 1 : 0);
+      if (nextAtIndex === -1) return label;
+      return label.slice(0, nextAtIndex);
+    }
+
+    function getPackageTreeLabel(entry) {
+      return trimPackageDisplayLabel(entry.displayName || entry.name || '');
+    }
+
     function getFolderBranchId(entry, node) {
       return 'folder:' + entry.id + ':' + node.path;
     }
@@ -341,10 +352,9 @@ export function getPackageBrowserScriptContent(): string {
         + ' style="--packages-tree-level:' + options.level + ';">'
         + renderTreeDisclosure(options.isExpanded, false)
         + renderTreeIcon(options.iconKind, options.isExpanded)
-        + '<span class="packages-tree-label">' + escape(options.label) + '</span>'
-        + (options.badgeText
-          ? '<span class="packages-tree-badge">' + escape(options.badgeText) + '</span>'
-          : '')
+        + '<span class="packages-tree-label" title="' + escape(options.title || options.label) + '">'
+        + escape(options.label)
+        + '</span>'
         + '</button>';
     }
 
@@ -361,7 +371,7 @@ export function getPackageBrowserScriptContent(): string {
         + ' style="--packages-tree-level:' + level + ';">'
         + renderTreeDisclosure(false, true)
         + renderTreeIcon('file', false)
-        + '<span class="packages-tree-label">' + escape(node.name) + '</span>'
+        + '<span class="packages-tree-label" title="' + escape(node.path) + '">' + escape(node.name) + '</span>'
         + '</button>';
     }
 
@@ -387,6 +397,7 @@ export function getPackageBrowserScriptContent(): string {
             isExpanded: isExpanded,
             iconKind: 'folder',
             label: node.name,
+            title: node.path,
             rowClassName: 'packages-tree-folder-row',
           })
           + childrenHtml
@@ -411,8 +422,8 @@ export function getPackageBrowserScriptContent(): string {
           level: 1,
           isExpanded: isExpanded,
           iconKind: 'package',
-          label: entry.displayName,
-          badgeText: String(entry.files.length),
+          label: getPackageTreeLabel(entry),
+          title: entry.displayName,
           rowClassName: 'packages-tree-package-row',
         })
         + childrenHtml
@@ -449,6 +460,19 @@ export function getPackageBrowserScriptContent(): string {
         + '</div>';
     }
 
+    function renderPackagesRefreshButton() {
+      var buttonInnerHtml = state.packageBrowserLoading
+        ? '<span class="spinner packages-refresh-spinner"></span><span>Loading</span>'
+        : '<span aria-hidden="true">&#8635;</span><span>Refresh</span>';
+      var title = state.packageBrowserLoading ? 'Loading packages' : 'Refresh packages';
+      return '<button class="gear-btn packages-refresh-btn" id="btn-refresh-packages"'
+        + ' title="' + title + '" aria-label="' + title + '"'
+        + (state.packageBrowserLoading ? ' disabled' : '')
+        + '>'
+        + buttonInnerHtml
+        + '</button>';
+    }
+
     function renderPackagesScreen() {
       var appNames = getPackageBrowserAppNames();
       var options = appNames.map(function(appName) {
@@ -458,10 +482,10 @@ export function getPackageBrowserScriptContent(): string {
 
       return \`
         <div class="ready-layout">
-          <div class="step-header">
-            <button class="gear-btn" id="btn-refresh-packages" title="Refresh packages" aria-label="Refresh packages">&#8635;</button>
+          <div class="packages-session-header">
+            <div class="section-label packages-session-heading">Debug Session</div>
+            \${renderPackagesRefreshButton()}
           </div>
-          <div class="section-label">Debug Session</div>
           <select class="select" id="packages-app-select" aria-label="Select debug session" \${appNames.length === 0 ? 'disabled' : ''}>
             \${options || '<option value="">No attached sessions</option>'}
           </select>

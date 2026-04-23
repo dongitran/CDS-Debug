@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { getPackageBrowserScriptContent } from '../../src/webview/packageBrowserContent';
+import { getPackageBrowserStyles } from '../../src/webview/packageBrowserStyles';
 import { getRendererScriptContent } from '../../src/webview/webviewRenderers';
 
 describe('webview markup contracts', () => {
@@ -21,8 +22,26 @@ describe('webview markup contracts', () => {
     expect(packageScript).not.toContain('packages-summary');
     expect(packageScript).not.toContain('packages-columns');
     expect(packageScript).not.toContain('packages-file-item');
+    expect(packageScript).not.toContain('packages-tree-badge');
+    expect(packageScript).toContain('packages-session-header');
+    expect(packageScript).toContain('packages-session-heading');
+    expect(packageScript).toContain('trimPackageDisplayLabel');
     expect(packageScript).toContain('packages-tree');
     expect(packageScript).toContain('data-tree-branch-id');
     expect(packageScript).toContain('packages-tree-package-row');
+  });
+
+  it('keeps package tree icons and header styling theme-aware', () => {
+    const packageStyles = getPackageBrowserStyles();
+
+    expect(packageStyles).toContain('.packages-session-header');
+    expect(packageStyles).toContain('.packages-refresh-btn');
+    expect(packageStyles).toContain('.packages-tree-icon-package');
+    expect(packageStyles).toContain('.packages-tree-icon-folder');
+    expect(packageStyles).toContain('.packages-tree-icon-file');
+    expect(packageStyles).toContain('--vscode-charts-orange');
+    expect(packageStyles).toContain('--vscode-symbolIcon-folderForeground');
+    expect(packageStyles).toContain('--vscode-symbolIcon-fileForeground');
+    expect(packageStyles).not.toContain('.packages-tree-badge');
   });
 });

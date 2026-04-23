@@ -82,7 +82,7 @@ export function getPackageBrowserStyles(): string {
     }
 
     .packages-tree-package-row {
-      font-weight: 600;
+      color: var(--vscode-foreground);
     }
 
     .packages-tree-label {
@@ -92,20 +92,6 @@ export function getPackageBrowserStyles(): string {
       white-space: nowrap;
       font-family: var(--vscode-editor-font-family);
       font-size: 12px;
-    }
-
-    .packages-tree-badge {
-      flex-shrink: 0;
-      min-width: 22px;
-      height: 22px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 99px;
-      background: var(--vscode-badge-background);
-      color: var(--vscode-badge-foreground);
-      font-size: 10px;
-      font-weight: 700;
     }
 
     .packages-tree-disclosure {
@@ -138,85 +124,117 @@ export function getPackageBrowserStyles(): string {
     }
 
     .packages-tree-icon {
-      width: 14px;
-      height: 14px;
+      width: 16px;
+      height: 16px;
       flex-shrink: 0;
       position: relative;
-      opacity: 0.95;
-      color: var(--vscode-symbolIcon-fileForeground, var(--vscode-descriptionForeground));
+      opacity: 0.98;
+      color: var(--vscode-symbolIcon-fileForeground, var(--vscode-textLink-foreground));
     }
 
     .packages-tree-icon-package {
-      color: var(--vscode-symbolIcon-packageForeground, var(--vscode-descriptionForeground));
+      color: var(--vscode-charts-orange, var(--vscode-symbolIcon-packageForeground, #cd861a));
     }
 
     .packages-tree-icon-package::before {
       content: '';
       position: absolute;
-      inset: 1px;
-      border: 1px solid currentColor;
-      border-radius: 3px;
-      background: color-mix(in srgb, currentColor 14%, transparent);
+      inset: 2px 1px 1px;
+      border: 1px solid color-mix(in srgb, currentColor 72%, var(--vscode-editor-background));
+      border-radius: 4px;
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, currentColor 42%, var(--vscode-editor-background)) 0%,
+        color-mix(in srgb, currentColor 26%, var(--vscode-editor-background)) 100%
+      );
+      box-shadow: inset 0 1px 0 color-mix(in srgb, white 28%, transparent);
     }
 
     .packages-tree-icon-package::after {
       content: '';
       position: absolute;
-      left: 3px;
-      right: 3px;
-      top: 5px;
-      height: 1px;
-      background: currentColor;
-      opacity: 0.55;
+      left: 4px;
+      right: 4px;
+      top: 6px;
+      height: 2px;
+      border-radius: 999px;
+      background: color-mix(in srgb, currentColor 84%, white);
+      opacity: 0.82;
     }
 
     .packages-tree-icon-package.open::before {
-      background: color-mix(in srgb, currentColor 18%, transparent);
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, currentColor 48%, var(--vscode-editor-background)) 0%,
+        color-mix(in srgb, currentColor 31%, var(--vscode-editor-background)) 100%
+      );
     }
 
     .packages-tree-icon-folder {
-      color: var(--vscode-symbolIcon-folderForeground, var(--vscode-textLink-foreground));
+      color: var(--vscode-symbolIcon-folderForeground, var(--vscode-charts-yellow, #d7ba7d));
     }
 
     .packages-tree-icon-folder::before {
       content: '';
       position: absolute;
-      left: 0;
+      left: 1px;
       right: 0;
-      top: 3px;
+      top: 4px;
       bottom: 1px;
-      border: 1px solid currentColor;
-      border-radius: 3px;
-      background: color-mix(in srgb, currentColor 15%, transparent);
+      border: 1px solid color-mix(in srgb, currentColor 68%, var(--vscode-editor-background));
+      border-radius: 4px;
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, currentColor 46%, var(--vscode-editor-background)) 0%,
+        color-mix(in srgb, currentColor 27%, var(--vscode-editor-background)) 100%
+      );
+      box-shadow: inset 0 1px 0 color-mix(in srgb, white 24%, transparent);
     }
 
     .packages-tree-icon-folder::after {
       content: '';
       position: absolute;
-      left: 1px;
+      left: 2px;
       top: 1px;
       width: 7px;
-      height: 4px;
-      border: 1px solid currentColor;
+      height: 5px;
+      border: 1px solid color-mix(in srgb, currentColor 68%, var(--vscode-editor-background));
       border-bottom: none;
-      border-radius: 3px 3px 0 0;
-      background: color-mix(in srgb, currentColor 11%, transparent);
+      border-radius: 4px 4px 0 0;
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, currentColor 56%, var(--vscode-editor-background)) 0%,
+        color-mix(in srgb, currentColor 36%, var(--vscode-editor-background)) 100%
+      );
     }
 
     .packages-tree-icon-folder.open::before {
-      background: color-mix(in srgb, currentColor 22%, transparent);
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, currentColor 58%, var(--vscode-editor-background)) 0%,
+        color-mix(in srgb, currentColor 36%, var(--vscode-editor-background)) 100%
+      );
+    }
+
+    .packages-tree-icon-file {
+      color: var(--vscode-symbolIcon-fileForeground, var(--vscode-textLink-foreground, #75beff));
     }
 
     .packages-tree-icon-file::before {
       content: '';
       position: absolute;
-      left: 1px;
+      left: 2px;
       right: 2px;
       top: 1px;
       bottom: 1px;
-      border: 1px solid currentColor;
-      border-radius: 2px;
-      background: color-mix(in srgb, currentColor 7%, transparent);
+      border: 1px solid color-mix(in srgb, currentColor 64%, var(--vscode-editor-background));
+      border-radius: 4px;
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, currentColor 28%, var(--vscode-editor-background)) 0%,
+        color-mix(in srgb, currentColor 16%, var(--vscode-editor-background)) 100%
+      );
+      box-shadow: inset 0 1px 0 color-mix(in srgb, white 26%, transparent);
     }
 
     .packages-tree-icon-file::after {
@@ -226,14 +244,59 @@ export function getPackageBrowserStyles(): string {
       top: 1px;
       width: 5px;
       height: 5px;
-      border-top: 1px solid currentColor;
-      border-right: 1px solid currentColor;
-      background: var(--vscode-editorGroupHeader-tabsBackground);
+      border-top: 1px solid color-mix(in srgb, currentColor 64%, var(--vscode-editor-background));
+      border-right: 1px solid color-mix(in srgb, currentColor 64%, var(--vscode-editor-background));
+      background: color-mix(in srgb, white 66%, currentColor);
       clip-path: polygon(0 0, 100% 0, 100% 100%);
     }
 
     .packages-error {
       margin-bottom: 8px;
+    }
+
+    .packages-session-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .packages-session-heading {
+      margin: 0;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .packages-refresh-btn {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-width: 84px;
+      padding: 5px 9px;
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      font-size: 11px;
+      line-height: 1;
+    }
+
+    .packages-refresh-btn:hover:not(:disabled) {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    .packages-refresh-btn:disabled {
+      opacity: 0.72;
+      cursor: default;
+    }
+
+    .packages-refresh-spinner {
+      width: 11px;
+      height: 11px;
+      margin-right: 0;
+      border-width: 1.5px;
     }
   `;
 }

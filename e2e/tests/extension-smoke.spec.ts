@@ -851,6 +851,10 @@ async function expectButtonEnabled(button: Locator): Promise<void> {
   await expect(button).toBeEnabled();
 }
 
+async function readCssProperty(locator: Locator, propertyName: string): Promise<string> {
+  return locator.evaluate((element, property) => window.getComputedStyle(element).getPropertyValue(property).trim(), propertyName);
+}
+
 function createFixtureSourcePath(packageName: string, relativePath: string, version = '1.0.0'): string {
   if (packageName.startsWith('@')) {
     const encoded = packageName.replace('/', '+');
@@ -2088,8 +2092,18 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(
           webview.getByText('Browse loaded package sources for the current debug session and filter them before opening files.'),
         ).toHaveCount(0);
+        await expect(webview.locator('.packages-session-heading')).toHaveText('Debug Session');
         await expect(webview.locator('#packages-app-select')).toBeVisible();
         await expect(webview.locator('#packages-search-input')).toBeVisible();
+        await expect(webview.locator('.packages-tree-badge')).toHaveCount(0);
+        await captureStepEvidence(workbenchPage, 'packages-tree-opened');
+
+        const headingBox = await webview.locator('.packages-session-heading').boundingBox();
+        const refreshBox = await webview.locator('#btn-refresh-packages').boundingBox();
+        expect(headingBox).not.toBeNull();
+        expect(refreshBox).not.toBeNull();
+        expect(Math.abs((refreshBox?.y ?? 0) - (headingBox?.y ?? 0))).toBeLessThan(8);
+        expect((refreshBox?.x ?? 0)).toBeGreaterThan((headingBox?.x ?? 0) + 40);
 
         await expect(webview.locator('.packages-tree-package-row')).toHaveCount(2, { timeout: 3_000 });
         await webview.locator('.packages-tree-package-row', { hasText: 'sample-client' }).click();
@@ -2097,9 +2111,30 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await webview.locator('.packages-tree-folder-row', { hasText: 'dist' }).click();
         await expect(webview.locator('.packages-tree-file-row', { hasText: 'client.js' })).toBeVisible({ timeout: 3_000 });
 
+        const sampleClientLabel = webview.locator('.packages-tree-package-row', { hasText: 'sample-client' }).locator('.packages-tree-label');
+        const sampleClientWeight = await readCssProperty(sampleClientLabel, 'font-weight');
+        expect(Number.parseInt(sampleClientWeight || '400', 10)).toBeLessThan(600);
+
+        const packageIcon = webview
+          .locator('.packages-tree-package-row', { hasText: 'sample-client' })
+          .locator('.packages-tree-icon-package');
+        const folderIcon = webview.locator('.packages-tree-folder-row', { hasText: 'dist' }).locator('.packages-tree-icon-folder');
+        const fileIcon = webview.locator('.packages-tree-file-row', { hasText: 'client.js' }).locator('.packages-tree-icon-file');
+        await expect(packageIcon).toBeVisible();
+        await expect(folderIcon).toBeVisible();
+        await expect(fileIcon).toBeVisible();
+
+        const packageIconColor = await readCssProperty(packageIcon, 'color');
+        const folderIconColor = await readCssProperty(folderIcon, 'color');
+        const fileIconColor = await readCssProperty(fileIcon, 'color');
+        expect(packageIconColor).not.toBe('');
+        expect(folderIconColor).not.toBe('');
+        expect(fileIconColor).not.toBe('');
+
         await webview.locator('#packages-search-input').fill('@sample-org');
         await expect(webview.locator('.packages-tree-package-row')).toHaveCount(1, { timeout: 3_000 });
         await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' })).toBeVisible();
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' })).toHaveCount(0);
         await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toHaveCount(0, {
           timeout: 3_000,
         });
@@ -2145,12 +2180,15 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
         await expect(webview.locator('#packages-app-select')).toBeVisible();
+        await captureStepEvidence(workbenchPage, 'packages-switch-apps-initial');
 
         await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-alpha' })).toBeVisible({ timeout: 3_000 });
 
         await webview.locator('#packages-app-select').selectOption('mock-service-c');
+        await captureStepEvidence(workbenchPage, 'packages-switch-apps-secondary');
 
         await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-worker' })).toBeVisible({ timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-worker@2.0.0' })).toHaveCount(0);
         await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-alpha' })).toHaveCount(0);
         const packageErrorEvents = await stopPackagesErrorMonitor(webview);
         expect(packageErrorEvents).toEqual([]);
@@ -2196,6 +2234,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.packages-error')).toHaveCount(0);
         await waitForObservation();
         await expect(webview.locator('.packages-error')).toHaveCount(0);
+        await captureStepEvidence(workbenchPage, 'packages-scroll-before-expand');
 
         await positionPackageTreeRow(webview, '.packages-tree-package-row', 'sample-scroll-target', 12);
         const beforePackage = await readPackageTreeRowMetrics(webview, '.packages-tree-package-row', 'sample-scroll-target');
@@ -2263,14 +2302,16 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('#packages-search-input').fill('demo-kit');
         await expect(webview.locator('.packages-tree-package-row')).toHaveCount(1, { timeout: 3_000 });
-        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' })).toBeVisible();
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' })).toBeVisible();
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' })).toHaveCount(0);
         await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toHaveCount(0);
         await waitForObservation();
+        await captureStepEvidence(workbenchPage, 'packages-search-package-filtered');
 
-        await webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' }).click();
+        await webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' }).click();
         await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toBeVisible({ timeout: 3_000 });
         await waitForObservation();
-        await webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' }).click();
+        await webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' }).click();
         await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toHaveCount(0);
         await waitForObservation();
 
@@ -2311,11 +2352,13 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.packages-error')).toHaveCount(0);
 
         await webview.locator('#packages-search-input').fill('worker');
-        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' })).toBeVisible({ timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' })).toBeVisible({ timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' })).toHaveCount(0);
         await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toBeVisible({ timeout: 3_000 });
         await expect(webview.locator('.packages-tree-folder-row', { hasText: 'tasks' })).toBeVisible({ timeout: 3_000 });
         await expect(webview.locator('.packages-tree-file-row', { hasText: 'worker.js' })).toBeVisible({ timeout: 3_000 });
         await waitForObservation();
+        await captureStepEvidence(workbenchPage, 'packages-search-descendant-match');
 
         await webview.locator('.packages-tree-folder-row', { hasText: 'dist' }).click();
         await expect(webview.locator('.packages-tree-folder-row', { hasText: 'tasks' })).toHaveCount(0);
@@ -2654,8 +2697,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
+        await expect(webview.locator('.cred-source-badge.env')).toBeVisible();
 
-        // Inject CREDENTIALS_STATUS with keychain source to render keychain section
+        // Wait for the extension's own GET_CREDENTIALS_STATUS response first so the
+        // injected keychain state cannot be overwritten by the initial env refresh.
         await injectMessage(webview, {
           type: 'CREDENTIALS_STATUS',
           payload: { hasCredentials: true, email: 'keychain.user@example.com', source: 'keychain' },
