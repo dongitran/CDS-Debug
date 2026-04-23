@@ -50,6 +50,29 @@ interface SessionDiagnostics {
   requestFailures: string[];
 }
 
+interface FixturePackageFile {
+  id: string;
+  label: string;
+  relativePath: string;
+  source: {
+    name: string;
+    path: string;
+  };
+}
+
+interface FixtureFolderBuilder {
+  name: string;
+  path: string;
+  folders: Map<string, FixtureFolderBuilder>;
+  files: FixturePackageFile[];
+}
+
+interface FixturePackageSpec {
+  name: string;
+  files: string[];
+  version?: string;
+}
+
 const MOCK_ENV_EMAIL = 'e2e.mock.user@example.com';
 const MOCK_ENV_PASSWORD = 'e2e-mock-password';
 const MOCK_GROUP_FOLDER = '/tmp/cds-debug-e2e-group';
@@ -57,6 +80,15 @@ const WEBSOCKET_TIMEOUT_MS = 90_000;
 const FRAME_TIMEOUT_MS = 90_000;
 const DIAGNOSTIC_TAIL_SIZE = 120;
 const MOCK_SLOW_TARGET_DELAY_SECONDS = 8;
+const STEP_OBSERVE_DELAY_MS = (() => {
+  const value = Number(process.env.CDS_DEBUG_E2E_STEP_DELAY_MS ?? '0');
+  return Number.isFinite(value) && value > 0 ? value : 0;
+})();
+
+async function waitForObservation(): Promise<void> {
+  if (STEP_OBSERVE_DELAY_MS <= 0) return;
+  await delay(STEP_OBSERVE_DELAY_MS);
+}
 
 function appendDiagnostic(target: string[], raw: string): void {
   const normalized = raw.replaceAll('\r', '').split('\n').map((line) => line.trim()).filter(Boolean);
@@ -659,6 +691,68 @@ async function injectMessage(webview: Frame, message: Record<string, unknown>): 
   }, message);
 }
 
+async function startPackagesErrorMonitor(webview: Frame): Promise<void> {
+  await webview.evaluate(() => {
+    type PackagesErrorMonitor = {
+      events: string[];
+      observer?: MutationObserver;
+    };
+
+    const monitorWindow = window as Window & { __cdsDebugPackagesErrorMonitor?: PackagesErrorMonitor };
+    monitorWindow.__cdsDebugPackagesErrorMonitor?.observer?.disconnect();
+
+    const events: string[] = [];
+    const capture = (): void => {
+      const messages = Array.from(document.querySelectorAll('.packages-error'))
+        .map((node) => node.textContent?.trim() ?? '')
+        .filter(Boolean);
+      for (const message of messages) {
+        events.push(message);
+      }
+    };
+
+    const observer = new MutationObserver(() => {
+      capture();
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    capture();
+    monitorWindow.__cdsDebugPackagesErrorMonitor = { events, observer };
+  });
+}
+
+async function readPackagesErrorEvents(webview: Frame): Promise<string[]> {
+  return webview.evaluate(() => {
+    type PackagesErrorMonitor = {
+      events: string[];
+      observer?: MutationObserver;
+    };
+
+    const monitorWindow = window as Window & { __cdsDebugPackagesErrorMonitor?: PackagesErrorMonitor };
+    return monitorWindow.__cdsDebugPackagesErrorMonitor?.events.slice() ?? [];
+  });
+}
+
+async function stopPackagesErrorMonitor(webview: Frame): Promise<string[]> {
+  const events = await readPackagesErrorEvents(webview);
+  await webview.evaluate(() => {
+    type PackagesErrorMonitor = {
+      events: string[];
+      observer?: MutationObserver;
+    };
+
+    const monitorWindow = window as Window & { __cdsDebugPackagesErrorMonitor?: PackagesErrorMonitor };
+    monitorWindow.__cdsDebugPackagesErrorMonitor?.observer?.disconnect();
+    delete monitorWindow.__cdsDebugPackagesErrorMonitor;
+  });
+  return events;
+}
+
 async function completeMappingToReadyWithFolder(webview: Frame, folderPath: string): Promise<void> {
   await goToFolderSelection(webview);
   await injectSelectedFolder(webview, folderPath);
@@ -702,6 +796,134 @@ async function expectButtonDisabled(button: Locator): Promise<void> {
 
 async function expectButtonEnabled(button: Locator): Promise<void> {
   await expect(button).toBeEnabled();
+}
+
+function createFixtureSourcePath(packageName: string, relativePath: string, version = '1.0.0'): string {
+  if (packageName.startsWith('@')) {
+    const encoded = packageName.replace('/', '+');
+    return `/workspace/node_modules/.pnpm/${encoded}@${version}/node_modules/${packageName}/${relativePath}`;
+  }
+  return `/workspace/node_modules/${packageName}/${relativePath}`;
+}
+
+function createFixtureFolderBuilder(name: string, path: string): FixtureFolderBuilder {
+  return {
+    name,
+    path,
+    folders: new Map<string, FixtureFolderBuilder>(),
+    files: [],
+  };
+}
+
+function insertFixtureFile(root: FixtureFolderBuilder, file: FixturePackageFile): void {
+  const segments = file.relativePath.split('/').filter(Boolean);
+  const fileName = segments.pop();
+  if (!fileName) return;
+
+  let cursor = root;
+  for (const segment of segments) {
+    const nextPath = cursor.path ? `${cursor.path}/${segment}` : segment;
+    const nextFolder = cursor.folders.get(segment) ?? createFixtureFolderBuilder(segment, nextPath);
+    cursor.folders.set(segment, nextFolder);
+    cursor = nextFolder;
+  }
+
+  cursor.files.push(file);
+}
+
+function buildFixtureTree(packageId: string, files: FixturePackageFile[]): Record<string, unknown>[] {
+  const root = createFixtureFolderBuilder('', '');
+  for (const file of files) {
+    insertFixtureFile(root, file);
+  }
+
+  const toNodes = (builder: FixtureFolderBuilder): Record<string, unknown>[] => {
+    const folderNodes = Array.from(builder.folders.values())
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map((folder) => ({
+        id: `folder:${packageId}:${folder.path}`,
+        kind: 'folder',
+        name: folder.name,
+        path: folder.path,
+        children: toNodes(folder),
+      }));
+
+    const fileNodes = builder.files
+      .slice()
+      .sort((left, right) => left.relativePath.localeCompare(right.relativePath))
+      .map((file) => ({
+        id: file.id,
+        kind: 'file',
+        name: file.relativePath.split('/').pop() ?? file.relativePath,
+        path: file.relativePath,
+        file,
+      }));
+
+    return [...folderNodes, ...fileNodes];
+  };
+
+  return toNodes(root);
+}
+
+function createPackageFixture(spec: FixturePackageSpec): Record<string, unknown> {
+  const files = spec.files.map((relativePath) => {
+    const fileName = relativePath.split('/').pop() ?? relativePath;
+    return {
+      id: `${spec.name}:${relativePath}`,
+      label: relativePath,
+      relativePath,
+      source: {
+        name: fileName,
+        path: createFixtureSourcePath(spec.name, relativePath, spec.version),
+      },
+    };
+  });
+
+  return {
+    id: spec.name,
+    name: spec.name,
+    displayName: spec.version ? `${spec.name}@${spec.version}` : spec.name,
+    files,
+    tree: buildFixtureTree(spec.name, files),
+  };
+}
+
+async function positionPackageTreeRow(
+  webview: Frame,
+  rowSelector: string,
+  rowText: string,
+  offsetFromTop: number,
+): Promise<void> {
+  await webview.locator('.packages-tree').evaluate((treeElement, args) => {
+    const tree = treeElement as HTMLElement;
+    const rows = Array.from(tree.querySelectorAll(args.rowSelector));
+    const target = rows.find((row) => row.textContent?.includes(args.rowText)) as HTMLElement | undefined;
+    if (!target) throw new Error(`Row not found: ${args.rowText}`);
+    const treeRect = tree.getBoundingClientRect();
+    const rowRect = target.getBoundingClientRect();
+    tree.scrollTop += (rowRect.top - treeRect.top) - args.offsetFromTop;
+  }, { rowSelector, rowText, offsetFromTop });
+}
+
+async function readPackageTreeRowMetrics(
+  webview: Frame,
+  rowSelector: string,
+  rowText: string,
+): Promise<{ scrollTop: number; rowTop: number; rowBottom: number; clientHeight: number }> {
+  return webview.locator('.packages-tree').evaluate((treeElement, args) => {
+    const tree = treeElement as HTMLElement;
+    const rows = Array.from(tree.querySelectorAll(args.rowSelector));
+    const target = rows.find((row) => row.textContent?.includes(args.rowText)) as HTMLElement | undefined;
+    if (!target) throw new Error(`Row not found: ${args.rowText}`);
+    const treeRect = tree.getBoundingClientRect();
+    const rowRect = target.getBoundingClientRect();
+    return {
+      scrollTop: tree.scrollTop,
+      rowTop: rowRect.top - treeRect.top,
+      rowBottom: rowRect.bottom - treeRect.top,
+      clientHeight: tree.clientHeight,
+    };
+  }, { rowSelector, rowText });
 }
 
 test.describe('Launch.json Cleanup E2E', () => {
@@ -1854,6 +2076,201 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-worker' })).toBeVisible({ timeout: 3_000 });
         await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-alpha' })).toHaveCount(0);
+      });
+    });
+
+    test('Tree expansion keeps the clicked package and folder in place while scrolling', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+        await waitForObservation();
+
+        await injectMessage(webview, {
+          type: 'DEBUG_CONNECTING',
+          payload: { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } },
+        });
+        await injectMessage(webview, {
+          type: 'APP_DEBUG_STATUS',
+          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
+        });
+        await waitForObservation();
+        await startPackagesErrorMonitor(webview);
+
+        await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+        await expect(webview.locator('#packages-app-select')).toBeVisible();
+
+        const packages = Array.from({ length: 14 }, (_, index) =>
+          createPackageFixture({
+            name: index === 8 ? 'sample-scroll-target' : `sample-bucket-${String(index + 1).padStart(2, '0')}`,
+            files: index === 8
+              ? [
+                  'demo-01/index.js',
+                  'demo-02/index.js',
+                  'demo-03/index.js',
+                  'demo-04/index.js',
+                  'demo-05/index.js',
+                  'demo-06/index.js',
+                  'demo-07/index.js',
+                  'demo-08/index.js',
+                  'demo-09/index.js',
+                ]
+              : ['dist/index.js'],
+          }),
+        );
+
+        await injectMessage(webview, {
+          type: 'PACKAGE_SOURCES_LOADED',
+          payload: { appName: 'mock-service-a', packages },
+        });
+        await expect(webview.locator('.packages-error')).toHaveCount(0);
+        await waitForObservation();
+        await expect(webview.locator('.packages-error')).toHaveCount(0);
+
+        await positionPackageTreeRow(webview, '.packages-tree-package-row', 'sample-scroll-target', 12);
+        const beforePackage = await readPackageTreeRowMetrics(webview, '.packages-tree-package-row', 'sample-scroll-target');
+        await waitForObservation();
+
+        await webview.locator('.packages-tree-package-row', { hasText: 'sample-scroll-target' }).click();
+        await expect(webview.locator('.packages-tree-folder-row', { hasText: 'demo-08' })).toBeVisible({ timeout: 3_000 });
+        await waitForObservation();
+
+        const afterPackage = await readPackageTreeRowMetrics(webview, '.packages-tree-package-row', 'sample-scroll-target');
+        expect(Math.abs(afterPackage.scrollTop - beforePackage.scrollTop)).toBeLessThan(24);
+        expect(Math.abs(afterPackage.rowTop - beforePackage.rowTop)).toBeLessThan(24);
+
+        await positionPackageTreeRow(webview, '.packages-tree-folder-row', 'demo-08', 140);
+        const beforeFolder = await readPackageTreeRowMetrics(webview, '.packages-tree-folder-row', 'demo-08');
+        await waitForObservation();
+
+        await webview.locator('.packages-tree-folder-row', { hasText: 'demo-08' }).click();
+        await expect(webview.locator('.packages-tree-file-row', { hasText: 'index.js' })).toBeVisible({ timeout: 3_000 });
+        await waitForObservation();
+
+        const afterFolder = await readPackageTreeRowMetrics(webview, '.packages-tree-folder-row', 'demo-08');
+        expect(Math.abs(afterFolder.scrollTop - beforeFolder.scrollTop)).toBeLessThan(24);
+        expect(Math.abs(afterFolder.rowTop - beforeFolder.rowTop)).toBeLessThan(24);
+
+        const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+        expect(packageErrorEvents).toEqual([]);
+      });
+    });
+
+    test('Search by package name keeps the package collapsible instead of forcing it open', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+        await waitForObservation();
+
+        await injectMessage(webview, {
+          type: 'DEBUG_CONNECTING',
+          payload: { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } },
+        });
+        await injectMessage(webview, {
+          type: 'APP_DEBUG_STATUS',
+          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
+        });
+        await waitForObservation();
+        await startPackagesErrorMonitor(webview);
+
+        await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+        await expect(webview.locator('#packages-app-select')).toBeVisible();
+
+        await injectMessage(webview, {
+          type: 'PACKAGE_SOURCES_LOADED',
+          payload: {
+            appName: 'mock-service-a',
+            packages: [
+              createPackageFixture({
+                name: '@sample-org/demo-kit',
+                version: '1.4.0',
+                files: [
+                  'dist/main.js',
+                  'dist/tasks/worker.js',
+                ],
+              }),
+              createPackageFixture({
+                name: 'sample-client',
+                files: ['dist/client.js'],
+              }),
+            ],
+          },
+        });
+        await expect(webview.locator('.packages-error')).toHaveCount(0);
+        await waitForObservation();
+        await expect(webview.locator('.packages-error')).toHaveCount(0);
+
+        await webview.locator('#packages-search-input').fill('demo-kit');
+        await expect(webview.locator('.packages-tree-package-row')).toHaveCount(1, { timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' })).toBeVisible();
+        await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toHaveCount(0);
+        await waitForObservation();
+
+        await webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' }).click();
+        await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toBeVisible({ timeout: 3_000 });
+        await waitForObservation();
+        await webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' }).click();
+        await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toHaveCount(0);
+        await waitForObservation();
+
+        const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+        expect(packageErrorEvents).toEqual([]);
+      });
+    });
+
+    test('Search with descendant matches still lets users collapse matching folders', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+        await waitForObservation();
+
+        await injectMessage(webview, {
+          type: 'DEBUG_CONNECTING',
+          payload: { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } },
+        });
+        await injectMessage(webview, {
+          type: 'APP_DEBUG_STATUS',
+          payload: { appName: 'mock-service-a', status: 'ATTACHED' },
+        });
+        await waitForObservation();
+        await startPackagesErrorMonitor(webview);
+
+        await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+        await expect(webview.locator('#packages-app-select')).toBeVisible();
+
+        await injectMessage(webview, {
+          type: 'PACKAGE_SOURCES_LOADED',
+          payload: {
+            appName: 'mock-service-a',
+            packages: [
+              createPackageFixture({
+                name: '@sample-org/demo-kit',
+                version: '1.4.0',
+                files: [
+                  'dist/main.js',
+                  'dist/tasks/worker.js',
+                ],
+              }),
+            ],
+          },
+        });
+        await expect(webview.locator('.packages-error')).toHaveCount(0);
+        await waitForObservation();
+        await expect(webview.locator('.packages-error')).toHaveCount(0);
+
+        await webview.locator('#packages-search-input').fill('worker');
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit@1.4.0' })).toBeVisible({ timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toBeVisible({ timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-folder-row', { hasText: 'tasks' })).toBeVisible({ timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-file-row', { hasText: 'worker.js' })).toBeVisible({ timeout: 3_000 });
+        await waitForObservation();
+
+        await webview.locator('.packages-tree-folder-row', { hasText: 'dist' }).click();
+        await expect(webview.locator('.packages-tree-folder-row', { hasText: 'tasks' })).toHaveCount(0);
+        await expect(webview.locator('.packages-tree-file-row', { hasText: 'worker.js' })).toHaveCount(0);
+        await waitForObservation();
+
+        const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+        expect(packageErrorEvents).toEqual([]);
       });
     });
   });
