@@ -49,6 +49,7 @@ import { loadPackageEntriesFromSessions, openPackageSource } from '../core/packa
 import {
   applyE2eBridgeCommand,
   getE2eActiveDebugSessionForApp,
+  getE2eCredentialStatusOverride,
   getE2eDebugSessionById,
   getE2eDebugSessionsForApp,
   isE2eModeEnabled,
@@ -301,6 +302,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         return;
       case 'SET_PACKAGE_FIXTURE':
       case 'CLEAR_PACKAGE_FIXTURES':
+      case 'SET_CREDENTIAL_STATUS_OVERRIDE':
+      case 'CLEAR_CREDENTIAL_STATUS_OVERRIDE':
         applyE2eBridgeCommand(command);
         return;
       default:
@@ -865,6 +868,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   /** Builds a CredentialStatus snapshot for the current session. */
   private async buildCredentialStatus(): Promise<CredentialStatus> {
+    const e2eOverride = getE2eCredentialStatusOverride();
+    if (e2eOverride) return e2eOverride;
+
     const { email } = await getCredentials();
     const source = await getCredentialSource();
     return {

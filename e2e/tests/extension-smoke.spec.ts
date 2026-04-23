@@ -720,6 +720,24 @@ async function clearPackageFixtures(webview: Frame): Promise<void> {
   await sendE2eBridgeCommand(webview, { action: 'CLEAR_PACKAGE_FIXTURES' });
 }
 
+async function setCredentialStatusOverride(
+  webview: Frame,
+  credentialStatus: { hasCredentials: boolean; email: string; source: 'env' | 'keychain' | 'none' },
+): Promise<void> {
+  await sendE2eBridgeCommand(webview, {
+    action: 'SET_CREDENTIAL_STATUS_OVERRIDE',
+    payload: { credentialStatus },
+  });
+}
+
+async function clearCredentialStatusOverride(webview: Frame): Promise<void> {
+  await sendE2eBridgeCommand(webview, { action: 'CLEAR_CREDENTIAL_STATUS_OVERRIDE' });
+}
+
+async function refreshCredentialStatus(webview: Frame): Promise<void> {
+  await postExtensionMessage(webview, { type: 'GET_CREDENTIALS_STATUS' });
+}
+
 async function startPackagesErrorMonitor(webview: Frame): Promise<void> {
   await startDomTextMonitor(webview, '__cdsDebugPackagesErrorMonitor', '.packages-error');
 }
@@ -2695,22 +2713,24 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
+        await setCredentialStatusOverride(webview, {
+          hasCredentials: true,
+          email: 'keychain.user@example.com',
+          source: 'keychain',
+        });
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
-        await expect(webview.locator('.cred-source-badge.env')).toBeVisible();
-
-        // Wait for the extension's own GET_CREDENTIALS_STATUS response first so the
-        // injected keychain state cannot be overwritten by the initial env refresh.
-        await injectMessage(webview, {
-          type: 'CREDENTIALS_STATUS',
-          payload: { hasCredentials: true, email: 'keychain.user@example.com', source: 'keychain' },
-        });
+        await expect.poll(async () => {
+          await refreshCredentialStatus(webview);
+          return webview.locator('.cred-source-badge.keychain').isVisible();
+        }).toBe(true);
 
         // Keychain section: source badge, email, and update/clear buttons
         await expect(webview.locator('.cred-source-badge.keychain')).toBeVisible();
         await expect(webview.locator('.cred-info-email')).toContainText('keychain.user@example.com');
         await expect(webview.locator('#btn-update-credentials')).toBeVisible();
         await expect(webview.locator('#btn-clear-credentials')).toBeVisible();
+        await clearCredentialStatusOverride(webview);
       });
     });
 
@@ -2719,17 +2739,22 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
+        await setCredentialStatusOverride(webview, {
+          hasCredentials: true,
+          email: '',
+          source: 'none',
+        });
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
-
-        await injectMessage(webview, {
-          type: 'CREDENTIALS_STATUS',
-          payload: { hasCredentials: true, email: '', source: 'none' },
-        });
+        await expect.poll(async () => {
+          await refreshCredentialStatus(webview);
+          return webview.getByText('No credentials configured.').isVisible();
+        }).toBe(true);
 
         await expect(webview.getByText('No credentials configured.')).toBeVisible();
         await expect(webview.locator('#btn-update-credentials')).toBeVisible();
         await expect(webview.locator('#btn-clear-credentials')).toHaveCount(0);
+        await clearCredentialStatusOverride(webview);
       });
     });
 
@@ -3158,21 +3183,22 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
 
     test('Update mode shows "Update Credentials" title, cancel button, and no env hint', async () => {
-      // Navigate: READY → Settings → inject keychain status → click Update Credentials
+      // Navigate: READY → Settings with a keychain credential override → click Update Credentials
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
+        await setCredentialStatusOverride(webview, {
+          hasCredentials: true,
+          email: 'user@keychain.com',
+          source: 'keychain',
+        });
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
-        // Wait for extension's own GET_CREDENTIALS_STATUS response (env mode) to avoid race
-        await expect(webview.locator('.cred-source-badge.env')).toBeVisible();
-
-        // Switch credential display to keychain so #btn-update-credentials is rendered
-        await injectMessage(webview, {
-          type: 'CREDENTIALS_STATUS',
-          payload: { hasCredentials: true, email: 'user@keychain.com', source: 'keychain' },
-        });
+        await expect.poll(async () => {
+          await refreshCredentialStatus(webview);
+          return webview.locator('#btn-update-credentials').isVisible();
+        }).toBe(true);
         await expect(webview.locator('#btn-update-credentials')).toBeVisible();
 
         // Enter update mode
@@ -3195,6 +3221,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         // Cancel returns to Settings
         await webview.locator('#btn-cancel-creds').click();
         await expect(webview.getByText('Settings')).toBeVisible();
+        await clearCredentialStatusOverride(webview);
       });
     });
 

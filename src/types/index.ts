@@ -246,6 +246,13 @@ export type E2eBridgeCommand =
   }
   | {
     action: 'CLEAR_PACKAGE_FIXTURES';
+  }
+  | {
+    action: 'SET_CREDENTIAL_STATUS_OVERRIDE';
+    payload: { credentialStatus: CredentialStatus };
+  }
+  | {
+    action: 'CLEAR_CREDENTIAL_STATUS_OVERRIDE';
   };
 
 // Messages from webview → extension

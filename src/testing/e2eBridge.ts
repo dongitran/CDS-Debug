@@ -1,5 +1,6 @@
 import type * as vscode from 'vscode';
 import type {
+  CredentialStatus,
   E2eBridgeCommand,
   LoadedPackageEntry,
   LoadedPackageSource,
@@ -12,6 +13,7 @@ interface E2eFakeSessionSet {
 
 const E2E_REMOTE_PROCESS_NAME = 'Remote Process [0]';
 const fakeSessionsByApp = new Map<string, E2eFakeSessionSet>();
+let credentialStatusOverride: CredentialStatus | undefined;
 
 function clonePackageFixtures(packages: readonly LoadedPackageEntry[]): LoadedPackageEntry[] {
   return packages.map((entry) => ({
@@ -71,6 +73,7 @@ export function isE2eModeEnabled(): boolean {
 
 export function clearE2eBridgeState(): void {
   fakeSessionsByApp.clear();
+  credentialStatusOverride = undefined;
 }
 
 export function applyE2eBridgeCommand(command: E2eBridgeCommand): void {
@@ -85,9 +88,19 @@ export function applyE2eBridgeCommand(command: E2eBridgeCommand): void {
     case 'CLEAR_PACKAGE_FIXTURES':
       clearE2eBridgeState();
       return;
+    case 'SET_CREDENTIAL_STATUS_OVERRIDE':
+      credentialStatusOverride = { ...command.payload.credentialStatus };
+      return;
+    case 'CLEAR_CREDENTIAL_STATUS_OVERRIDE':
+      credentialStatusOverride = undefined;
+      return;
     default:
       return;
   }
+}
+
+export function getE2eCredentialStatusOverride(): CredentialStatus | undefined {
+  return credentialStatusOverride ? { ...credentialStatusOverride } : undefined;
 }
 
 export function getE2eDebugSessionsForApp(appName: string): vscode.DebugSession[] {
