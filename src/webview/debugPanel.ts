@@ -68,6 +68,7 @@ import {
   getE2eCredentialStatusOverride,
   getE2eDebugSessionById,
   getE2eDebugSessionsForApp,
+  getE2ePackageLocalRoot,
   isE2eModeEnabled,
 } from '../testing/e2eBridge';
 import {
@@ -327,6 +328,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     };
   }
 
+  private getPackageLocalRoot(appName: string): string | undefined {
+    return getSessionParams(appName)?.folderPath ?? getE2ePackageLocalRoot(appName);
+  }
+
   private handleE2eBridge(command: E2eBridgeCommand): void {
     if (!isE2eModeEnabled()) return;
 
@@ -371,7 +376,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     try {
       const packages = await this.getOrLoadPackageEntriesForApp(appName, log, false);
       const existingIndex = this.packageSearchIndexByApp.get(appName);
-      const index = existingIndex ?? createPackageSearchIndex(packages);
+      const index = existingIndex ?? this.createPackageSearchIndexForApp(appName, packages);
       if (!existingIndex) this.packageSearchIndexByApp.set(appName, index);
 
       const searchResults = await searchPackageEntries(index, query, { packageNameFilterRegex });
@@ -405,7 +410,13 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         appName,
         `Opening source from ${session.name} [${session.id}] path="${source.path ?? source.name ?? 'unknown'}" sourceRef=${String(source.sourceReference ?? 0)}`,
       );
-      await openPackageSource(session, source, location);
+      const localRoot = this.getPackageLocalRoot(appName);
+      await openPackageSource(
+        session,
+        source,
+        location,
+        localRoot ? { localRoot } : undefined,
+      );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logError(`Failed to open package source for ${appName}: ${message}`);
@@ -435,8 +446,16 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     const packages = await loadPackageEntriesFromSessions(appName, sessions, log);
     this.packageEntriesByApp.set(appName, packages);
-    this.packageSearchIndexByApp.set(appName, createPackageSearchIndex(packages));
+    this.packageSearchIndexByApp.set(appName, this.createPackageSearchIndexForApp(appName, packages));
     return packages;
+  }
+
+  private createPackageSearchIndexForApp(
+    appName: string,
+    packages: LoadedPackageEntry[],
+  ): PackageSearchIndex {
+    const localRoot = this.getPackageLocalRoot(appName);
+    return createPackageSearchIndex(packages, localRoot ? { localRoot } : undefined);
   }
 
   private async handleSelectGroupFolder(): Promise<void> {

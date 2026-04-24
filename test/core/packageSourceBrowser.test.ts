@@ -691,6 +691,45 @@ describe('packageSourceBrowser', () => {
     }
   });
 
+  it('searches package file contents through a local root when the debugger reports a remote pnpm path', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-remote-search-'));
+    const localFilePath = createTempPackageFilePath(rootDir, '@sample-org/demo-kit', 'dist/main.js', '1.4.0');
+    await mkdir(dirname(localFilePath), { recursive: true });
+    await writeFile(
+      localFilePath,
+      [
+        'export function createSampleKit() {',
+        '  return "demo";',
+        '}',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const entries = buildPackageEntries([
+      {
+        name: 'main.js',
+        path: 'file:///sample-app/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
+      },
+    ]);
+
+    try {
+      const index = createPackageSearchIndex(entries, { localRoot: rootDir });
+      const results = await searchPackageEntries(index, 'createSampleKit');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]?.name).toBe('@sample-org/demo-kit');
+      expect(results[0]?.files).toHaveLength(1);
+      expect(results[0]?.files[0]?.match).toEqual(expect.objectContaining({
+        kind: 'content',
+        line: 1,
+        column: 17,
+        preview: expect.stringContaining('createSampleKit'),
+      }));
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it('reuses cached package file contents across repeated content searches', async () => {
     const { entries, rootDir, filePaths } = await createTempPackageEntries([
       {
@@ -791,6 +830,31 @@ describe('packageSourceBrowser', () => {
       expect.objectContaining({
         scheme: 'file',
         path: '/workspace/node_modules/sample-client/dist/index.js',
+      }),
+    );
+  });
+
+  it('opens remote package paths through the provided local root fallback', async () => {
+    const session: MockDebugSession = {
+      id: 'session-3e',
+      name: 'Debug: sample-service',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+
+    await openPackageSource(
+      asDebugSession(session),
+      {
+        name: 'main.js',
+        path: '/sample-app/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
+      },
+      undefined,
+      { localRoot: '/workspace/sample-service' },
+    );
+
+    expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheme: 'file',
+        path: '/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
       }),
     );
   });

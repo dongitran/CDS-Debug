@@ -11,6 +11,7 @@ import type {
 interface E2eFakeSessionSet {
   rootSession: vscode.DebugSession;
   sessions: vscode.DebugSession[];
+  localRoot?: string;
 }
 
 const E2E_REMOTE_PROCESS_NAME = 'Remote Process [0]';
@@ -105,6 +106,7 @@ function createFakeSessionSet(
   appName: string,
   packages: readonly LoadedPackageEntry[],
   loadedSourcesPlan?: readonly E2eLoadedSourcesPlanStep[],
+  localRoot?: string,
 ): E2eFakeSessionSet {
   const rootSessionId = `e2e:${appName}:root`;
   const childSessionId = `e2e:${appName}:remote-process-0`;
@@ -116,10 +118,12 @@ function createFakeSessionSet(
     buildLoadedSourcesRequestHandler(packages, loadedSourcesPlan),
     rootSession,
   );
-  return {
+  const sessionSet: E2eFakeSessionSet = {
     rootSession,
     sessions: [rootSession, childSession],
   };
+  if (localRoot) sessionSet.localRoot = localRoot;
+  return sessionSet;
 }
 
 export function isE2eModeEnabled(): boolean {
@@ -139,7 +143,12 @@ export function applyE2eBridgeCommand(command: E2eBridgeCommand): void {
       const packages = clonePackageFixtures(command.payload.packages);
       fakeSessionsByApp.set(
         command.payload.appName,
-        createFakeSessionSet(command.payload.appName, packages, command.payload.loadedSourcesPlan),
+        createFakeSessionSet(
+          command.payload.appName,
+          packages,
+          command.payload.loadedSourcesPlan,
+          command.payload.localRoot,
+        ),
       );
       return;
     }
@@ -175,4 +184,8 @@ export function getE2eDebugSessionById(sessionId: string): vscode.DebugSession |
     if (match) return match;
   }
   return undefined;
+}
+
+export function getE2ePackageLocalRoot(appName: string): string | undefined {
+  return fakeSessionsByApp.get(appName)?.localRoot;
 }

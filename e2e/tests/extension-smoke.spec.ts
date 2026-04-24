@@ -715,7 +715,7 @@ async function setPackageFixture(
   webview: Frame,
   appName: string,
   packages: Record<string, unknown>[],
-  options?: { loadedSourcesPlan?: FixtureLoadedSourcesPlanStep[] },
+  options?: { loadedSourcesPlan?: FixtureLoadedSourcesPlanStep[]; localRoot?: string },
 ): Promise<void> {
   await sendE2eBridgeCommand(webview, {
     action: 'SET_PACKAGE_FIXTURE',
@@ -723,6 +723,7 @@ async function setPackageFixture(
       appName,
       packages,
       loadedSourcesPlan: options?.loadedSourcesPlan,
+      localRoot: options?.localRoot,
     },
   });
 }
@@ -992,11 +993,18 @@ function createPackageFixture(spec: FixturePackageSpec): Record<string, unknown>
 async function createPackageFixtureInWorkspace(
   workspaceDir: string,
   spec: FixturePackageSpec,
+  options?: { reportedRootDir?: string },
 ): Promise<Record<string, unknown>> {
   const files = await Promise.all(spec.files.map(async (file) => {
     const normalizedFile = normalizeFixturePackageFile(file);
     const relativePath = normalizedFile.relativePath;
     const absolutePath = createFixtureSourcePath(spec.name, relativePath, spec.version, workspaceDir);
+    const reportedPath = createFixtureSourcePath(
+      spec.name,
+      relativePath,
+      spec.version,
+      options?.reportedRootDir ?? workspaceDir,
+    );
     await mkdir(dirname(absolutePath), { recursive: true });
     await writeFile(
       absolutePath,
@@ -1009,7 +1017,7 @@ async function createPackageFixtureInWorkspace(
       relativePath,
       source: {
         name: relativePath.split('/').pop() ?? relativePath,
-        path: absolutePath,
+        path: reportedPath,
       },
     };
   }));
@@ -2665,7 +2673,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
             ports: { 'mock-service-a': 20000 },
           });
           await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
-          await setPackageFixture(webview, 'mock-service-a', [contentFixture]);
+          await setPackageFixture(webview, 'mock-service-a', [contentFixture], { localRoot: workspaceDir });
           await startPackagesErrorMonitor(webview);
 
           await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
@@ -2683,6 +2691,65 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           await webview.locator('.packages-tree-file-row', { hasText: 'client.js' }).click();
           await expectEditorCursorPosition(workbenchPage, 6, 1);
           await captureStepEvidence(workbenchPage, 'packages-search-content-opened');
+
+          const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+          expect(packageErrorEvents).toEqual([]);
+          await clearPackageFixtures(webview);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
+    });
+
+    test('User can search package file contents when the debugger reports a remote package path', async () => {
+      const workspaceDir = await createTempDirectory('cds-debug-e2e-package-remote-content-');
+
+      try {
+        const contentFixture = await createPackageFixtureInWorkspace(workspaceDir, {
+          name: '@sample-org/demo-kit',
+          version: '1.4.0',
+          files: [
+            {
+              relativePath: 'dist/main.js',
+              content: [
+                'export function createSampleKit() {',
+                '  return "demo";',
+                '}',
+              ].join('\n'),
+            },
+          ],
+        }, {
+          reportedRootDir: '/sample-app',
+        });
+
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await waitForObservation();
+
+          await emitDebugConnecting(webview, {
+            appNames: ['mock-service-a'],
+            ports: { 'mock-service-a': 20000 },
+          });
+          await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+          await setPackageFixture(webview, 'mock-service-a', [contentFixture], { localRoot: workspaceDir });
+          await startPackagesErrorMonitor(webview);
+
+          await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+          await expect(webview.locator('#packages-app-select')).toBeVisible();
+          await webview.locator('#packages-search-input').fill('createSampleKit');
+          await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' })).toBeVisible({
+            timeout: 5_000,
+          });
+          await expect(webview.locator('.packages-tree-file-row', { hasText: 'main.js' })).toBeVisible({
+            timeout: 5_000,
+          });
+          await captureStepEvidence(workbenchPage, 'packages-search-remote-content-match');
+          await waitForObservation();
+
+          await webview.locator('.packages-tree-file-row', { hasText: 'main.js' }).click();
+          await expectEditorCursorPosition(workbenchPage, 1, 17);
+          await captureStepEvidence(workbenchPage, 'packages-search-remote-content-opened');
 
           const packageErrorEvents = await stopPackagesErrorMonitor(webview);
           expect(packageErrorEvents).toEqual([]);

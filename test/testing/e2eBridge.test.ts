@@ -7,6 +7,7 @@ import {
   getE2eActiveDebugSessionForApp,
   getE2eDebugSessionById,
   getE2eDebugSessionsForApp,
+  getE2ePackageLocalRoot,
   isE2eModeEnabled,
 } from '../../src/testing/e2eBridge';
 
@@ -62,6 +63,7 @@ describe('e2eBridge', () => {
       payload: {
         appName: 'sample-service',
         packages: createPackageFixture(),
+        localRoot: '/workspace/sample-service',
       },
     });
 
@@ -71,6 +73,7 @@ describe('e2eBridge', () => {
     expect(rootSession?.name).toBe('Debug: sample-service');
     expect(sessions).toHaveLength(2);
     expect(sessions[1]?.parentSession?.id).toBe(rootSession?.id);
+    expect(getE2ePackageLocalRoot('sample-service')).toBe('/workspace/sample-service');
 
     const response = await sessions[1]?.customRequest('loadedSources', {});
     expect(response).toEqual({

@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import * as vscode from 'vscode';
 import type {
@@ -39,6 +40,7 @@ interface FolderBuilderNode {
 export interface PackageSearchIndex {
   entries: LoadedPackageEntry[];
   contentCache: Map<string, Promise<string | null>>;
+  localRoot?: string;
 }
 
 interface PackageSearchOptions {
@@ -80,6 +82,15 @@ function extractPackagePath(normalizedPath: string): string | null {
   const packagePath = normalizedPath.slice(markerIndex + marker.length);
   if (!packagePath || packagePath.startsWith('.bin/')) return null;
   return packagePath;
+}
+
+function extractNodeModulesSuffix(normalizedPath: string): string | null {
+  const marker = '/node_modules/';
+  const markerIndex = normalizedPath.indexOf(marker);
+  if (markerIndex === -1) return null;
+  const suffix = normalizedPath.slice(markerIndex + marker.length);
+  if (!suffix) return null;
+  return suffix;
 }
 
 function parsePackageSegments(packagePath: string): { packageName: string; relativePath: string } | null {
@@ -273,17 +284,54 @@ function createContentPreview(line: string): string {
 }
 
 function buildContentMatch(text: string, query: string): LoadedPackageFileMatch | null {
-  const lines = text.split(/\r?\n/u);
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? '';
-    const columnIndex = line.toLowerCase().indexOf(query);
-    if (columnIndex === -1) continue;
-    return {
-      kind: 'content',
-      line: index + 1,
-      column: columnIndex + 1,
-      preview: createContentPreview(line),
-    };
+  const contentIndex = text.toLowerCase().indexOf(query);
+  if (contentIndex === -1) return null;
+  return createContentMatchAtIndex(text, contentIndex);
+}
+
+function createContentMatchAtIndex(text: string, contentIndex: number): LoadedPackageFileMatch {
+  const beforeMatch = text.slice(0, contentIndex);
+  const line = beforeMatch.split(/\r?\n/u).length;
+  const lineStartIndex = beforeMatch.lastIndexOf('\n') + 1;
+  const lineEndIndex = text.indexOf('\n', contentIndex);
+  const lineText = text.slice(lineStartIndex, lineEndIndex === -1 ? undefined : lineEndIndex).replace(/\r/u, '');
+
+  return {
+    kind: 'content',
+    line,
+    column: contentIndex - lineStartIndex + 1,
+    preview: createContentPreview(lineText),
+  };
+}
+
+function buildLocalRootSourcePath(localRoot: string, source: LoadedPackageSource): string | null {
+  if (!source.path) return null;
+  const nodeModulesSuffix = extractNodeModulesSuffix(normalizeSourcePath(source.path));
+  if (!nodeModulesSuffix) return null;
+  return join(localRoot, 'node_modules', ...nodeModulesSuffix.split('/'));
+}
+
+function getReadableSourcePathCandidates(
+  index: PackageSearchIndex,
+  file: LoadedPackageFile,
+): string[] {
+  const candidates = new Set<string>();
+  const directPath = toReadableLocalSourcePath(file.source);
+  if (directPath) candidates.add(directPath);
+  if (index.localRoot) {
+    const localRootFallback = buildLocalRootSourcePath(index.localRoot, file.source);
+    if (localRootFallback) candidates.add(localRootFallback);
+  }
+  return Array.from(candidates);
+}
+
+async function readSourceContentFromCandidates(paths: readonly string[]): Promise<string | null> {
+  for (const path of paths) {
+    try {
+      return await readFile(path, 'utf8');
+    } catch {
+      continue;
+    }
   }
   return null;
 }
@@ -296,13 +344,9 @@ function getCachedPackageFileContent(
   if (cached) return cached;
 
   const contentPromise = (async (): Promise<string | null> => {
-    const filePath = toReadableLocalSourcePath(file.source);
-    if (!filePath) return null;
-    try {
-      return await readFile(filePath, 'utf8');
-    } catch {
-      return null;
-    }
+    const readablePaths = getReadableSourcePathCandidates(index, file);
+    if (readablePaths.length === 0) return null;
+    return readSourceContentFromCandidates(readablePaths);
   })();
 
   index.contentCache.set(file.id, contentPromise);
@@ -445,9 +489,25 @@ function mergeLoadedSources(batches: readonly LoadedPackageSource[][]): LoadedPa
   return batches.flat();
 }
 
-function toOpenUri(session: vscode.DebugSession, source: LoadedPackageSource): vscode.Uri {
+function resolveOpenFilePath(source: LoadedPackageSource, localRoot?: string): string | null {
+  if (localRoot) {
+    const fallbackPath = buildLocalRootSourcePath(localRoot, source);
+    if (fallbackPath) return fallbackPath;
+  }
+  return toReadableLocalSourcePath(source);
+}
+
+function toOpenUri(
+  session: vscode.DebugSession,
+  source: LoadedPackageSource,
+  options?: { localRoot?: string },
+): vscode.Uri {
   if (typeof source.sourceReference === 'number' && source.sourceReference > 0) {
     return vscode.debug.asDebugSourceUri(source as vscode.DebugProtocolSource, session);
+  }
+  const resolvedFilePath = resolveOpenFilePath(source, options?.localRoot);
+  if (resolvedFilePath) {
+    return vscode.Uri.file(resolvedFilePath);
   }
   if (!source.path) {
     throw new Error('Package source cannot be opened because it has no path.');
@@ -515,11 +575,16 @@ export async function loadPackageEntries(session: vscode.DebugSession): Promise<
   return buildPackageEntries(sources);
 }
 
-export function createPackageSearchIndex(entries: LoadedPackageEntry[]): PackageSearchIndex {
-  return {
+export function createPackageSearchIndex(
+  entries: LoadedPackageEntry[],
+  options?: { localRoot?: string },
+): PackageSearchIndex {
+  const index: PackageSearchIndex = {
     entries: entries.map((entry) => clonePackageEntry(entry, entry.files.map((file) => clonePackageFile(file)))),
     contentCache: new Map<string, Promise<string | null>>(),
   };
+  if (options?.localRoot) index.localRoot = options.localRoot;
+  return index;
 }
 
 export async function searchPackageEntries(
@@ -626,8 +691,9 @@ export async function openPackageSource(
   session: vscode.DebugSession,
   source: LoadedPackageSource,
   location?: PackageSourceLocation,
+  options?: { localRoot?: string },
 ): Promise<void> {
-  const uri = toOpenUri(session, source);
+  const uri = toOpenUri(session, source, options);
   const document = await vscode.workspace.openTextDocument(uri);
   const selection = location
     ? new vscode.Range(

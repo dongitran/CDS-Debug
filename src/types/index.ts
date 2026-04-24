@@ -285,6 +285,7 @@ export type E2eBridgeCommand =
       appName: string;
       packages: LoadedPackageEntry[];
       loadedSourcesPlan?: E2eLoadedSourcesPlanStep[];
+      localRoot?: string;
     };
   }
   | {
