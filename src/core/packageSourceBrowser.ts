@@ -50,8 +50,8 @@ interface PackageSearchOptions {
 }
 
 const DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS: Required<LoadPackageEntriesOptions> = {
-  maxAttempts: 6,
-  emptyRetryDelayMs: 250,
+  maxAttempts: 15,
+  emptyRetryDelayMs: 1_000,
   loadedSourcesRequestTimeoutMs: 1_500,
 };
 
@@ -628,6 +628,10 @@ export async function loadPackageEntriesFromSessions(
   log?: PackageBrowserLogFn,
   options?: LoadPackageEntriesOptions,
 ): Promise<LoadedPackageEntry[]> {
+  if (Array.isArray(sessions) && sessions.length === 0) {
+    throw new Error(`No active debug session found for ${appName}.`);
+  }
+
   const resolvedOptions = normalizeLoadPackageEntriesOptions(options);
   let lastNonTimeoutError: string | null = null;
   let sawAnySessions = false;

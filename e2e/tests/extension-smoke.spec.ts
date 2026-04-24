@@ -2362,7 +2362,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
             }),
           ],
           {
-            sessionAvailability: { childSessionDelayMs: 900 },
+            sessionAvailability: { childSessionDelayMs: 2_500 },
           },
         );
 
@@ -2373,11 +2373,14 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await packagesButton.click();
         await expect(webview.locator('#packages-app-select')).toBeVisible();
         await captureStepEvidence(workbenchPage, 'packages-immediate-open-before-child-session');
+        await waitForObservation();
 
         await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-client' })).toBeVisible({
-          timeout: 4_000,
+          timeout: 8_000,
         });
         await expect(webview.locator('.packages-error')).toHaveCount(0);
+        await captureStepEvidence(workbenchPage, 'packages-immediate-open-after-child-session');
+        await waitForObservation();
 
         const packageErrorEvents = await stopPackagesErrorMonitor(webview);
         expect(packageErrorEvents).toEqual([]);
