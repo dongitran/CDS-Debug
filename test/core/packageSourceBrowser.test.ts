@@ -455,6 +455,54 @@ describe('packageSourceBrowser', () => {
     expect(entries[0]?.name).toBe('sample-worker');
   });
 
+  it('retries against a refreshed session resolver when a child session appears later', async () => {
+    const parentSession: MockDebugSession = {
+      id: 'session-parent-delayed-child',
+      name: 'Debug: sample-service',
+      type: 'pwa-node',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+    const childSession: MockDebugSession = {
+      id: 'session-child-delayed-child',
+      name: 'Remote Process [0]',
+      type: 'pwa-node',
+      parentSession,
+      customRequest: (): Promise<unknown> => Promise.resolve({
+        sources: [
+          {
+            name: 'worker.js',
+            path: '/workspace/node_modules/sample-worker/dist/worker.js',
+          },
+        ],
+      }),
+    };
+
+    let resolverCalls = 0;
+    const resolveSessions = (): DebugSession[] => {
+      resolverCalls += 1;
+      if (resolverCalls === 1) {
+        return [asDebugSession(parentSession)];
+      }
+      return [asDebugSession(parentSession), asDebugSession(childSession)];
+    };
+
+    const entries = await loadPackageEntriesFromSessions(
+      'sample-service',
+      resolveSessions,
+      undefined,
+      {
+        maxAttempts: 3,
+        emptyRetryDelayMs: 1,
+        loadedSourcesRequestTimeoutMs: 25,
+      },
+    );
+
+    expect(resolverCalls).toBeGreaterThanOrEqual(2);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.name).toBe('sample-worker');
+    expect(entries[0]?.files[0]?.source.debugSessionId).toBe('session-child-delayed-child');
+  });
+
   it('merges loaded sources from multiple descendant sessions and dedupes package files', async () => {
     const parentSession: MockDebugSession = {
       id: 'session-parent',

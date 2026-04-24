@@ -37,6 +37,8 @@ interface FolderBuilderNode {
   files: LoadedPackageLeafNode[];
 }
 
+type PackageSessionSource = readonly vscode.DebugSession[] | (() => readonly vscode.DebugSession[]);
+
 export interface PackageSearchIndex {
   entries: LoadedPackageEntry[];
   contentCache: Map<string, Promise<string | null>>;
@@ -485,6 +487,13 @@ function logSessionCandidates(
   }
 }
 
+function resolvePackageSessions(sessionSource: PackageSessionSource): vscode.DebugSession[] {
+  const sessions = typeof sessionSource === 'function'
+    ? sessionSource()
+    : sessionSource;
+  return Array.from(sessions);
+}
+
 function mergeLoadedSources(batches: readonly LoadedPackageSource[][]): LoadedPackageSource[] {
   return batches.flat();
 }
@@ -615,27 +624,31 @@ export async function searchPackageEntries(
 
 export async function loadPackageEntriesFromSessions(
   appName: string,
-  sessions: readonly vscode.DebugSession[],
+  sessions: PackageSessionSource,
   log?: PackageBrowserLogFn,
   options?: LoadPackageEntriesOptions,
 ): Promise<LoadedPackageEntry[]> {
-  if (sessions.length === 0) {
-    throw new Error(`No active debug session found for ${appName}.`);
-  }
-
   const resolvedOptions = normalizeLoadPackageEntriesOptions(options);
-  logSessionCandidates(appName, sessions, log);
-
   let lastNonTimeoutError: string | null = null;
+  let sawAnySessions = false;
 
   for (let attempt = 1; attempt <= resolvedOptions.maxAttempts; attempt += 1) {
+    const currentSessions = resolvePackageSessions(sessions);
     const loadedSourceBatches: LoadedPackageSource[][] = [];
+    let sawMissingSessions = false;
     let sawEmptySources = false;
     let sawTimeout = false;
 
     log?.(`[Packages] Attempt ${attempt.toString()}/${resolvedOptions.maxAttempts.toString()} for ${appName}.`);
+    if (currentSessions.length === 0) {
+      sawMissingSessions = true;
+      log?.(`[Packages] No candidate debug sessions are available yet for ${appName}.`);
+    } else {
+      sawAnySessions = true;
+      logSessionCandidates(appName, currentSessions, log);
+    }
 
-    for (const session of sessions) {
+    for (const session of currentSessions) {
       try {
         const sources = await requestLoadedSources(session, resolvedOptions.loadedSourcesRequestTimeoutMs, log);
         if (sources.length > 0) {
@@ -669,9 +682,9 @@ export async function loadPackageEntriesFromSessions(
       throw new Error(`Timed out waiting for loaded sources for ${appName}.`);
     }
 
-    if (sawEmptySources && attempt < resolvedOptions.maxAttempts) {
+    if ((sawMissingSessions || sawEmptySources) && attempt < resolvedOptions.maxAttempts) {
       log?.(
-        `[Packages] No loaded sources yet for ${appName}. Retrying in ${resolvedOptions.emptyRetryDelayMs.toString()}ms.`,
+        `[Packages] Package sources are not ready yet for ${appName}. Retrying in ${resolvedOptions.emptyRetryDelayMs.toString()}ms.`,
       );
       if (resolvedOptions.emptyRetryDelayMs > 0) {
         await delay(resolvedOptions.emptyRetryDelayMs);
@@ -682,6 +695,10 @@ export async function loadPackageEntriesFromSessions(
 
   if (lastNonTimeoutError) {
     throw new Error(`Failed to load package sources for ${appName}: ${lastNonTimeoutError}`);
+  }
+
+  if (!sawAnySessions) {
+    throw new Error(`No active debug session found for ${appName}.`);
   }
 
   throw new Error(`No loaded sources were returned by any debug session for ${appName}.`);

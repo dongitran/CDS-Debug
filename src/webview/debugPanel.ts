@@ -435,16 +435,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       if (cachedPackages) return cachedPackages;
     }
 
-    const e2eSessions = getE2eDebugSessionsForApp(appName);
-    const sessions = e2eSessions.length > 0 ? e2eSessions : getDebugSessionsForApp(appName);
-    if (sessions.length === 0) {
-      throw new Error(`No attached debug session found for ${appName}.`);
-    }
+    const resolveSessions = (): readonly vscode.DebugSession[] => {
+      const e2eSessions = getE2eDebugSessionsForApp(appName);
+      return e2eSessions.length > 0 ? e2eSessions : getDebugSessionsForApp(appName);
+    };
 
     const rootSession = getE2eActiveDebugSessionForApp(appName) ?? getActiveDebugSessionForApp(appName);
     log(`Packages requested. Root session: ${rootSession ? `${rootSession.name} [${rootSession.id}]` : 'none'}`);
 
-    const packages = await loadPackageEntriesFromSessions(appName, sessions, log);
+    const packages = await loadPackageEntriesFromSessions(appName, resolveSessions, log);
     this.packageEntriesByApp.set(appName, packages);
     this.packageSearchIndexByApp.set(appName, this.createPackageSearchIndexForApp(appName, packages));
     return packages;

@@ -79,6 +79,10 @@ interface FixtureLoadedSourcesPlanStep {
   message?: string;
 }
 
+interface FixtureSessionAvailability {
+  childSessionDelayMs?: number;
+}
+
 const MOCK_ENV_EMAIL = 'e2e.mock.user@example.com';
 const MOCK_ENV_PASSWORD = 'e2e-mock-password';
 const MOCK_GROUP_FOLDER = '/tmp/cds-debug-e2e-group';
@@ -715,7 +719,11 @@ async function setPackageFixture(
   webview: Frame,
   appName: string,
   packages: Record<string, unknown>[],
-  options?: { loadedSourcesPlan?: FixtureLoadedSourcesPlanStep[]; localRoot?: string },
+  options?: {
+    loadedSourcesPlan?: FixtureLoadedSourcesPlanStep[];
+    localRoot?: string;
+    sessionAvailability?: FixtureSessionAvailability;
+  },
 ): Promise<void> {
   await sendE2eBridgeCommand(webview, {
     action: 'SET_PACKAGE_FIXTURE',
@@ -724,6 +732,7 @@ async function setPackageFixture(
       packages,
       loadedSourcesPlan: options?.loadedSourcesPlan,
       localRoot: options?.localRoot,
+      sessionAvailability: options?.sessionAvailability,
     },
   });
 }
@@ -2324,6 +2333,50 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           timeout: 4_000,
         });
         await expect(webview.locator('#btn-refresh-packages')).toBeEnabled();
+        await expect(webview.locator('.packages-error')).toHaveCount(0);
+
+        const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+        expect(packageErrorEvents).toEqual([]);
+        await clearPackageFixtures(webview);
+      });
+    });
+
+    test('Opening Packages immediately after a started session waits for the child debug session to appear', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-target-after-apps' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+        await startPackagesErrorMonitor(webview);
+
+        await webview.locator('input[type="checkbox"][data-app="mock-service-a"]').check();
+        await webview.locator('#btn-start-debug').click();
+        await expect(webview.locator('.active-card', { hasText: 'mock-service-a' })).toBeVisible({ timeout: 3_000 });
+
+        await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+        await setPackageFixture(
+          webview,
+          'mock-service-a',
+          [
+            createPackageFixture({
+              name: 'sample-client',
+              files: ['dist/client.js'],
+            }),
+          ],
+          {
+            sessionAvailability: { childSessionDelayMs: 900 },
+          },
+        );
+
+        const packagesButton = webview
+          .locator('.active-card', { hasText: 'mock-service-a' })
+          .locator('.active-packages-btn');
+        await expect(packagesButton).toBeVisible({ timeout: 3_000 });
+        await packagesButton.click();
+        await expect(webview.locator('#packages-app-select')).toBeVisible();
+        await captureStepEvidence(workbenchPage, 'packages-immediate-open-before-child-session');
+
+        await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-client' })).toBeVisible({
+          timeout: 4_000,
+        });
         await expect(webview.locator('.packages-error')).toHaveCount(0);
 
         const packageErrorEvents = await stopPackagesErrorMonitor(webview);

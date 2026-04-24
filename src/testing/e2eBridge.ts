@@ -4,6 +4,7 @@ import type {
   CredentialStatus,
   E2eBridgeCommand,
   E2eLoadedSourcesPlanStep,
+  E2eSessionAvailability,
   LoadedPackageEntry,
   LoadedPackageSource,
 } from '../types/index';
@@ -12,6 +13,8 @@ interface E2eFakeSessionSet {
   rootSession: vscode.DebugSession;
   sessions: vscode.DebugSession[];
   localRoot?: string;
+  createdAt: number;
+  sessionAvailability?: E2eSessionAvailability;
 }
 
 const E2E_REMOTE_PROCESS_NAME = 'Remote Process [0]';
@@ -107,6 +110,7 @@ function createFakeSessionSet(
   packages: readonly LoadedPackageEntry[],
   loadedSourcesPlan?: readonly E2eLoadedSourcesPlanStep[],
   localRoot?: string,
+  sessionAvailability?: E2eSessionAvailability,
 ): E2eFakeSessionSet {
   const rootSessionId = `e2e:${appName}:root`;
   const childSessionId = `e2e:${appName}:remote-process-0`;
@@ -121,9 +125,25 @@ function createFakeSessionSet(
   const sessionSet: E2eFakeSessionSet = {
     rootSession,
     sessions: [rootSession, childSession],
+    createdAt: Date.now(),
   };
   if (localRoot) sessionSet.localRoot = localRoot;
+  if (sessionAvailability) sessionSet.sessionAvailability = { ...sessionAvailability };
   return sessionSet;
+}
+
+function getVisibleSessions(sessionSet: E2eFakeSessionSet): vscode.DebugSession[] {
+  const childSessionDelayMs = sessionSet.sessionAvailability?.childSessionDelayMs ?? 0;
+  if (childSessionDelayMs <= 0) {
+    return sessionSet.sessions.slice();
+  }
+
+  const childSessionReady = Date.now() - sessionSet.createdAt >= childSessionDelayMs;
+  if (childSessionReady) {
+    return sessionSet.sessions.slice();
+  }
+
+  return sessionSet.sessions.slice(0, 1);
 }
 
 export function isE2eModeEnabled(): boolean {
@@ -148,6 +168,7 @@ export function applyE2eBridgeCommand(command: E2eBridgeCommand): void {
           packages,
           command.payload.loadedSourcesPlan,
           command.payload.localRoot,
+          command.payload.sessionAvailability,
         ),
       );
       return;
@@ -171,7 +192,8 @@ export function getE2eCredentialStatusOverride(): CredentialStatus | undefined {
 }
 
 export function getE2eDebugSessionsForApp(appName: string): vscode.DebugSession[] {
-  return fakeSessionsByApp.get(appName)?.sessions.slice() ?? [];
+  const sessionSet = fakeSessionsByApp.get(appName);
+  return sessionSet ? getVisibleSessions(sessionSet) : [];
 }
 
 export function getE2eActiveDebugSessionForApp(appName: string): vscode.DebugSession | undefined {
@@ -180,7 +202,7 @@ export function getE2eActiveDebugSessionForApp(appName: string): vscode.DebugSes
 
 export function getE2eDebugSessionById(sessionId: string): vscode.DebugSession | undefined {
   for (const sessionSet of fakeSessionsByApp.values()) {
-    const match = sessionSet.sessions.find((session) => session.id === sessionId);
+    const match = getVisibleSessions(sessionSet).find((session) => session.id === sessionId);
     if (match) return match;
   }
   return undefined;

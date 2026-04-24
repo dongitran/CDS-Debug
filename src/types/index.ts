@@ -270,6 +270,10 @@ export type E2eLoadedSourcesPlanStep =
     kind: 'hang';
   };
 
+export interface E2eSessionAvailability {
+  childSessionDelayMs?: number;
+}
+
 export type E2eBridgeCommand =
   | {
     action: 'EMIT_DEBUG_CONNECTING';
@@ -286,6 +290,7 @@ export type E2eBridgeCommand =
       packages: LoadedPackageEntry[];
       loadedSourcesPlan?: E2eLoadedSourcesPlanStep[];
       localRoot?: string;
+      sessionAvailability?: E2eSessionAvailability;
     };
   }
   | {

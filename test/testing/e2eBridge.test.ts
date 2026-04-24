@@ -135,6 +135,27 @@ describe('e2eBridge', () => {
     expect(outcome).toBe('pending');
   });
 
+  it('can delay child debug-session availability while keeping the root session visible', async () => {
+    applyE2eBridgeCommand({
+      action: 'SET_PACKAGE_FIXTURE',
+      payload: {
+        appName: 'sample-service',
+        packages: createPackageFixture(),
+        sessionAvailability: { childSessionDelayMs: 20 },
+      },
+    });
+
+    const initialSessions = getE2eDebugSessionsForApp('sample-service');
+    expect(initialSessions).toHaveLength(1);
+    expect(initialSessions[0]?.name).toBe('Debug: sample-service');
+
+    await delay(30);
+
+    const delayedSessions = getE2eDebugSessionsForApp('sample-service');
+    expect(delayedSessions).toHaveLength(2);
+    expect(delayedSessions[1]?.name).toBe('Remote Process [0]');
+  });
+
   it('can look up fake sessions by id and clear fixtures', () => {
     applyE2eBridgeCommand({
       action: 'SET_PACKAGE_FIXTURE',
