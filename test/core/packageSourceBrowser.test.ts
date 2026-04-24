@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DebugSession } from 'vscode';
 
@@ -21,6 +25,21 @@ const { vscodeMockState } = vi.hoisted(() => ({
     asDebugSourceUri: vi.fn(),
     openTextDocument: vi.fn(),
     showTextDocument: vi.fn(),
+    Position: class {
+      constructor(
+        public readonly line: number,
+        public readonly character: number,
+      ) {}
+    },
+    Range: class {
+      constructor(
+        public readonly start: { line: number; character: number },
+        public readonly end: { line: number; character: number },
+      ) {}
+    },
+    TextEditorRevealType: {
+      InCenterIfOutsideViewport: 1,
+    },
   },
 }));
 
@@ -61,16 +80,32 @@ vi.mock('vscode', () => ({
       return createMockUri(value, scheme, value.slice(scheme.length + 1));
     },
   },
+  Position: vscodeMockState.Position,
+  Range: vscodeMockState.Range,
+  TextEditorRevealType: vscodeMockState.TextEditorRevealType,
 }));
 
 import {
   buildPackageEntries,
   buildPackageFileTree,
+  createPackageSearchIndex,
   loadPackageEntries,
   loadPackageEntriesFromSessions,
   openPackageSource,
+  searchPackageEntries,
 } from '../../src/core/packageSourceBrowser';
 import type { LoadedPackageTreeNode } from '../../src/types/index';
+
+interface TempPackageFileSpec {
+  relativePath: string;
+  content: string;
+}
+
+interface TempPackageSpec {
+  name: string;
+  version?: string;
+  files: TempPackageFileSpec[];
+}
 
 function simplifyTree(nodes: LoadedPackageTreeNode[]): unknown[] {
   return nodes.map((node) => {
@@ -90,6 +125,46 @@ function simplifyTree(nodes: LoadedPackageTreeNode[]): unknown[] {
   });
 }
 
+function createTempPackageFilePath(
+  rootDir: string,
+  packageName: string,
+  relativePath: string,
+  version = '1.0.0',
+): string {
+  if (packageName.startsWith('@')) {
+    const encoded = packageName.replace('/', '+');
+    return join(rootDir, 'node_modules', '.pnpm', `${encoded}@${version}`, 'node_modules', packageName, relativePath);
+  }
+  return join(rootDir, 'node_modules', packageName, relativePath);
+}
+
+async function createTempPackageEntries(
+  specs: TempPackageSpec[],
+): Promise<{ rootDir: string; entries: ReturnType<typeof buildPackageEntries>; filePaths: string[] }> {
+  const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-source-'));
+  const filePaths: string[] = [];
+  const sources: { name: string; path: string }[] = [];
+
+  for (const spec of specs) {
+    for (const file of spec.files) {
+      const filePath = createTempPackageFilePath(rootDir, spec.name, file.relativePath, spec.version);
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(filePath, file.content, 'utf8');
+      filePaths.push(filePath);
+      sources.push({
+        name: basename(filePath),
+        path: filePath,
+      });
+    }
+  }
+
+  return {
+    rootDir,
+    entries: buildPackageEntries(sources),
+    filePaths,
+  };
+}
+
 beforeEach(() => {
   vscodeMockState.asDebugSourceUri.mockReset();
   vscodeMockState.openTextDocument.mockReset();
@@ -101,7 +176,7 @@ beforeEach(() => {
       source.path ?? source.name ?? 'unknown',
     ));
   vscodeMockState.openTextDocument.mockResolvedValue({ uri: createMockUri('debug:default', 'debug', 'default') });
-  vscodeMockState.showTextDocument.mockResolvedValue(undefined);
+  vscodeMockState.showTextDocument.mockResolvedValue({ revealRange: vi.fn() });
 });
 
 describe('packageSourceBrowser', () => {
@@ -335,6 +410,51 @@ describe('packageSourceBrowser', () => {
     expect(entries[0]?.files[0]?.source.debugSessionId).toBe('session-child');
   });
 
+  it('retries empty loadedSources responses before surfacing a failure', async () => {
+    let childRequestCount = 0;
+    const parentSession: MockDebugSession = {
+      id: 'session-parent-retry',
+      name: 'Debug: sample-service',
+      type: 'pwa-node',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+    const childSession: MockDebugSession = {
+      id: 'session-child-retry',
+      name: 'Remote Process [0]',
+      type: 'pwa-node',
+      parentSession,
+      customRequest: (): Promise<unknown> => {
+        childRequestCount += 1;
+        if (childRequestCount === 1) {
+          return Promise.resolve({ sources: [] });
+        }
+        return Promise.resolve({
+          sources: [
+            {
+              name: 'worker.js',
+              path: '/workspace/node_modules/sample-worker/dist/worker.js',
+            },
+          ],
+        });
+      },
+    };
+
+    const entries = await loadPackageEntriesFromSessions(
+      'sample-service',
+      [asDebugSession(parentSession), asDebugSession(childSession)],
+      undefined,
+      {
+        maxAttempts: 2,
+        emptyRetryDelayMs: 1,
+        loadedSourcesRequestTimeoutMs: 25,
+      },
+    );
+
+    expect(childRequestCount).toBe(2);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.name).toBe('sample-worker');
+  });
+
   it('merges loaded sources from multiple descendant sessions and dedupes package files', async () => {
     const parentSession: MockDebugSession = {
       id: 'session-parent',
@@ -448,7 +568,52 @@ describe('packageSourceBrowser', () => {
     await expect(loadPackageEntriesFromSessions(
       'sample-service',
       [asDebugSession(parentSession), asDebugSession(childSession)],
+      undefined,
+      {
+        maxAttempts: 1,
+        emptyRetryDelayMs: 1,
+        loadedSourcesRequestTimeoutMs: 25,
+      },
     )).rejects.toThrow(/No loaded sources/i);
+  });
+
+  it('times out hanging loadedSources requests instead of waiting forever', async () => {
+    const parentSession: MockDebugSession = {
+      id: 'session-parent-timeout',
+      name: 'Debug: sample-service',
+      type: 'pwa-node',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+    const childSession: MockDebugSession = {
+      id: 'session-child-timeout',
+      name: 'Remote Process [0]',
+      type: 'pwa-node',
+      parentSession,
+      customRequest: (): Promise<unknown> => new Promise<never>((resolve) => {
+        void resolve;
+        return undefined;
+      }),
+    };
+
+    const outcome = await Promise.race([
+      loadPackageEntriesFromSessions(
+        'sample-service',
+        [asDebugSession(parentSession), asDebugSession(childSession)],
+        undefined,
+        {
+          maxAttempts: 1,
+          emptyRetryDelayMs: 1,
+          loadedSourcesRequestTimeoutMs: 25,
+        },
+      ).then(
+        () => 'resolved',
+        (error: unknown) => error instanceof Error ? error.message : String(error),
+      ),
+      delay(150).then(() => 'pending'),
+    ]);
+
+    expect(outcome).not.toBe('pending');
+    expect(outcome).toMatch(/timed out/i);
   });
 
   it('logs when loaded sources exist but none match node_modules package paths', async () => {
@@ -479,6 +644,88 @@ describe('packageSourceBrowser', () => {
 
     expect(entries).toEqual([]);
     expect(logs.some((message) => message.includes('none matched node_modules package paths'))).toBe(true);
+  });
+
+  it('searches package file contents and records the first matching line and column', async () => {
+    const { entries, rootDir } = await createTempPackageEntries([
+      {
+        name: 'sample-client',
+        files: [
+          {
+            relativePath: 'dist/client.js',
+            content: [
+              'const alpha = 1;',
+              'function demo() {',
+              '  sampleToken();',
+              '}',
+            ].join('\n'),
+          },
+        ],
+      },
+      {
+        name: 'sample-worker',
+        files: [
+          {
+            relativePath: 'dist/worker.js',
+            content: 'export const workerReady = true;\n',
+          },
+        ],
+      },
+    ]);
+
+    try {
+      const index = createPackageSearchIndex(entries);
+      const results = await searchPackageEntries(index, 'sampleToken');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]?.name).toBe('sample-client');
+      expect(results[0]?.files).toHaveLength(1);
+      expect(results[0]?.files[0]?.match).toEqual(expect.objectContaining({
+        kind: 'content',
+        line: 3,
+        column: 3,
+        preview: expect.stringContaining('sampleToken'),
+      }));
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reuses cached package file contents across repeated content searches', async () => {
+    const { entries, rootDir, filePaths } = await createTempPackageEntries([
+      {
+        name: 'sample-client',
+        files: [
+          {
+            relativePath: 'dist/client.js',
+            content: 'export function sampleCacheToken() { return true; }\n',
+          },
+        ],
+      },
+    ]);
+
+    try {
+      const index = createPackageSearchIndex(entries);
+      const firstResults = await searchPackageEntries(index, 'sampleCacheToken');
+      expect(firstResults).toHaveLength(1);
+
+      const firstFilePath = filePaths[0];
+      expect(firstFilePath).toBeDefined();
+      if (!firstFilePath) {
+        throw new Error('First package file path was not created.');
+      }
+      await rm(firstFilePath, { force: true });
+
+      const secondResults = await searchPackageEntries(index, 'sampleCacheToken');
+      expect(secondResults).toHaveLength(1);
+      expect(secondResults[0]?.files[0]?.match).toEqual(expect.objectContaining({
+        kind: 'content',
+        line: 1,
+        column: 17,
+      }));
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
   });
 
   it('opens package sources via debug URIs when sourceReference is present', async () => {
@@ -545,6 +792,52 @@ describe('packageSourceBrowser', () => {
         scheme: 'file',
         path: '/workspace/node_modules/sample-client/dist/index.js',
       }),
+    );
+  });
+
+  it('reveals the requested line and column when opening a matched package source', async () => {
+    const session: MockDebugSession = {
+      id: 'session-3d',
+      name: 'Debug: sample-service',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+    const revealRange = vi.fn();
+    vscodeMockState.showTextDocument.mockResolvedValue({ revealRange });
+
+    await openPackageSource(
+      asDebugSession(session),
+      {
+        name: 'client.js',
+        path: 'file:///workspace/node_modules/sample-client/dist/client.js',
+      },
+      {
+        line: 4,
+        column: 6,
+      },
+    );
+
+    const showOptions = vscodeMockState.showTextDocument.mock.calls[0]?.[1];
+    expect(showOptions).toEqual(expect.objectContaining({
+      preview: true,
+      selection: expect.objectContaining({
+        start: expect.objectContaining({
+          line: 3,
+          character: 5,
+        }),
+        end: expect.objectContaining({
+          line: 3,
+          character: 5,
+        }),
+      }),
+    }));
+    expect(revealRange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        start: expect.objectContaining({
+          line: 3,
+          character: 5,
+        }),
+      }),
+      vscodeMockState.TextEditorRevealType.InCenterIfOutsideViewport,
     );
   });
 

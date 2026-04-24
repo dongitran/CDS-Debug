@@ -25,6 +25,7 @@ export function getScript(nonce: string): string {
       LOADING_APPS: 'loading-apps',
       READY: 'ready',
       PACKAGES: 'packages',
+      PACKAGE_SETTINGS: 'package-settings',
       BREAKPOINT_SNAPSHOTS: 'breakpoint-snapshots',
       SETTINGS: 'settings',
       PREPARING_BRANCHES: 'preparing-branches',
@@ -104,13 +105,21 @@ export function getScript(nonce: string): string {
       breakpointSnapshots: [],
       selectedBreakpointSnapshotId: null,
       packageBrowserAppName: null,
+      packageBaseEntries: [],
       packageEntries: [],
       packageBrowserSearchQuery: '',
       packageBrowserLoading: false,
       packageBrowserError: null,
+      packageSearchRequestId: 0,
+      packageSearchPending: false,
       expandedPackageBranchIds: [],
       searchPackageBranchStates: {},
       selectedPackageFileId: null,
+      debugSessionPackagePrefs: {
+        packageNameFilterRegex: '',
+      },
+      packageSettingsDraftRegex: '',
+      packageSettingsError: null,
     };
 
     // === UTILS ===
@@ -198,6 +207,7 @@ export function getScript(nonce: string): string {
         case SCREENS.LOADING_APPS:        return renderLoadingApps();
         case SCREENS.READY:               return renderReady();
         case SCREENS.PACKAGES:            return renderPackagesScreen();
+        case SCREENS.PACKAGE_SETTINGS:    return renderPackageSettingsScreen();
         case SCREENS.BREAKPOINT_SNAPSHOTS:return renderBreakpointSnapshotsScreen();
         case SCREENS.SETTINGS:            return renderSettings();
         case SCREENS.PREPARING_BRANCHES:  return renderPreparingBranches();
@@ -416,6 +426,7 @@ export function getScript(nonce: string): string {
       attachCredentialListeners();
       // Packages screen listeners (defined in packageBrowserContent.ts content)
       attachPackageListeners();
+      attachPackageSettingsListeners();
     }
 
     // === MESSAGE HANDLER ===
@@ -596,6 +607,25 @@ export function getScript(nonce: string): string {
           // and render() would rebuild the full DOM, accumulating duplicate listeners
           // on every subsequent toggle.
           return;
+        case 'DEBUG_SESSION_PACKAGE_PREFS':
+          state.debugSessionPackagePrefs = msg.payload;
+          state.packageSettingsDraftRegex = msg.payload.packageNameFilterRegex;
+          state.packageSettingsError = null;
+          if (state.screen === SCREENS.PACKAGES) {
+            if (getPackageSearchQuery() && !state.packageBrowserLoading && state.packageBaseEntries.length > 0) {
+              requestPackageSearch(state.packageBrowserAppName, state.packageBrowserSearchQuery);
+            } else {
+              restorePackageEntriesFromBase();
+            }
+            refreshPackagesPanel();
+            refreshPackagesSessionActions();
+            return;
+          }
+          if (state.screen === SCREENS.PACKAGE_SETTINGS) {
+            render();
+            return;
+          }
+          return;
         case 'BREAKPOINT_SNAPSHOTS':
           setBreakpointSnapshots((msg.payload && msg.payload.snapshots) || []);
           if (state.screen === SCREENS.READY || state.screen === SCREENS.BREAKPOINT_SNAPSHOTS) {
@@ -624,16 +654,39 @@ export function getScript(nonce: string): string {
           return;
         case 'PACKAGE_SOURCES_LOADED':
           if (msg.payload.appName !== state.packageBrowserAppName) return;
-          state.packageEntries = Array.isArray(msg.payload.packages) ? msg.payload.packages : [];
+          state.packageBaseEntries = Array.isArray(msg.payload.packages) ? msg.payload.packages : [];
+          state.packageEntries = state.packageBaseEntries.slice();
           state.packageBrowserLoading = false;
+          state.packageSearchPending = false;
           state.packageBrowserError = null;
-          if (state.screen === SCREENS.PACKAGES) refreshPackagesPanel();
+          if (getPackageSearchQuery() && state.packageBaseEntries.length > 0) {
+            requestPackageSearch(state.packageBrowserAppName, state.packageBrowserSearchQuery);
+          }
+          if (state.screen === SCREENS.PACKAGES) {
+            refreshPackagesSessionActions();
+            refreshPackagesPanel();
+          }
+          return;
+        case 'PACKAGE_SEARCH_RESULTS':
+          if (msg.payload.appName !== state.packageBrowserAppName) return;
+          if (msg.payload.requestId !== state.packageSearchRequestId) return;
+          if (msg.payload.query.trim().toLowerCase() !== getPackageSearchQuery()) return;
+          state.packageEntries = Array.isArray(msg.payload.packages) ? msg.payload.packages : [];
+          state.packageSearchPending = false;
+          state.packageBrowserError = null;
+          if (state.screen === SCREENS.PACKAGES) {
+            refreshPackagesPanel();
+          }
           return;
         case 'PACKAGE_SOURCES_ERROR':
           if (msg.payload.appName !== state.packageBrowserAppName) return;
           state.packageBrowserLoading = false;
+          state.packageSearchPending = false;
           state.packageBrowserError = msg.payload.message;
-          if (state.screen === SCREENS.PACKAGES) refreshPackagesPanel();
+          if (state.screen === SCREENS.PACKAGES) {
+            refreshPackagesSessionActions();
+            refreshPackagesPanel();
+          }
           return;
         case 'CONFIG_LOADED': {
           // Always update credential status first — used to decide initial screen.
@@ -763,6 +816,7 @@ export function getScript(nonce: string): string {
     // races where acquireVsCodeApi() state held a stale openBrowserOnAttach:true
     // value from a previous VS Code session.
     vscode.postMessage({ type: 'GET_DEBUG_PREFS' });
+    vscode.postMessage({ type: 'GET_DEBUG_SESSION_PACKAGE_PREFS' });
     vscode.postMessage({ type: 'LOAD_CONFIG' });
     render();
   </script>`;

@@ -9,7 +9,9 @@ import type {
   DebugTarget,
   E2eBridgeCommand,
   ExtensionMessage,
+  LoadedPackageEntry,
   LoadedPackageSource,
+  PackageSourceLocation,
   OrgGroupMapping,
   SyncProgress,
   WebviewMessage,
@@ -28,7 +30,15 @@ import {
   maskEmail,
   saveCredentialsToSecretStorage,
 } from '../core/shellEnv';
-import { getCachedApps, getCacheSettings, getDebugPreferences, saveCacheSettings, saveDebugPreferences } from '../storage/cacheStore';
+import {
+  getCachedApps,
+  getCacheSettings,
+  getDebugPreferences,
+  getDebugSessionPackagePreferences,
+  saveCacheSettings,
+  saveDebugPreferences,
+  saveDebugSessionPackagePreferences,
+} from '../storage/cacheStore';
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
@@ -45,7 +55,13 @@ import {
   getSessionParams,
 } from '../core/processManager';
 import { breakpointSnapshotEvents, clearBreakpointSnapshots, getBreakpointSnapshots } from '../core/breakpointSnapshotManager';
-import { loadPackageEntriesFromSessions, openPackageSource } from '../core/packageSourceBrowser';
+import {
+  createPackageSearchIndex,
+  loadPackageEntriesFromSessions,
+  openPackageSource,
+  searchPackageEntries,
+  type PackageSearchIndex,
+} from '../core/packageSourceBrowser';
 import {
   applyE2eBridgeCommand,
   getE2eActiveDebugSessionForApp,
@@ -78,6 +94,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'cdsDebug.mainView';
 
   private view?: vscode.WebviewView;
+  private readonly packageEntriesByApp = new Map<string, LoadedPackageEntry[]>();
+  private readonly packageSearchIndexByApp = new Map<string, PackageSearchIndex>();
 
   constructor(private readonly context: vscode.ExtensionContext) {
     debugProcessEvents.on('statusChanged', (payload: { appName: string, status: string, message?: string }) => {
@@ -134,6 +152,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         // state always reflects globalState — not a stale acquireVsCodeApi() snapshot
         // from a previous VS Code session where openBrowserOnAttach may have been true.
         this.post({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
+        this.post({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
         this.post({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
         break;
       }
@@ -189,8 +208,17 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         await this.handleLoadPackageSources(raw.payload.appName);
         break;
 
+      case 'SEARCH_PACKAGE_SOURCES':
+        await this.handleSearchPackageSources(
+          raw.payload.appName,
+          raw.payload.query,
+          raw.payload.requestId,
+          raw.payload.packageNameFilterRegex,
+        );
+        break;
+
       case 'OPEN_PACKAGE_SOURCE':
-        await this.handleOpenPackageSource(raw.payload.appName, raw.payload.source);
+        await this.handleOpenPackageSource(raw.payload.appName, raw.payload.source, raw.payload.location);
         break;
 
       case 'E2E_BRIDGE':
@@ -235,6 +263,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       case 'SAVE_DEBUG_PREFS':
         await saveDebugPreferences(raw.payload);
         this.post({ type: 'DEBUG_PREFS', payload: raw.payload });
+        break;
+
+      case 'GET_DEBUG_SESSION_PACKAGE_PREFS':
+        this.post({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
+        break;
+
+      case 'SAVE_DEBUG_SESSION_PACKAGE_PREFS':
+        await saveDebugSessionPackagePreferences(raw.payload);
+        this.post({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
         break;
 
       case 'SAVE_CACHE_CONFIG': {
@@ -312,19 +349,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleLoadPackageSources(appName: string): Promise<void> {
-    const e2eSessions = getE2eDebugSessionsForApp(appName);
-    const sessions = e2eSessions.length > 0 ? e2eSessions : getDebugSessionsForApp(appName);
-    if (sessions.length === 0) {
-      this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message: `No attached debug session found for ${appName}.` } });
-      return;
-    }
-
-    const rootSession = getE2eActiveDebugSessionForApp(appName) ?? getActiveDebugSessionForApp(appName);
     const log = this.buildPackageLogger(appName);
-    log(`Packages requested. Root session: ${rootSession ? `${rootSession.name} [${rootSession.id}]` : 'none'}`);
-
     try {
-      const packages = await loadPackageEntriesFromSessions(appName, sessions, log);
+      const packages = await this.getOrLoadPackageEntriesForApp(appName, log, true);
       this.post({ type: 'PACKAGE_SOURCES_LOADED', payload: { appName, packages } });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -334,7 +361,37 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async handleOpenPackageSource(appName: string, source: LoadedPackageSource): Promise<void> {
+  private async handleSearchPackageSources(
+    appName: string,
+    query: string,
+    requestId: number,
+    packageNameFilterRegex?: string,
+  ): Promise<void> {
+    const log = this.buildPackageLogger(appName);
+    try {
+      const packages = await this.getOrLoadPackageEntriesForApp(appName, log, false);
+      const existingIndex = this.packageSearchIndexByApp.get(appName);
+      const index = existingIndex ?? createPackageSearchIndex(packages);
+      if (!existingIndex) this.packageSearchIndexByApp.set(appName, index);
+
+      const searchResults = await searchPackageEntries(index, query, { packageNameFilterRegex });
+      this.post({
+        type: 'PACKAGE_SEARCH_RESULTS',
+        payload: { appName, query, requestId, packages: searchResults },
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError(`Failed to search package sources for ${appName}: ${message}`);
+      log(`Search failed: ${message}`);
+      this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
+    }
+  }
+
+  private async handleOpenPackageSource(
+    appName: string,
+    source: LoadedPackageSource,
+    location?: PackageSourceLocation,
+  ): Promise<void> {
     const session = source.debugSessionId
       ? (getE2eDebugSessionById(source.debugSessionId) ?? getDebugSessionById(source.debugSessionId))
       : (getE2eActiveDebugSessionForApp(appName) ?? getActiveDebugSessionForApp(appName));
@@ -348,13 +405,38 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         appName,
         `Opening source from ${session.name} [${session.id}] path="${source.path ?? source.name ?? 'unknown'}" sourceRef=${String(source.sourceReference ?? 0)}`,
       );
-      await openPackageSource(session, source);
+      await openPackageSource(session, source, location);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logError(`Failed to open package source for ${appName}: ${message}`);
       this.logPackageDiagnostic(appName, `Open failed: ${message}`);
       this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
     }
+  }
+
+  private async getOrLoadPackageEntriesForApp(
+    appName: string,
+    log: (message: string) => void,
+    forceReload: boolean,
+  ): Promise<LoadedPackageEntry[]> {
+    if (!forceReload) {
+      const cachedPackages = this.packageEntriesByApp.get(appName);
+      if (cachedPackages) return cachedPackages;
+    }
+
+    const e2eSessions = getE2eDebugSessionsForApp(appName);
+    const sessions = e2eSessions.length > 0 ? e2eSessions : getDebugSessionsForApp(appName);
+    if (sessions.length === 0) {
+      throw new Error(`No attached debug session found for ${appName}.`);
+    }
+
+    const rootSession = getE2eActiveDebugSessionForApp(appName) ?? getActiveDebugSessionForApp(appName);
+    log(`Packages requested. Root session: ${rootSession ? `${rootSession.name} [${rootSession.id}]` : 'none'}`);
+
+    const packages = await loadPackageEntriesFromSessions(appName, sessions, log);
+    this.packageEntriesByApp.set(appName, packages);
+    this.packageSearchIndexByApp.set(appName, createPackageSearchIndex(packages));
+    return packages;
   }
 
   private async handleSelectGroupFolder(): Promise<void> {

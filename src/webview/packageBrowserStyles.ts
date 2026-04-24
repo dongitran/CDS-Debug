@@ -267,8 +267,14 @@ export function getPackageBrowserStyles(): string {
       min-width: 0;
     }
 
-    .packages-refresh-btn {
+    .packages-session-actions {
       margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .packages-refresh-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -297,6 +303,17 @@ export function getPackageBrowserStyles(): string {
       height: 11px;
       margin-right: 0;
       border-width: 1.5px;
+    }
+
+    .packages-settings-btn {
+      width: 30px;
+      min-width: 30px;
+      padding: 0;
+      font-size: 13px;
+    }
+
+    .packages-settings-note {
+      margin-bottom: 10px;
     }
   `;
 }

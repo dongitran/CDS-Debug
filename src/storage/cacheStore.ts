@@ -1,11 +1,23 @@
 import type * as vscode from 'vscode';
-import type { CacheSettings, CfApp, CfRegionCache, DebugPreferences, SyncProgress } from '../types/index';
-import { DEFAULT_CACHE_SETTINGS, DEFAULT_DEBUG_PREFERENCES } from '../types/index';
+import type {
+  CacheSettings,
+  CfApp,
+  CfRegionCache,
+  DebugPreferences,
+  DebugSessionPackagePreferences,
+  SyncProgress,
+} from '../types/index';
+import {
+  DEFAULT_CACHE_SETTINGS,
+  DEFAULT_DEBUG_PREFERENCES,
+  DEFAULT_DEBUG_SESSION_PACKAGE_PREFERENCES,
+} from '../types/index';
 
 const CACHE_KEY = 'cds-debug.appCache';
 const SYNC_KEY = 'cds-debug.syncProgress';
 const SETTINGS_KEY = 'cds-debug.cacheSettings';
 const DEBUG_PREFS_KEY = 'cds-debug.debugPrefs';
+const DEBUG_SESSION_PACKAGE_PREFS_KEY = 'cds-debug.debugSessionPackagePrefs';
 
 let _context: vscode.ExtensionContext | undefined;
 
@@ -93,4 +105,32 @@ export async function saveDebugPreferences(prefs: DebugPreferences): Promise<voi
     ...readDebugPreferences(prefs),
   };
   await ctx().globalState.update(DEBUG_PREFS_KEY, normalized);
+}
+
+function readDebugSessionPackagePreferences(value: unknown): Partial<DebugSessionPackagePreferences> {
+  if (typeof value !== 'object' || value === null) return {};
+  const record = value as Record<string, unknown>;
+  const parsed: Partial<DebugSessionPackagePreferences> = {};
+  if (typeof record.packageNameFilterRegex === 'string') {
+    parsed.packageNameFilterRegex = record.packageNameFilterRegex;
+  }
+  return parsed;
+}
+
+export function getDebugSessionPackagePreferences(): DebugSessionPackagePreferences {
+  const stored = ctx().globalState.get<unknown>(DEBUG_SESSION_PACKAGE_PREFS_KEY);
+  return {
+    ...DEFAULT_DEBUG_SESSION_PACKAGE_PREFERENCES,
+    ...readDebugSessionPackagePreferences(stored),
+  };
+}
+
+export async function saveDebugSessionPackagePreferences(
+  prefs: DebugSessionPackagePreferences,
+): Promise<void> {
+  const normalized: DebugSessionPackagePreferences = {
+    ...DEFAULT_DEBUG_SESSION_PACKAGE_PREFERENCES,
+    ...readDebugSessionPackagePreferences(prefs),
+  };
+  await ctx().globalState.update(DEBUG_SESSION_PACKAGE_PREFS_KEY, normalized);
 }

@@ -152,6 +152,14 @@ export const DEFAULT_DEBUG_PREFERENCES: DebugPreferences = {
   enableBranchPrep: false,
 };
 
+export interface DebugSessionPackagePreferences {
+  packageNameFilterRegex: string;
+}
+
+export const DEFAULT_DEBUG_SESSION_PACKAGE_PREFERENCES: DebugSessionPackagePreferences = {
+  packageNameFilterRegex: '',
+};
+
 export type BreakpointStopReason = 'breakpoint';
 
 export interface BreakpointContextVariable {
@@ -197,11 +205,19 @@ export interface LoadedPackageSource {
   debugSessionName?: string;
 }
 
+export interface LoadedPackageFileMatch {
+  kind: 'path' | 'content';
+  line?: number;
+  column?: number;
+  preview?: string;
+}
+
 export interface LoadedPackageFile {
   id: string;
   label: string;
   relativePath: string;
   source: LoadedPackageSource;
+  match?: LoadedPackageFileMatch;
 }
 
 export interface LoadedPackageFolderNode {
@@ -231,6 +247,29 @@ export interface LoadedPackageEntry {
   tree: LoadedPackageTreeNode[];
 }
 
+export interface PackageSourceLocation {
+  line: number;
+  column?: number;
+}
+
+export type E2eLoadedSourcesPlanStep =
+  | {
+    kind: 'packages';
+    delayMs?: number;
+  }
+  | {
+    kind: 'empty';
+    delayMs?: number;
+  }
+  | {
+    kind: 'error';
+    delayMs?: number;
+    message: string;
+  }
+  | {
+    kind: 'hang';
+  };
+
 export type E2eBridgeCommand =
   | {
     action: 'EMIT_DEBUG_CONNECTING';
@@ -242,7 +281,11 @@ export type E2eBridgeCommand =
   }
   | {
     action: 'SET_PACKAGE_FIXTURE';
-    payload: { appName: string; packages: LoadedPackageEntry[] };
+    payload: {
+      appName: string;
+      packages: LoadedPackageEntry[];
+      loadedSourcesPlan?: E2eLoadedSourcesPlanStep[];
+    };
   }
   | {
     action: 'CLEAR_PACKAGE_FIXTURES';
@@ -273,6 +316,8 @@ export type WebviewMessage =
   | { type: 'SAVE_CACHE_CONFIG'; payload: CacheSettings }
   | { type: 'GET_DEBUG_PREFS' }
   | { type: 'SAVE_DEBUG_PREFS'; payload: DebugPreferences }
+  | { type: 'GET_DEBUG_SESSION_PACKAGE_PREFS' }
+  | { type: 'SAVE_DEBUG_SESSION_PACKAGE_PREFS'; payload: DebugSessionPackagePreferences }
   | { type: 'REQUEST_CHANGE_MAPPING' }
   | { type: 'SAVE_CREDENTIALS'; payload: { email: string; password: string } }
   | { type: 'GET_CREDENTIALS_STATUS' }
@@ -280,7 +325,14 @@ export type WebviewMessage =
   | { type: 'RETRY_DEBUG'; payload: { appName: string } }
   | { type: 'CLEAR_BREAKPOINT_SNAPSHOTS' }
   | { type: 'LOAD_PACKAGE_SOURCES'; payload: { appName: string } }
-  | { type: 'OPEN_PACKAGE_SOURCE'; payload: { appName: string; source: LoadedPackageSource } }
+  | {
+    type: 'SEARCH_PACKAGE_SOURCES';
+    payload: { appName: string; query: string; requestId: number; packageNameFilterRegex?: string };
+  }
+  | {
+    type: 'OPEN_PACKAGE_SOURCE';
+    payload: { appName: string; source: LoadedPackageSource; location?: PackageSourceLocation };
+  }
   | { type: 'E2E_BRIDGE'; payload: E2eBridgeCommand };
 
 // Messages from logs webview → logs extension panel
@@ -312,6 +364,7 @@ export type ExtensionMessage =
   | { type: 'SYNC_STATUS'; payload: SyncProgress }
   | { type: 'CACHE_CONFIG'; payload: CacheSettings }
   | { type: 'DEBUG_PREFS'; payload: DebugPreferences }
+  | { type: 'DEBUG_SESSION_PACKAGE_PREFS'; payload: DebugSessionPackagePreferences }
   | { type: 'BRANCH_PREP_START'; payload: { services: { appName: string; currentBranch: string; targetBranch: string }[] } }
   | { type: 'BRANCH_PREP_STATUS'; payload: { appName: string; step: BranchPrepStep; message?: string } }
   | { type: 'PROCEED_CHANGE_MAPPING' }
@@ -322,4 +375,8 @@ export type ExtensionMessage =
   | { type: 'BREAKPOINT_SNAPSHOTS'; payload: { snapshots: BreakpointContextSnapshot[] } }
   | { type: 'BREAKPOINT_SNAPSHOT_ADDED'; payload: { snapshot: BreakpointContextSnapshot } }
   | { type: 'PACKAGE_SOURCES_LOADED'; payload: { appName: string; packages: LoadedPackageEntry[] } }
+  | {
+    type: 'PACKAGE_SEARCH_RESULTS';
+    payload: { appName: string; query: string; requestId: number; packages: LoadedPackageEntry[] };
+  }
   | { type: 'PACKAGE_SOURCES_ERROR'; payload: { appName: string; message: string } };

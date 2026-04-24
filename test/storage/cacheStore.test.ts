@@ -9,10 +9,22 @@ import {
   getCacheSettings,
   saveCacheSettings,
   getDebugPreferences,
+  getDebugSessionPackagePreferences,
   saveDebugPreferences,
+  saveDebugSessionPackagePreferences,
 } from '../../src/storage/cacheStore';
-import type { CfApp, SyncProgress, CacheSettings, DebugPreferences } from '../../src/types/index';
-import { DEFAULT_CACHE_SETTINGS, DEFAULT_DEBUG_PREFERENCES } from '../../src/types/index';
+import type {
+  CacheSettings,
+  CfApp,
+  DebugPreferences,
+  DebugSessionPackagePreferences,
+  SyncProgress,
+} from '../../src/types/index';
+import {
+  DEFAULT_CACHE_SETTINGS,
+  DEFAULT_DEBUG_PREFERENCES,
+  DEFAULT_DEBUG_SESSION_PACKAGE_PREFERENCES,
+} from '../../src/types/index';
 
 function makeContext() {
   const store = new Map<string, unknown>();
@@ -217,6 +229,39 @@ describe('cacheStore', () => {
       enableBranchPrep: false,
       enableBreakpointSnapshotHandling: false,
     });
+  });
+
+  // ── debug session package preferences ──────────────────────────────────────
+
+  it('getDebugSessionPackagePreferences returns defaults when nothing has been saved', () => {
+    expect(getDebugSessionPackagePreferences()).toEqual(DEFAULT_DEBUG_SESSION_PACKAGE_PREFERENCES);
+  });
+
+  it('saveDebugSessionPackagePreferences persists package regex prefs', async () => {
+    const prefs: DebugSessionPackagePreferences = {
+      packageNameFilterRegex: '^@sample-org/',
+    };
+
+    await saveDebugSessionPackagePreferences(prefs);
+
+    expect(getDebugSessionPackagePreferences()).toEqual(prefs);
+  });
+
+  it('getDebugSessionPackagePreferences backfills missing fields from legacy data', () => {
+    const store = new Map<string, unknown>();
+    store.set('cds-debug.debugSessionPackagePrefs', {});
+    initCacheStore({
+      globalState: {
+        get: (key: string): unknown => store.get(key),
+        update: (key: string, value: unknown): Promise<void> => {
+          if (value === undefined) store.delete(key);
+          else store.set(key, value);
+          return Promise.resolve();
+        },
+      },
+    } as unknown as Parameters<typeof initCacheStore>[0]);
+
+    expect(getDebugSessionPackagePreferences()).toEqual(DEFAULT_DEBUG_SESSION_PACKAGE_PREFERENCES);
   });
 
   // ── uninitialized guard ────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   chromium,
@@ -69,8 +69,14 @@ interface FixtureFolderBuilder {
 
 interface FixturePackageSpec {
   name: string;
-  files: string[];
+  files: Array<string | { relativePath: string; content: string }>;
   version?: string;
+}
+
+interface FixtureLoadedSourcesPlanStep {
+  kind: 'packages' | 'empty' | 'error' | 'hang';
+  delayMs?: number;
+  message?: string;
 }
 
 const MOCK_ENV_EMAIL = 'e2e.mock.user@example.com';
@@ -709,10 +715,15 @@ async function setPackageFixture(
   webview: Frame,
   appName: string,
   packages: Record<string, unknown>[],
+  options?: { loadedSourcesPlan?: FixtureLoadedSourcesPlanStep[] },
 ): Promise<void> {
   await sendE2eBridgeCommand(webview, {
     action: 'SET_PACKAGE_FIXTURE',
-    payload: { appName, packages },
+    payload: {
+      appName,
+      packages,
+      loadedSourcesPlan: options?.loadedSourcesPlan,
+    },
   });
 }
 
@@ -873,12 +884,26 @@ async function readCssProperty(locator: Locator, propertyName: string): Promise<
   return locator.evaluate((element, property) => window.getComputedStyle(element).getPropertyValue(property).trim(), propertyName);
 }
 
-function createFixtureSourcePath(packageName: string, relativePath: string, version = '1.0.0'): string {
+function createFixtureSourcePath(
+  packageName: string,
+  relativePath: string,
+  version = '1.0.0',
+  rootDir = '/workspace',
+): string {
   if (packageName.startsWith('@')) {
     const encoded = packageName.replace('/', '+');
-    return `/workspace/node_modules/.pnpm/${encoded}@${version}/node_modules/${packageName}/${relativePath}`;
+    return join(rootDir, 'node_modules', '.pnpm', `${encoded}@${version}`, 'node_modules', packageName, relativePath);
   }
-  return `/workspace/node_modules/${packageName}/${relativePath}`;
+  return join(rootDir, 'node_modules', packageName, relativePath);
+}
+
+function normalizeFixturePackageFile(
+  file: string | { relativePath: string; content: string },
+): { relativePath: string; content?: string } {
+  if (typeof file === 'string') {
+    return { relativePath: file };
+  }
+  return file;
 }
 
 function createFixtureFolderBuilder(name: string, path: string): FixtureFolderBuilder {
@@ -941,7 +966,8 @@ function buildFixtureTree(packageId: string, files: FixturePackageFile[]): Recor
 }
 
 function createPackageFixture(spec: FixturePackageSpec): Record<string, unknown> {
-  const files = spec.files.map((relativePath) => {
+  const files = spec.files.map((file) => {
+    const relativePath = normalizeFixturePackageFile(file).relativePath;
     const fileName = relativePath.split('/').pop() ?? relativePath;
     return {
       id: `${spec.name}:${relativePath}`,
@@ -961,6 +987,44 @@ function createPackageFixture(spec: FixturePackageSpec): Record<string, unknown>
     files,
     tree: buildFixtureTree(spec.name, files),
   };
+}
+
+async function createPackageFixtureInWorkspace(
+  workspaceDir: string,
+  spec: FixturePackageSpec,
+): Promise<Record<string, unknown>> {
+  const files = await Promise.all(spec.files.map(async (file) => {
+    const normalizedFile = normalizeFixturePackageFile(file);
+    const relativePath = normalizedFile.relativePath;
+    const absolutePath = createFixtureSourcePath(spec.name, relativePath, spec.version, workspaceDir);
+    await mkdir(dirname(absolutePath), { recursive: true });
+    await writeFile(
+      absolutePath,
+      normalizedFile.content ?? `// ${spec.name} :: ${relativePath}\n`,
+      'utf8',
+    );
+    return {
+      id: `${spec.name}:${relativePath}`,
+      label: relativePath,
+      relativePath,
+      source: {
+        name: relativePath.split('/').pop() ?? relativePath,
+        path: absolutePath,
+      },
+    };
+  }));
+
+  return {
+    id: spec.name,
+    name: spec.name,
+    displayName: spec.version ? `${spec.name}@${spec.version}` : spec.name,
+    files,
+    tree: buildFixtureTree(spec.name, files),
+  };
+}
+
+async function expectEditorCursorPosition(workbenchPage: Page, line: number, column: number): Promise<void> {
+  await expect(workbenchPage.getByText(new RegExp(`Ln\\s+${line},\\s+Col\\s+${column}`))).toBeVisible({ timeout: 10_000 });
 }
 
 async function positionPackageTreeRow(
@@ -2125,6 +2189,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         expect((refreshBox?.x ?? 0)).toBeGreaterThan((headingBox?.x ?? 0) + 40);
 
         await expect(webview.locator('.packages-tree-package-row')).toHaveCount(2, { timeout: 3_000 });
+        await expect(webview.locator('#btn-refresh-packages')).toBeEnabled();
         await webview.locator('.packages-tree-package-row', { hasText: 'sample-client' }).click();
         await expect(webview.locator('.packages-tree-folder-row', { hasText: 'dist' })).toHaveCount(1, { timeout: 3_000 });
         await webview.locator('.packages-tree-folder-row', { hasText: 'dist' }).click();
@@ -2211,6 +2276,185 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-alpha' })).toHaveCount(0);
         const packageErrorEvents = await stopPackagesErrorMonitor(webview);
         expect(packageErrorEvents).toEqual([]);
+        await clearPackageFixtures(webview);
+      });
+    });
+
+    test('Opening Packages immediately after attach waits for sources instead of flashing a false error', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await emitDebugConnecting(webview, {
+          appNames: ['mock-service-a'],
+          ports: { 'mock-service-a': 20000 },
+        });
+        await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+        await setPackageFixture(
+          webview,
+          'mock-service-a',
+          [
+            createPackageFixture({
+              name: 'sample-client',
+              files: ['dist/client.js'],
+            }),
+          ],
+          {
+            loadedSourcesPlan: [
+              { kind: 'empty', delayMs: 150 },
+              { kind: 'packages', delayMs: 150 },
+            ],
+          },
+        );
+        await startPackagesErrorMonitor(webview);
+
+        await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+        await expect(webview.locator('#packages-app-select')).toBeVisible();
+        await captureStepEvidence(workbenchPage, 'packages-immediate-open-before-sources');
+
+        await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-client' })).toBeVisible({
+          timeout: 4_000,
+        });
+        await expect(webview.locator('#btn-refresh-packages')).toBeEnabled();
+        await expect(webview.locator('.packages-error')).toHaveCount(0);
+
+        const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+        expect(packageErrorEvents).toEqual([]);
+        await clearPackageFixtures(webview);
+      });
+    });
+
+    test('Reload becomes clickable again after a hanging package-source request times out', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await emitDebugConnecting(webview, {
+          appNames: ['mock-service-a'],
+          ports: { 'mock-service-a': 20000 },
+        });
+        await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+        await setPackageFixture(
+          webview,
+          'mock-service-a',
+          [
+            createPackageFixture({
+              name: 'sample-client',
+              files: ['dist/client.js'],
+            }),
+          ],
+          {
+            loadedSourcesPlan: [
+              { kind: 'hang' },
+              { kind: 'packages', delayMs: 150 },
+            ],
+          },
+        );
+        await startPackagesErrorMonitor(webview);
+
+        await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+        await expect(webview.locator('#packages-app-select')).toBeVisible();
+        await expect(webview.locator('#btn-refresh-packages')).toBeDisabled();
+        await captureStepEvidence(workbenchPage, 'packages-hanging-load');
+
+        await expect(webview.locator('#btn-refresh-packages')).toBeEnabled({ timeout: 6_000 });
+        await expect(webview.locator('.packages-error')).toBeVisible();
+
+        const timeoutErrors = await readPackagesErrorEvents(webview);
+        expect(timeoutErrors.some((message) => /timed out|timeout/i.test(message))).toBe(true);
+
+        await webview.locator('#btn-refresh-packages').click();
+        await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-client' })).toBeVisible({
+          timeout: 4_000,
+        });
+        await expect(webview.locator('.packages-error')).toHaveCount(0);
+
+        await stopPackagesErrorMonitor(webview);
+        await clearPackageFixtures(webview);
+      });
+    });
+
+    test('User can save a debug session package regex filter and apply it before search input filtering', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await emitDebugConnecting(webview, {
+          appNames: ['mock-service-a'],
+          ports: { 'mock-service-a': 20000 },
+        });
+        await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+        await setPackageFixture(webview, 'mock-service-a', [
+          createPackageFixture({
+            name: 'sample-client',
+            files: ['dist/client.js'],
+          }),
+          createPackageFixture({
+            name: '@sample-org/demo-kit',
+            version: '1.4.0',
+            files: ['dist/main.js'],
+          }),
+        ]);
+        await startPackagesErrorMonitor(webview);
+
+        await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+        await expect(webview.locator('.packages-tree-package-row')).toHaveCount(2, { timeout: 3_000 });
+
+        await webview.locator('#btn-packages-settings').click();
+        await expect(webview.getByText('Debug Session Settings')).toBeVisible();
+        await expect(webview.locator('#packages-filter-regex-input')).toBeVisible();
+        await webview.locator('#packages-filter-regex-input').fill('^@sample-org/');
+        await captureStepEvidence(workbenchPage, 'packages-settings-regex');
+        await webview.locator('#btn-save-package-settings').click();
+
+        await expect(webview.locator('#packages-app-select')).toBeVisible();
+        await expect(webview.locator('.packages-tree-package-row')).toHaveCount(1, { timeout: 3_000 });
+        await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' })).toBeVisible();
+        await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-client' })).toHaveCount(0);
+
+        await webview.locator('#packages-search-input').fill('sample-client');
+        await expect(webview.locator('.packages-tree-package-row')).toHaveCount(0);
+        await expect(webview.locator('.packages-empty')).toContainText('No packages or files match');
+
+        await webview.locator('#btn-packages-settings').click();
+        await expect(webview.locator('#packages-filter-regex-input')).toHaveValue('^@sample-org/');
+
+        const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+        expect(packageErrorEvents).toEqual([]);
+        await clearPackageFixtures(webview);
+      });
+    });
+
+    test('Invalid debug session package regex is rejected in settings', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await emitDebugConnecting(webview, {
+          appNames: ['mock-service-a'],
+          ports: { 'mock-service-a': 20000 },
+        });
+        await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+        await setPackageFixture(webview, 'mock-service-a', [
+          createPackageFixture({
+            name: 'sample-client',
+            files: ['dist/client.js'],
+          }),
+        ]);
+
+        await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+        await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-client' })).toBeVisible({
+          timeout: 3_000,
+        });
+
+        await webview.locator('#btn-packages-settings').click();
+        await expect(webview.locator('#packages-filter-regex-input')).toBeVisible();
+        await webview.locator('#packages-filter-regex-input').fill('[');
+        await webview.locator('#btn-save-package-settings').click();
+
+        await expect(webview.getByText('Debug Session Settings')).toBeVisible();
+        await expect(webview.locator('.error-box')).toContainText('Invalid regex');
+        await expect(webview.locator('#packages-app-select')).toHaveCount(0);
         await clearPackageFixtures(webview);
       });
     });
@@ -2388,6 +2632,129 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         expect(packageErrorEvents).toEqual([]);
         await clearPackageFixtures(webview);
       });
+    });
+
+    test('User can search package file contents and open the matching file at the matched line', async () => {
+      const workspaceDir = await createTempDirectory('cds-debug-e2e-package-content-');
+
+      try {
+        const contentFixture = await createPackageFixtureInWorkspace(workspaceDir, {
+          name: 'sample-client',
+          files: [
+            {
+              relativePath: 'dist/client.js',
+              content: [
+                'export function createClient() {',
+                '  const ready = true;',
+                '  return ready;',
+                '}',
+                '',
+                'sampleTokenMarker();',
+              ].join('\n'),
+            },
+          ],
+        });
+
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await waitForObservation();
+
+          await emitDebugConnecting(webview, {
+            appNames: ['mock-service-a'],
+            ports: { 'mock-service-a': 20000 },
+          });
+          await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+          await setPackageFixture(webview, 'mock-service-a', [contentFixture]);
+          await startPackagesErrorMonitor(webview);
+
+          await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+          await expect(webview.locator('#packages-app-select')).toBeVisible();
+          await webview.locator('#packages-search-input').fill('sampleTokenMarker');
+          await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-client' })).toBeVisible({
+            timeout: 5_000,
+          });
+          await expect(webview.locator('.packages-tree-file-row', { hasText: 'client.js' })).toBeVisible({
+            timeout: 5_000,
+          });
+          await captureStepEvidence(workbenchPage, 'packages-search-content-match');
+          await waitForObservation();
+
+          await webview.locator('.packages-tree-file-row', { hasText: 'client.js' }).click();
+          await expectEditorCursorPosition(workbenchPage, 6, 1);
+          await captureStepEvidence(workbenchPage, 'packages-search-content-opened');
+
+          const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+          expect(packageErrorEvents).toEqual([]);
+          await clearPackageFixtures(webview);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
+    });
+
+    test('Debug session package regex filtering still applies before content search results are shown', async () => {
+      const workspaceDir = await createTempDirectory('cds-debug-e2e-package-filter-');
+
+      try {
+        const scopedFixture = await createPackageFixtureInWorkspace(workspaceDir, {
+          name: '@sample-org/demo-kit',
+          version: '1.4.0',
+          files: [
+            {
+              relativePath: 'dist/main.js',
+              content: 'export const sampleScopedToken = true;\n',
+            },
+          ],
+        });
+        const genericFixture = await createPackageFixtureInWorkspace(workspaceDir, {
+          name: 'sample-client',
+          files: [
+            {
+              relativePath: 'dist/client.js',
+              content: 'export const sampleScopedToken = false;\n',
+            },
+          ],
+        });
+
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await waitForObservation();
+
+          await emitDebugConnecting(webview, {
+            appNames: ['mock-service-a'],
+            ports: { 'mock-service-a': 20000 },
+          });
+          await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+          await setPackageFixture(webview, 'mock-service-a', [scopedFixture, genericFixture]);
+          await startPackagesErrorMonitor(webview);
+
+          await webview.locator('.active-card', { hasText: 'mock-service-a' }).locator('.active-packages-btn').click();
+          await expect(webview.locator('.packages-tree-package-row')).toHaveCount(2, { timeout: 5_000 });
+
+          await webview.locator('#btn-packages-settings').click();
+          await webview.locator('#packages-filter-regex-input').fill('^@sample-org/');
+          await webview.locator('#btn-save-package-settings').click();
+          await expect(webview.locator('#packages-app-select')).toBeVisible();
+
+          await webview.locator('#packages-search-input').fill('sampleScopedToken');
+          await expect(webview.locator('.packages-tree-package-row', { hasText: '@sample-org/demo-kit' })).toBeVisible({
+            timeout: 5_000,
+          });
+          await expect(webview.locator('.packages-tree-package-row', { hasText: 'sample-client' })).toHaveCount(0);
+          await expect(webview.locator('.packages-tree-file-row', { hasText: 'main.js' })).toBeVisible({
+            timeout: 5_000,
+          });
+          await captureStepEvidence(workbenchPage, 'packages-search-content-regex-filtered');
+
+          const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+          expect(packageErrorEvents).toEqual([]);
+          await clearPackageFixtures(webview);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
     });
   });
 

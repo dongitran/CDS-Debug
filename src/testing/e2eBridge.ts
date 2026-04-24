@@ -1,7 +1,9 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type * as vscode from 'vscode';
 import type {
   CredentialStatus,
   E2eBridgeCommand,
+  E2eLoadedSourcesPlanStep,
   LoadedPackageEntry,
   LoadedPackageSource,
 } from '../types/index';
@@ -14,6 +16,7 @@ interface E2eFakeSessionSet {
 const E2E_REMOTE_PROCESS_NAME = 'Remote Process [0]';
 const fakeSessionsByApp = new Map<string, E2eFakeSessionSet>();
 let credentialStatusOverride: CredentialStatus | undefined;
+const DEFAULT_LOADED_SOURCES_PLAN: readonly E2eLoadedSourcesPlanStep[] = [{ kind: 'packages' }];
 
 function clonePackageFixtures(packages: readonly LoadedPackageEntry[]): LoadedPackageEntry[] {
   return packages.map((entry) => ({
@@ -34,10 +37,59 @@ function flattenLoadedSources(packages: readonly LoadedPackageEntry[]): LoadedPa
   );
 }
 
+function cloneLoadedSourcesPlan(
+  loadedSourcesPlan: readonly E2eLoadedSourcesPlanStep[] | undefined,
+): E2eLoadedSourcesPlanStep[] {
+  const plan = loadedSourcesPlan && loadedSourcesPlan.length > 0
+    ? loadedSourcesPlan
+    : DEFAULT_LOADED_SOURCES_PLAN;
+  return plan.map((step) => ({ ...step }));
+}
+
+function buildLoadedSourcesRequestHandler(
+  packages: readonly LoadedPackageEntry[],
+  loadedSourcesPlan: readonly E2eLoadedSourcesPlanStep[] | undefined,
+): (command: string) => Promise<unknown> {
+  const plan = cloneLoadedSourcesPlan(loadedSourcesPlan);
+  const sources = flattenLoadedSources(packages);
+  let requestCount = 0;
+
+  return async (command: string): Promise<unknown> => {
+    if (command !== 'loadedSources') {
+      throw new Error(`Unsupported fake debug request: ${command}`);
+    }
+
+    const fallbackStep = DEFAULT_LOADED_SOURCES_PLAN[0];
+    if (!fallbackStep) {
+      throw new Error('Default loaded-sources plan is not configured.');
+    }
+    const step = plan[Math.min(requestCount, plan.length - 1)] ?? fallbackStep;
+    requestCount += 1;
+
+    if ('delayMs' in step && typeof step.delayMs === 'number' && step.delayMs > 0) {
+      await delay(step.delayMs);
+    }
+
+    switch (step.kind) {
+      case 'packages':
+        return { sources };
+      case 'empty':
+        return { sources: [] };
+      case 'error':
+        throw new Error(step.message);
+      case 'hang':
+        return new Promise<never>((resolve) => {
+          void resolve;
+          return undefined;
+        });
+    }
+  };
+}
+
 function createFakeDebugSession(
   sessionId: string,
   sessionName: string,
-  sources: readonly LoadedPackageSource[],
+  onCustomRequest: (command: string) => Promise<unknown>,
   parentSession?: vscode.DebugSession,
 ): vscode.DebugSession {
   return {
@@ -45,22 +97,25 @@ function createFakeDebugSession(
     name: sessionName,
     type: 'pwa-node',
     parentSession,
-    customRequest: (command: string): Promise<unknown> => {
-      if (command === 'loadedSources') {
-        return Promise.resolve({ sources });
-      }
-      return Promise.reject(new Error(`Unsupported fake debug request: ${command}`));
-    },
+    customRequest: (command: string): Promise<unknown> => onCustomRequest(command),
   } as unknown as vscode.DebugSession;
 }
 
-function createFakeSessionSet(appName: string, packages: readonly LoadedPackageEntry[]): E2eFakeSessionSet {
-  const sources = flattenLoadedSources(packages);
+function createFakeSessionSet(
+  appName: string,
+  packages: readonly LoadedPackageEntry[],
+  loadedSourcesPlan?: readonly E2eLoadedSourcesPlanStep[],
+): E2eFakeSessionSet {
   const rootSessionId = `e2e:${appName}:root`;
   const childSessionId = `e2e:${appName}:remote-process-0`;
   const rootSessionName = `Debug: ${appName}`;
-  const rootSession = createFakeDebugSession(rootSessionId, rootSessionName, []);
-  const childSession = createFakeDebugSession(childSessionId, E2E_REMOTE_PROCESS_NAME, sources, rootSession);
+  const rootSession = createFakeDebugSession(rootSessionId, rootSessionName, () => Promise.resolve({ sources: [] }));
+  const childSession = createFakeDebugSession(
+    childSessionId,
+    E2E_REMOTE_PROCESS_NAME,
+    buildLoadedSourcesRequestHandler(packages, loadedSourcesPlan),
+    rootSession,
+  );
   return {
     rootSession,
     sessions: [rootSession, childSession],
@@ -82,7 +137,10 @@ export function applyE2eBridgeCommand(command: E2eBridgeCommand): void {
   switch (command.action) {
     case 'SET_PACKAGE_FIXTURE': {
       const packages = clonePackageFixtures(command.payload.packages);
-      fakeSessionsByApp.set(command.payload.appName, createFakeSessionSet(command.payload.appName, packages));
+      fakeSessionsByApp.set(
+        command.payload.appName,
+        createFakeSessionSet(command.payload.appName, packages, command.payload.loadedSourcesPlan),
+      );
       return;
     }
     case 'CLEAR_PACKAGE_FIXTURES':

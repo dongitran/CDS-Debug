@@ -25,6 +25,9 @@ describe('webview markup contracts', () => {
     expect(packageScript).not.toContain('packages-tree-badge');
     expect(packageScript).toContain('packages-session-header');
     expect(packageScript).toContain('packages-session-heading');
+    expect(packageScript).toContain('btn-packages-settings');
+    expect(packageScript).toContain('renderPackageSettingsScreen');
+    expect(packageScript).toContain('packages-filter-regex-input');
     expect(packageScript).toContain('<span>Reload</span>');
     expect(packageScript).not.toContain('<span>Refresh</span>');
     expect(packageScript).toContain('trimPackageDisplayLabel');
@@ -37,7 +40,9 @@ describe('webview markup contracts', () => {
     const packageStyles = getPackageBrowserStyles();
 
     expect(packageStyles).toContain('.packages-session-header');
+    expect(packageStyles).toContain('.packages-session-actions');
     expect(packageStyles).toContain('.packages-refresh-btn');
+    expect(packageStyles).toContain('.packages-settings-btn');
     expect(packageStyles).toContain('.packages-tree-icon-package');
     expect(packageStyles).toContain('.packages-tree-icon-folder');
     expect(packageStyles).toContain('.packages-tree-icon-file');

@@ -10,6 +10,39 @@ export function getPackageBrowserScriptContent(): string {
       return (state.packageBrowserSearchQuery || '').trim().toLowerCase();
     }
 
+    function resetPackageSearchState() {
+      state.packageSearchRequestId = 0;
+      state.packageSearchPending = false;
+    }
+
+    function restorePackageEntriesFromBase() {
+      state.packageEntries = Array.isArray(state.packageBaseEntries)
+        ? state.packageBaseEntries.slice()
+        : [];
+    }
+
+    function getPackageNameFilterRegexSource() {
+      var prefs = state.debugSessionPackagePrefs;
+      if (!prefs || typeof prefs.packageNameFilterRegex !== 'string') return '';
+      return prefs.packageNameFilterRegex.trim();
+    }
+
+    function getPackageNameFilterRegex() {
+      var source = getPackageNameFilterRegexSource();
+      if (!source) return null;
+      try {
+        return new RegExp(source);
+      } catch {
+        return null;
+      }
+    }
+
+    function matchesPackageNameFilter(entry) {
+      var regex = getPackageNameFilterRegex();
+      if (!regex) return true;
+      return regex.test(entry.name || '');
+    }
+
     function resetPackageTreeState() {
       state.expandedPackageBranchIds = [];
       state.searchPackageBranchStates = {};
@@ -103,7 +136,8 @@ export function getPackageBrowserScriptContent(): string {
     function matchesPackageFile(node, query) {
       return node.name.toLowerCase().includes(query)
         || node.path.toLowerCase().includes(query)
-        || node.file.relativePath.toLowerCase().includes(query);
+        || node.file.relativePath.toLowerCase().includes(query)
+        || !!node.file.match;
     }
 
     function cloneVisibleFolderNode(node, children) {
@@ -150,6 +184,7 @@ export function getPackageBrowserScriptContent(): string {
     function getVisiblePackageViews() {
       var query = getPackageSearchQuery();
       return state.packageEntries
+        .filter(function(entry) { return matchesPackageNameFilter(entry); })
         .map(function(entry) {
           var packageMatches = !query
             || entry.displayName.toLowerCase().includes(query)
@@ -202,14 +237,34 @@ export function getPackageBrowserScriptContent(): string {
       if (resetSearch) state.packageBrowserSearchQuery = '';
       state.packageBrowserLoading = true;
       state.packageBrowserError = null;
+      state.packageBaseEntries = [];
       state.packageEntries = [];
+      resetPackageSearchState();
       resetPackageTreeState();
+    }
+
+    function requestPackageSearch(appName, rawQuery) {
+      var query = (rawQuery || '').trim();
+      if (!appName || !query) return;
+      restorePackageEntriesFromBase();
+      state.packageSearchRequestId = (state.packageSearchRequestId || 0) + 1;
+      state.packageSearchPending = true;
+      vscode.postMessage({
+        type: 'SEARCH_PACKAGE_SOURCES',
+        payload: {
+          appName: appName,
+          query: query,
+          requestId: state.packageSearchRequestId,
+          packageNameFilterRegex: getPackageNameFilterRegexSource(),
+        },
+      });
     }
 
     function requestPackageSources(appName, resetSearch) {
       if (!appName) return;
       beginPackageSourceLoad(appName, !!resetSearch);
       if (state.screen === SCREENS.PACKAGES) {
+        refreshPackagesSessionActions();
         refreshPackagesPanel();
       }
       vscode.postMessage({ type: 'LOAD_PACKAGE_SOURCES', payload: { appName: appName } });
@@ -229,7 +284,9 @@ export function getPackageBrowserScriptContent(): string {
         state.packageBrowserAppName = null;
         state.packageBrowserLoading = false;
         state.packageBrowserError = null;
+        state.packageBaseEntries = [];
         state.packageEntries = [];
+        resetPackageSearchState();
         resetPackageTreeState();
         render();
         return;
@@ -326,6 +383,32 @@ export function getPackageBrowserScriptContent(): string {
       if (!focusNodeId) return;
       var row = findTreeRowById(panel, focusNodeId);
       if (row) focusTreeRow(row, !!preventScroll);
+    }
+
+    function renderPackagesSessionActions() {
+      return '<div class="packages-session-actions" id="packages-session-actions">'
+        + renderPackagesRefreshButton()
+        + renderPackagesSettingsButton()
+        + '</div>';
+    }
+
+    function attachPackagesSessionActionListeners() {
+      document.getElementById('btn-refresh-packages')?.addEventListener('click', function() {
+        requestPackageSources(state.packageBrowserAppName, false);
+      });
+      document.getElementById('btn-packages-settings')?.addEventListener('click', function() {
+        state.packageSettingsDraftRegex = getPackageNameFilterRegexSource();
+        state.packageSettingsError = null;
+        state.screen = SCREENS.PACKAGE_SETTINGS;
+        render();
+      });
+    }
+
+    function refreshPackagesSessionActions() {
+      var actions = document.getElementById('packages-session-actions');
+      if (!actions) return;
+      actions.innerHTML = renderPackagesRefreshButton() + renderPackagesSettingsButton();
+      attachPackagesSessionActionListeners();
     }
 
     function renderTreeDisclosure(isExpanded, isLeaf) {
@@ -432,6 +515,7 @@ export function getPackageBrowserScriptContent(): string {
 
     function renderPackagesPanelContent() {
       var appNames = getPackageBrowserAppNames();
+      var hasLoadedPackages = Array.isArray(state.packageBaseEntries) && state.packageBaseEntries.length > 0;
       if (appNames.length === 0) {
         return '<div class="packages-empty">No attached debug sessions are available.</div>';
       }
@@ -446,6 +530,9 @@ export function getPackageBrowserScriptContent(): string {
       }
 
       if (state.packageEntries.length === 0) {
+        if (hasLoadedPackages) {
+          return errorBox + '<div class="packages-empty">No packages or files match the current filter.</div>';
+        }
         return errorBox + '<div class="packages-empty">No loaded package sources found for this debug session.</div>';
       }
 
@@ -473,6 +560,23 @@ export function getPackageBrowserScriptContent(): string {
         + '</button>';
     }
 
+    function renderPackagesSettingsButton() {
+      return '<button class="gear-btn packages-settings-btn" id="btn-packages-settings"'
+        + ' title="Debug session settings" aria-label="Open debug session settings">'
+        + '&#9881;'
+        + '</button>';
+    }
+
+    function validatePackageSettingsRegex(regexSource) {
+      if (!regexSource) return null;
+      try {
+        new RegExp(regexSource);
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    }
+
     function renderPackagesScreen() {
       var appNames = getPackageBrowserAppNames();
       var options = appNames.map(function(appName) {
@@ -484,7 +588,7 @@ export function getPackageBrowserScriptContent(): string {
         <div class="ready-layout">
           <div class="packages-session-header">
             <div class="section-label packages-session-heading">Debug Session</div>
-            \${renderPackagesRefreshButton()}
+            \${renderPackagesSessionActions()}
           </div>
           <select class="select" id="packages-app-select" aria-label="Select debug session" \${appNames.length === 0 ? 'disabled' : ''}>
             \${options || '<option value="">No attached sessions</option>'}
@@ -496,6 +600,34 @@ export function getPackageBrowserScriptContent(): string {
           <div id="packages-panel" class="packages-panel">\${renderPackagesPanelContent()}</div>
           <div class="footer" style="padding-top:0">
             <button class="btn btn-secondary" id="btn-back-packages">&#8592; Back to Launcher</button>
+          </div>
+        </div>
+      \`;
+    }
+
+    function renderPackageSettingsScreen() {
+      var regexSource = state.packageSettingsDraftRegex || '';
+      return \`
+        <div class="ready-layout">
+          <div class="step-header">
+            <span class="step-title">Debug Session Settings</span>
+          </div>
+          \${state.packageSettingsError ? '<div class="error-box">' + escape(state.packageSettingsError) + '</div>' : ''}
+          <div class="section-label">Package Regex Filter</div>
+          <div class="info-box packages-settings-note">
+            Apply a JavaScript regex to package names before the Packages search input runs. Example: <code>^@sample-org/</code>
+          </div>
+          <input class="input" id="packages-filter-regex-input"
+            placeholder="^@sample-org/"
+            aria-label="Package regex filter"
+            value="\${escape(regexSource)}" />
+          <div class="radio-desc" style="margin-top:6px">
+            Leave empty to show every package.
+          </div>
+          <div class="footer" style="margin-top:auto">
+            <button class="btn" id="btn-save-package-settings">Save</button>
+            <div style="height:6px"></div>
+            <button class="btn btn-secondary" id="btn-back-package-settings">&#8592; Back to Packages</button>
           </div>
         </div>
       \`;
@@ -514,13 +646,24 @@ export function getPackageBrowserScriptContent(): string {
         searchInput.addEventListener('input', function(e) {
           state.packageBrowserSearchQuery = e.target.value;
           clearSearchPackageBranchStates();
+          state.selectedPackageFileId = null;
+          if (!getPackageSearchQuery()) {
+            state.packageSearchRequestId = (state.packageSearchRequestId || 0) + 1;
+            state.packageSearchPending = false;
+            restorePackageEntriesFromBase();
+            refreshPackagesPanel();
+            return;
+          }
+          if (state.packageBrowserLoading || !Array.isArray(state.packageBaseEntries) || state.packageBaseEntries.length === 0) {
+            refreshPackagesPanel();
+            return;
+          }
+          requestPackageSearch(state.packageBrowserAppName, state.packageBrowserSearchQuery);
           refreshPackagesPanel();
         });
       }
 
-      document.getElementById('btn-refresh-packages')?.addEventListener('click', function() {
-        requestPackageSources(state.packageBrowserAppName, false);
-      });
+      attachPackagesSessionActionListeners();
 
       document.getElementById('btn-back-packages')?.addEventListener('click', function() {
         state.screen = SCREENS.READY;
@@ -550,6 +693,12 @@ export function getPackageBrowserScriptContent(): string {
           payload: {
             appName: state.packageBrowserAppName,
             source: file.source,
+            location: file.match && file.match.kind === 'content' && file.match.line
+              ? {
+                line: file.match.line,
+                column: file.match.column || 1,
+              }
+              : undefined,
           },
         });
       });
@@ -604,6 +753,53 @@ export function getPackageBrowserScriptContent(): string {
           }
           focusParentTreeRow(panel, row);
         }
+      });
+    }
+
+    function attachPackageSettingsListeners() {
+      var regexInput = document.getElementById('packages-filter-regex-input');
+      if (regexInput) {
+        regexInput.addEventListener('input', function(e) {
+          state.packageSettingsDraftRegex = e.target.value;
+          state.packageSettingsError = null;
+        });
+      }
+
+      document.getElementById('btn-save-package-settings')?.addEventListener('click', function() {
+        var regexSource = (state.packageSettingsDraftRegex || '').trim();
+        var validationError = validatePackageSettingsRegex(regexSource);
+        if (validationError) {
+          state.packageSettingsError = 'Invalid regex: ' + validationError;
+          render();
+          return;
+        }
+
+        state.debugSessionPackagePrefs = {
+          packageNameFilterRegex: regexSource,
+        };
+        state.packageSettingsDraftRegex = regexSource;
+        state.packageSettingsError = null;
+        state.screen = SCREENS.PACKAGES;
+        render();
+        if (getPackageSearchQuery()) {
+          requestPackageSearch(state.packageBrowserAppName, state.packageBrowserSearchQuery);
+        } else {
+          restorePackageEntriesFromBase();
+          refreshPackagesPanel();
+        }
+        vscode.postMessage({
+          type: 'SAVE_DEBUG_SESSION_PACKAGE_PREFS',
+          payload: {
+            packageNameFilterRegex: regexSource,
+          },
+        });
+      });
+
+      document.getElementById('btn-back-package-settings')?.addEventListener('click', function() {
+        state.packageSettingsDraftRegex = getPackageNameFilterRegexSource();
+        state.packageSettingsError = null;
+        state.screen = SCREENS.PACKAGES;
+        render();
       });
     }
   `;
