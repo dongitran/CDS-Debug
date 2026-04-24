@@ -462,9 +462,9 @@ export function getPackageBrowserScriptContent(): string {
 
     function renderPackagesRefreshButton() {
       var buttonInnerHtml = state.packageBrowserLoading
-        ? '<span class="spinner packages-refresh-spinner"></span><span>Loading</span>'
-        : '<span aria-hidden="true">&#8635;</span><span>Refresh</span>';
-      var title = state.packageBrowserLoading ? 'Loading packages' : 'Refresh packages';
+        ? '<span class="spinner packages-refresh-spinner"></span><span>Reload</span>'
+        : '<span aria-hidden="true">&#8635;</span><span>Reload</span>';
+      var title = 'Reload packages';
       return '<button class="gear-btn packages-refresh-btn" id="btn-refresh-packages"'
         + ' title="' + title + '" aria-label="' + title + '"'
         + (state.packageBrowserLoading ? ' disabled' : '')

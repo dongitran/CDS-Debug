@@ -2114,6 +2114,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('#packages-app-select')).toBeVisible();
         await expect(webview.locator('#packages-search-input')).toBeVisible();
         await expect(webview.locator('.packages-tree-badge')).toHaveCount(0);
+        await expect(webview.locator('#btn-refresh-packages')).toContainText('Reload');
         await captureStepEvidence(workbenchPage, 'packages-tree-opened');
 
         const headingBox = await webview.locator('.packages-session-heading').boundingBox();

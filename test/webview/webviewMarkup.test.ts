@@ -25,6 +25,8 @@ describe('webview markup contracts', () => {
     expect(packageScript).not.toContain('packages-tree-badge');
     expect(packageScript).toContain('packages-session-header');
     expect(packageScript).toContain('packages-session-heading');
+    expect(packageScript).toContain('<span>Reload</span>');
+    expect(packageScript).not.toContain('<span>Refresh</span>');
     expect(packageScript).toContain('trimPackageDisplayLabel');
     expect(packageScript).toContain('packages-tree');
     expect(packageScript).toContain('data-tree-branch-id');
