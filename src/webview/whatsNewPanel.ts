@@ -132,8 +132,9 @@ function buildHtml(): string {
     }
 
     .hero {
-      background: linear-gradient(135deg, var(--vscode-activityBar-background, #333) 0%, var(--vscode-sideBar-background, #252526) 100%);
-      border-bottom: 1px solid var(--vscode-sideBar-border, #444);
+      background: var(--vscode-editor-background);
+      border-top: 3px solid var(--vscode-focusBorder, #0078d4);
+      border-bottom: 1px solid var(--vscode-sideBar-border, #3c3c3c);
       padding: 40px 48px 36px;
       display: flex;
       align-items: center;
