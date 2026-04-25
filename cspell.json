@@ -130,6 +130,7 @@
     "credential",
     "credentials",
     "requestfailed",
-    "pkill"
+    "pkill",
+    "localappdata"
   ]
 }

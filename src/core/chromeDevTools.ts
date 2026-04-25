@@ -1,8 +1,26 @@
 import * as http from 'node:http';
-import * as vscode from 'vscode';
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { logInfo, logWarn } from './logger';
 
 const INSPECTOR_METADATA_TIMEOUT_MS = 2_000;
+const LINUX_CHROME_COMMANDS = ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium'] as const;
+const SAFE_DEVTOOLS_URL_PATTERN = /^devtools:\/\/devtools\/bundled\/inspector\.html\?ws=localhost:\d+\/[A-Za-z0-9._~-]+$/;
+const CHROME_SPAWN_OPTIONS: SpawnOptions = {
+  detached: true,
+  shell: false,
+  stdio: 'ignore',
+  windowsHide: true,
+};
+
+export interface ChromeLaunchCommand {
+  command: string;
+  args: string[];
+}
+
+interface ChromeLaunchEnvironment {
+  env: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
+}
 
 function parseTargetIdFromUrl(rawUrl: string | undefined): string | null {
   if (rawUrl === undefined) return null;
@@ -54,6 +72,109 @@ export function extractInspectorTargetId(metadata: unknown): string | null {
 
 export function buildChromeDevToolsUrl(port: number, targetId: string): string {
   return `devtools://devtools/bundled/inspector.html?ws=localhost:${port.toString()}/${targetId}`;
+}
+
+function hasEnvValue(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0;
+}
+
+function toChromeCommand(command: string, url: string): ChromeLaunchCommand {
+  return { command, args: [url] };
+}
+
+function windowsChromePath(basePath: string): string {
+  return `${basePath.replace(/[\\/]$/, '')}\\Google\\Chrome\\Application\\chrome.exe`;
+}
+
+function getCmdStartChromeCommand(url: string): ChromeLaunchCommand | null {
+  if (!SAFE_DEVTOOLS_URL_PATTERN.test(url)) return null;
+  return { command: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '""', 'chrome', url] };
+}
+
+function getWindowsChromeCommands(url: string, env: NodeJS.ProcessEnv): ChromeLaunchCommand[] {
+  const commands = ['chrome.exe'];
+  const localAppData = env.LOCALAPPDATA;
+  const programFiles = env.ProgramFiles;
+  const programFilesX86 = env['ProgramFiles(x86)'];
+
+  if (hasEnvValue(localAppData)) commands.push(windowsChromePath(localAppData));
+  if (hasEnvValue(programFiles)) commands.push(windowsChromePath(programFiles));
+  if (hasEnvValue(programFilesX86)) commands.push(windowsChromePath(programFilesX86));
+
+  const launchCommands = commands.map((command) => toChromeCommand(command, url));
+  const cmdStart = getCmdStartChromeCommand(url);
+  return cmdStart === null ? launchCommands : [...launchCommands, cmdStart];
+}
+
+function getMacChromeCommands(url: string): ChromeLaunchCommand[] {
+  return [{ command: 'open', args: ['-a', 'Google Chrome', url] }];
+}
+
+function isWslEnvironment(env: NodeJS.ProcessEnv): boolean {
+  return hasEnvValue(env.WSL_DISTRO_NAME) || hasEnvValue(env.WSL_INTEROP);
+}
+
+function getWslWindowsChromeCommands(url: string): ChromeLaunchCommand[] {
+  const commands = [
+    toChromeCommand('/mnt/c/Program Files/Google/Chrome/Application/chrome.exe', url),
+    toChromeCommand('/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe', url),
+  ];
+
+  const cmdStart = getCmdStartChromeCommand(url);
+  if (cmdStart !== null) {
+    commands.push(cmdStart);
+    commands.push({ command: '/mnt/c/Windows/System32/cmd.exe', args: cmdStart.args });
+  }
+
+  return commands;
+}
+
+function getLinuxChromeCommands(url: string, env: NodeJS.ProcessEnv): ChromeLaunchCommand[] {
+  const commands = LINUX_CHROME_COMMANDS.map((command) => toChromeCommand(command, url));
+  return isWslEnvironment(env) ? [...commands, ...getWslWindowsChromeCommands(url)] : commands;
+}
+
+export function getChromeLaunchCommands(
+  url: string,
+  environment: Partial<ChromeLaunchEnvironment> = {},
+): ChromeLaunchCommand[] {
+  const env = environment.env ?? process.env;
+  const platform = environment.platform ?? process.platform;
+
+  if (platform === 'win32') return getWindowsChromeCommands(url, env);
+  if (platform === 'darwin') return getMacChromeCommands(url);
+  if (platform === 'linux') return getLinuxChromeCommands(url, env);
+  return [];
+}
+
+function trySpawnChromeCommand(candidate: ChromeLaunchCommand): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawn(candidate.command, candidate.args, CHROME_SPAWN_OPTIONS);
+    } catch {
+      resolve(false);
+      return;
+    }
+
+    child.once('spawn', () => {
+      child.unref();
+      resolve(true);
+    });
+    child.once('error', () => {
+      resolve(false);
+    });
+  });
+}
+
+export async function launchChromeDevToolsUrl(
+  url: string,
+  commands = getChromeLaunchCommands(url),
+): Promise<boolean> {
+  for (const candidate of commands) {
+    if (await trySpawnChromeCommand(candidate)) return true;
+  }
+  return false;
 }
 
 async function fetchInspectorBody(port: number, path: string): Promise<string | null> {
@@ -130,6 +251,10 @@ export async function openChromeDevTools(port: number, appName: string): Promise
   }
 
   logInfo(`[${appName}] Opening Chrome DevTools at ${url}`);
-  await vscode.env.openExternal(vscode.Uri.parse(url, true));
-  return true;
+  const commands = getChromeLaunchCommands(url);
+  const opened = await launchChromeDevToolsUrl(url, commands);
+  if (!opened) {
+    logWarn(`[${appName}] Could not launch Chrome DevTools. Tried: ${commands.map((command) => command.command).join(', ')}`);
+  }
+  return opened;
 }
