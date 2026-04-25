@@ -1,64 +1,233 @@
 import * as fs from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { cfLogin, cfOrgs, cfTarget, cfApps } from './cfClient';
+import {
+  writeStructure,
+  initializeRuntimeState,
+  mergeRuntimeRegion,
+  completeRuntimeState,
+  failRuntimeState,
+  tryAcquireSyncLock,
+  releaseSyncLock,
+  cfApi,
+  cfAuth,
+  cfOrgs,
+  cfSpaces,
+  cfTargetOrg,
+  cfTargetSpace,
+  cfApps,
+  getAllRegions,
+  cfStructurePath,
+} from '@saptools/cf-sync';
+import type {
+  AppNode,
+  CfExecContext,
+  CfStructure,
+  OrgNode,
+  Region,
+  RegionNode,
+  SpaceNode,
+} from '@saptools/cf-sync';
 import { getCredentials } from './shellEnv';
-import { saveCachedApps, saveCachedOrgs, getSyncProgress, saveSyncProgress, getCacheSettings } from '../storage/cacheStore';
+import {
+  saveCachedApps,
+  saveCachedOrgs,
+  getSyncProgress,
+  saveSyncProgress,
+  getCacheSettings,
+} from '../storage/cacheStore';
+import type { CfApp, SyncProgress } from '../types/index';
 import { logInfo, logWarn, logError } from './logger';
-import type { SyncProgress } from '../types/index';
-
-// Regions scanned sequentially. Order: most-likely-used first to populate cache quickly.
-const SCAN_REGIONS = [
-  { code: 'eu10', name: 'Europe (Frankfurt)' },
-  { code: 'eu20', name: 'Europe (Amsterdam)' },
-  { code: 'eu30', name: 'Europe (Frankfurt) GCP' },
-  { code: 'ch20', name: 'Switzerland (Zürich)' },
-  { code: 'us10', name: 'US East (VA)' },
-  { code: 'us11', name: 'US East (us11)' },
-  { code: 'us20', name: 'US West (WA)' },
-  { code: 'us21', name: 'US West (us21)' },
-  { code: 'us30', name: 'US Central (Iowa)' },
-  { code: 'ap10', name: 'Australia (Sydney)' },
-  { code: 'ap11', name: 'Singapore' },
-  { code: 'ap12', name: 'South Korea (Seoul)' },
-  { code: 'ap20', name: 'APJ (Osaka)' },
-  { code: 'ap21', name: 'Singapore (Azure)' },
-  { code: 'jp10', name: 'Japan (Tokyo)' },
-  { code: 'jp20', name: 'Japan (Osaka)' },
-  { code: 'in30', name: 'India (Mumbai)' },
-  { code: 'br10', name: 'Brazil (São Paulo)' },
-  { code: 'ca10', name: 'Canada (Montreal)' },
-  { code: 'ca20', name: 'Canada (Toronto)' },
-] as const;
 
 export const cacheSyncEvents = new EventEmitter();
 
 const INITIAL_DELAY_MS = 5_000;
 
+// Tracks in-process sync state. Object wrapper prevents TypeScript control-flow
+// narrowing from treating the booleans as literal false after assignment.
+const _sync = { isSyncing: false, abortRequested: false };
+let _timer: ReturnType<typeof setInterval> | undefined;
+
 function syncIntervalMs(): number {
   return getCacheSettings().intervalHours * 60 * 60 * 1000;
 }
-
-// Isolated CF config dir for background sync so it does not disturb the user's
-// interactive CF session stored in the default ~/.cf directory.
-const SYNC_CF_HOME = path.join(os.tmpdir(), 'cds-debug-sync');
-
-// Object wrapper prevents TypeScript/ESLint from narrowing these booleans as literal
-// false — property access is not subject to control-flow narrowing, so checks like
-// `if (shouldAbort())` remain valid even after an assignment to false earlier.
-const _sync = { isSyncing: false, abortRequested: false };
-let _timer: ReturnType<typeof setInterval> | undefined;
 
 function pushStatus(progress: SyncProgress): void {
   cacheSyncEvents.emit('progress', progress);
 }
 
-// Indirection makes the return type boolean (not narrowed to false), preventing
-// the lint rule from flagging abort checks as always-false inside doSync().
-// disposeCacheSync() sets _sync.abortRequested=true across an async boundary.
+// Indirection prevents TypeScript from narrowing _sync.abortRequested as always-false.
 function shouldAbort(): boolean {
   return _sync.abortRequested;
+}
+
+// Read the cf-sync stable structure file synchronously (used at init time to avoid
+// an async gap before the timer is wired up).
+function readStructureSync(): CfStructure | undefined {
+  try {
+    const raw = fs.readFileSync(cfStructurePath(), 'utf8');
+    return JSON.parse(raw) as CfStructure;
+  } catch {
+    return undefined;
+  }
+}
+
+// Creates a fresh isolated CF home directory per sync session so background syncs
+// never clobber the user's interactive ~/.cf session.
+async function withCfSession<T>(work: (ctx: CfExecContext) => Promise<T>): Promise<T> {
+  const cfHome = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'cds-debug-cf-'));
+  const ctx: CfExecContext = { env: { CF_HOME: cfHome } };
+  try {
+    return await work(ctx);
+  } finally {
+    await fsPromises.rm(cfHome, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function buildAccessibleRegionNode(
+  region: Region,
+  orgs: readonly OrgNode[],
+  error?: string,
+): RegionNode {
+  const base: RegionNode = {
+    key: region.key,
+    label: region.label,
+    apiEndpoint: region.apiEndpoint,
+    accessible: true,
+    orgs,
+  };
+  if (error !== undefined) {
+    return { ...base, error };
+  }
+  return base;
+}
+
+function buildInaccessibleRegionNode(region: Region, error: string): RegionNode {
+  return {
+    key: region.key,
+    label: region.label,
+    apiEndpoint: region.apiEndpoint,
+    accessible: false,
+    orgs: [],
+    error,
+  };
+}
+
+function buildOrgNode(name: string, spaces: readonly SpaceNode[], error?: string): OrgNode {
+  if (error !== undefined) {
+    return { name, spaces, error };
+  }
+  return { name, spaces };
+}
+
+function buildSpaceNode(name: string, apps: readonly AppNode[], error?: string): SpaceNode {
+  if (error !== undefined) {
+    return { name, apps, error };
+  }
+  return { name, apps };
+}
+
+async function collectSpace(
+  regionKey: string,
+  orgName: string,
+  spaceName: string,
+  ctx: CfExecContext,
+): Promise<SpaceNode> {
+  try {
+    await cfTargetSpace(orgName, spaceName, ctx);
+    const appNames = await cfApps(ctx);
+    const apps: AppNode[] = [...appNames].map((name) => ({ name }));
+    return buildSpaceNode(spaceName, apps);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    logWarn(`[CacheSync] ${regionKey}/${orgName}/${spaceName}: apps fetch failed — ${message}`);
+    return buildSpaceNode(spaceName, [], message);
+  }
+}
+
+async function collectOrg(
+  regionKey: string,
+  orgName: string,
+  ctx: CfExecContext,
+): Promise<OrgNode> {
+  try {
+    await cfTargetOrg(orgName, ctx);
+    const spaceNames = await cfSpaces(ctx);
+    const spaces: SpaceNode[] = [];
+    for (const spaceName of spaceNames) {
+      if (shouldAbort()) break;
+      spaces.push(await collectSpace(regionKey, orgName, spaceName, ctx));
+    }
+    return buildOrgNode(orgName, spaces);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    logWarn(`[CacheSync] ${regionKey}/${orgName}: org collection failed — ${message}`);
+    return buildOrgNode(orgName, [], message);
+  }
+}
+
+async function collectRegion(
+  region: Region,
+  email: string,
+  password: string,
+  onOrgProgress: (orgName: string) => void,
+): Promise<RegionNode> {
+  return await withCfSession(async (ctx) => {
+    try {
+      await cfApi(region.apiEndpoint, ctx);
+      await cfAuth(email, password, ctx);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logWarn(`[CacheSync] ${region.key}: auth failed — ${message}`);
+      return buildInaccessibleRegionNode(region, message);
+    }
+
+    let orgNames: readonly string[];
+    try {
+      orgNames = await cfOrgs(ctx);
+      logInfo(`[CacheSync] ${region.key}: ${orgNames.length.toString()} org(s) found.`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logWarn(`[CacheSync] ${region.key}: orgs fetch failed — ${message}`);
+      return buildAccessibleRegionNode(region, [], message);
+    }
+
+    const orgs: OrgNode[] = [];
+    for (const orgName of orgNames) {
+      if (shouldAbort()) break;
+      onOrgProgress(orgName);
+      orgs.push(await collectOrg(region.key, orgName, ctx));
+    }
+
+    return buildAccessibleRegionNode(region, orgs);
+  });
+}
+
+// Converts a completed cf-sync CfStructure into VS Code globalState app cache entries.
+// Apps are deduped across spaces (same app can exist in multiple spaces); state defaults
+// to 'stopped' since cf-sync only tracks names, not runtime state.
+export async function populateCacheFromStructure(structure: CfStructure): Promise<void> {
+  for (const region of structure.regions) {
+    if (!region.accessible) continue;
+    const orgNames = region.orgs.map((o) => o.name);
+    await saveCachedOrgs(region.apiEndpoint, orgNames);
+
+    for (const org of region.orgs) {
+      const seen = new Set<string>();
+      const apps: CfApp[] = [];
+      for (const space of org.spaces) {
+        for (const app of space.apps) {
+          if (seen.has(app.name)) continue;
+          seen.add(app.name);
+          apps.push({ name: app.name, state: 'stopped', urls: [] });
+        }
+      }
+      await saveCachedApps(region.apiEndpoint, org.name, apps);
+    }
+  }
 }
 
 async function doSync(): Promise<void> {
@@ -68,166 +237,206 @@ async function doSync(): Promise<void> {
   }
 
   if (!getCacheSettings().enabled) {
-    logInfo('[CacheSync] Cache sync disabled in settings — skipping.');
+    logInfo('[CacheSync] Cache sync disabled — skipping.');
     return;
   }
 
   const { email, password } = await getCredentials();
   if (!email || !password) {
-    logWarn('[CacheSync] SAP_EMAIL/SAP_PASSWORD not set — skipping background sync.');
+    logWarn('[CacheSync] SAP credentials not set — skipping background sync.');
     return;
   }
 
   _sync.isSyncing = true;
   _sync.abortRequested = false;
 
-  const total = SCAN_REGIONS.length;
+  const regions = getAllRegions();
+  const total = regions.length;
   const startedAt = Date.now();
-  let progress: SyncProgress = { isRunning: true, startedAt, done: 0, total };
+  const syncId = randomUUID();
+  const regionKeys = regions.map((r) => r.key);
 
+  let progress: SyncProgress = { isRunning: true, startedAt, done: 0, total };
   await saveSyncProgress(progress);
   pushStatus(progress);
-  logInfo(`[CacheSync] Starting sync across ${total.toString()} regions…`);
 
-  let aborted = false;
-  for (const region of SCAN_REGIONS) {
-    if (shouldAbort()) {
-      logInfo('[CacheSync] Abort requested — stopping early.');
-      aborted = true;
-      break;
+  logInfo(`[CacheSync] Starting sync across ${total.toString()} regions using cf-sync…`);
+
+  let lockHandle: Awaited<ReturnType<typeof tryAcquireSyncLock>> = undefined;
+
+  try {
+    lockHandle = await tryAcquireSyncLock(syncId);
+    if (!lockHandle) {
+      logInfo('[CacheSync] Another sync process holds the lock — skipping.');
+      const final: SyncProgress = { isRunning: false, done: 0, total };
+      await saveSyncProgress(final);
+      pushStatus(final);
+      _sync.isSyncing = false;
+      return;
     }
 
-    const endpoint = `https://api.cf.${region.code}.hana.ondemand.com`;
-    progress = { ...progress, currentRegion: region.code, currentOrg: undefined };
-    pushStatus(progress);
-    logInfo(`[CacheSync] Scanning ${region.code} (${region.name})…`);
+    await initializeRuntimeState(syncId, regionKeys);
 
-    try {
-      await cfLogin(endpoint, email, password, SYNC_CF_HOME);
-      const orgs = await cfOrgs(SYNC_CF_HOME);
-      await saveCachedOrgs(endpoint, orgs);
-      logInfo(`[CacheSync] ${region.code}: ${orgs.length.toString()} org(s) found.`);
+    let done = 0;
+    let aborted = false;
 
-      for (const org of orgs) {
-        if (shouldAbort()) break;
-
-        progress = { ...progress, currentOrg: org };
-        pushStatus(progress);
-
-        try {
-          await cfTarget(org, undefined, SYNC_CF_HOME);
-          const apps = await cfApps(SYNC_CF_HOME);
-          await saveCachedApps(endpoint, org, apps);
-          logInfo(`[CacheSync] ${region.code}/${org}: ${apps.length.toString()} app(s) cached.`);
-        } catch (err: unknown) {
-          logWarn(
-            `[CacheSync] ${region.code}/${org}: apps fetch failed — ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
+    for (const region of regions) {
+      if (shouldAbort()) {
+        aborted = true;
+        break;
       }
-    } catch (err: unknown) {
-      logWarn(
-        `[CacheSync] ${region.code}: login failed — ${err instanceof Error ? err.message : String(err)}`,
-      );
+
+      progress = { isRunning: true, startedAt, done, total, currentRegion: region.key };
+      pushStatus(progress);
+      logInfo(`[CacheSync] Scanning ${region.key} (${region.label})…`);
+
+      const node = await collectRegion(region, email, password, (orgName) => {
+        pushStatus({
+          isRunning: true,
+          startedAt,
+          done,
+          total,
+          currentRegion: region.key,
+          currentOrg: orgName,
+        });
+      });
+
+      await mergeRuntimeRegion(syncId, regionKeys, node);
+
+      done++;
+      progress = { isRunning: true, startedAt, done, total };
+      await saveSyncProgress(progress);
+      pushStatus(progress);
     }
 
-    progress = { ...progress, done: progress.done + 1, currentOrg: undefined };
-    await saveSyncProgress(progress);
-    pushStatus(progress);
-  }
+    if (aborted) {
+      await failRuntimeState(syncId, 'aborted').catch(() => undefined);
+      const final: SyncProgress = { isRunning: false, startedAt, done, total };
+      await saveSyncProgress(final);
+      pushStatus(final);
+      logInfo('[CacheSync] Sync aborted.');
+    } else {
+      const completedState = await completeRuntimeState(syncId);
+      await writeStructure(completedState.structure);
+      await populateCacheFromStructure(completedState.structure);
 
-  // Only record lastCompletedAt when all regions were scanned. An aborted sync
-  // must not update this timestamp — otherwise initCacheSync() would think the
-  // cache is fresh on the next VS Code start and skip the auto-run.
-  const final: SyncProgress = aborted
-    ? { isRunning: false, startedAt, done: progress.done, total }
-    : { isRunning: false, startedAt, lastCompletedAt: Date.now(), done: progress.done, total };
-  await saveSyncProgress(final);
-  pushStatus(final);
-  _sync.isSyncing = false;
-  logInfo(`[CacheSync] Sync complete — ${progress.done.toString()}/${total.toString()} regions.`);
+      const final: SyncProgress = {
+        isRunning: false,
+        startedAt,
+        lastCompletedAt: Date.now(),
+        done,
+        total,
+      };
+      await saveSyncProgress(final);
+      pushStatus(final);
+      logInfo(`[CacheSync] Sync complete — ${done.toString()}/${total.toString()} regions.`);
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    await failRuntimeState(syncId, message).catch(() => undefined);
+    const final: SyncProgress = { isRunning: false, done: 0, total };
+    await saveSyncProgress(final);
+    pushStatus(final);
+    throw err;
+  } finally {
+    if (lockHandle !== undefined) {
+      await releaseSyncLock(lockHandle).catch(() => undefined);
+    }
+    _sync.isSyncing = false;
+  }
 }
 
 export function runCacheSync(): void {
   void doSync().catch((err: unknown) => {
     _sync.isSyncing = false;
-    logError(`[CacheSync] Fatal error: ${err instanceof Error ? err.message : String(err)}`);
-    void saveSyncProgress({ isRunning: false, done: 0, total: SCAN_REGIONS.length });
-    pushStatus({ isRunning: false, done: 0, total: SCAN_REGIONS.length });
+    const message = err instanceof Error ? err.message : String(err);
+    logError(`[CacheSync] Fatal error: ${message}`);
+    const total = getAllRegions().length;
+    void saveSyncProgress({ isRunning: false, done: 0, total });
+    pushStatus({ isRunning: false, done: 0, total });
   });
 }
 
 export function getCurrentSyncProgress(): SyncProgress {
-  return getSyncProgress() ?? { isRunning: _sync.isSyncing, done: 0, total: SCAN_REGIONS.length };
+  return getSyncProgress() ?? { isRunning: _sync.isSyncing, done: 0, total: getAllRegions().length };
 }
 
 export function initCacheSync(): void {
-  // Ensure the isolated CF config directory exists before the first sync run.
-  try {
-    fs.mkdirSync(SYNC_CF_HOME, { recursive: true });
-  } catch {
-    // Ignore — if this fails, cfLogin will fail gracefully and log a warning.
-  }
-
-  // If VS Code was shut down while a sync was in progress, the persisted flag
-  // will still say isRunning=true. Reset it so the next run starts cleanly.
+  // Reset stale isRunning flag from a previous session that was interrupted (VS Code crash).
   const prev = getSyncProgress();
   if (prev?.isRunning) {
-    logInfo('[CacheSync] Previous sync was interrupted (VS Code shutdown) — resetting flag.');
+    logInfo('[CacheSync] Previous sync was interrupted — resetting flag.');
     void saveSyncProgress({ ...prev, isRunning: false });
   }
 
-  // Do not set up any timer if the user has disabled background sync.
+  // If a cf-sync structure already exists on disk (e.g. written by the cf-sync CLI or a
+  // previous VS Code session), populate VS Code globalState immediately so the extension
+  // can serve app lists before the next background sync completes.
+  const existingStructure = readStructureSync();
+  if (existingStructure) {
+    void populateCacheFromStructure(existingStructure).then(() => {
+      logInfo('[CacheSync] Loaded existing cf-sync structure from ~/.saptools/.');
+    });
+  }
+
   if (!getCacheSettings().enabled) {
     logInfo('[CacheSync] Background sync is disabled — skipping timer setup.');
     return;
   }
 
   const intervalMs = syncIntervalMs();
-  const lastCompleted = prev?.lastCompletedAt ?? 0;
+
+  // Determine staleness: prefer the cf-sync structure timestamp (shared across tools)
+  // over VS Code globalState, since the CLI may have run a fresh sync more recently.
+  let lastCompleted = prev?.lastCompletedAt ?? 0;
+  if (existingStructure) {
+    const structureTime = new Date(existingStructure.syncedAt).getTime();
+    if (structureTime > lastCompleted) {
+      lastCompleted = structureTime;
+    }
+  }
+
   if (Date.now() - lastCompleted >= intervalMs) {
-    // Cache is stale (or never populated). Run after a short delay so activation
-    // finishes first and the extension is fully ready before CF CLI is invoked.
     setTimeout(() => { runCacheSync(); }, INITIAL_DELAY_MS);
   }
 
-  // Recurring sync on configured interval.
   _timer = setInterval(() => { runCacheSync(); }, intervalMs);
 }
 
-// Called after the user saves cache settings. Restarts the periodic timer with the
-// new interval.
-//   Disabling: clears the timer and aborts any in-progress sync. doSync() will not
-//     update lastCompletedAt, so the next VS Code start treats the cache as stale.
-//   Enabling / changing interval: resets abortRequested so a sync that was mid-abort
-//     is not killed, starts a fresh timer, and triggers an immediate sync if the
-//     cache is already stale under the new interval.
+// Called when the user changes cache settings. Restarts the periodic timer with the
+// new interval, and triggers an immediate sync if the cache is stale under the new settings.
 export function restartCacheSyncTimer(): void {
   if (_timer !== undefined) {
     clearInterval(_timer);
     _timer = undefined;
   }
+
   const settings = getCacheSettings();
   if (!settings.enabled) {
     _sync.abortRequested = true;
     return;
   }
-  // Reset the abort flag so a sync interrupted by a previous disable resumes
-  // correctly when the user re-enables, or an interval change does not kill the
-  // running sync.
+
   _sync.abortRequested = false;
   const intervalMs = settings.intervalHours * 60 * 60 * 1000;
   _timer = setInterval(() => { runCacheSync(); }, intervalMs);
-  // If cache is stale under the new settings, run immediately (mirrors initCacheSync).
+
   const prev = getSyncProgress();
-  const lastCompleted = prev?.lastCompletedAt ?? 0;
+  let lastCompleted = prev?.lastCompletedAt ?? 0;
+  const existingStructure = readStructureSync();
+  if (existingStructure) {
+    const structureTime = new Date(existingStructure.syncedAt).getTime();
+    if (structureTime > lastCompleted) {
+      lastCompleted = structureTime;
+    }
+  }
+
   if (Date.now() - lastCompleted >= intervalMs) {
     setTimeout(() => { runCacheSync(); }, INITIAL_DELAY_MS);
   }
 }
 
 export function disposeCacheSync(): void {
-  // Signal the running loop to exit at the next abort-check point.
   _sync.abortRequested = true;
   if (_timer !== undefined) {
     clearInterval(_timer);

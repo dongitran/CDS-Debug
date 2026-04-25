@@ -131,6 +131,7 @@
     "credentials",
     "requestfailed",
     "pkill",
-    "localappdata"
+    "localappdata",
+    "saptools"
   ]
 }
