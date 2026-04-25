@@ -6,6 +6,8 @@ import { createConnection } from 'node:net';
 import { logInfo, logWarn, logError } from './logger';
 import { removeLaunchConfigs } from './launchConfigurator';
 import { cfSshEnabled, cfEnableSsh, cfRestartApp } from './cfClient';
+import { openChromeDevTools } from './chromeDevTools';
+import { getDebugPreferences } from '../storage/cacheStore';
 
 const execFileAsync = promisify(execFile);
 
@@ -739,6 +741,9 @@ async function probeTunnelAndAttach(
         sessionStates.set(appName, { status: 'ATTACHED' });
         debugProcessEvents.emit('statusChanged', { appName, status: 'ATTACHED' });
         void vscode.window.showInformationMessage(`CDS Debug: debugger attached to ${appName}`);
+        if (getDebugPreferences().openBrowserOnAttach) {
+          void openChromeDevTools(port, appName);
+        }
       } else {
         // Terminal ERROR — reconnect guard no longer needed.
         reconnecting.delete(appName);

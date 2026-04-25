@@ -149,12 +149,18 @@ function buildHtml(): string {
 
     .hero-text {}
 
+    .hero-title-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
     .hero-title {
       font-size: 26px;
       font-weight: 700;
       color: var(--vscode-foreground);
       line-height: 1.2;
-      margin-bottom: 6px;
     }
 
     .hero-subtitle {
@@ -170,8 +176,8 @@ function buildHtml(): string {
       font-weight: 600;
       padding: 2px 8px;
       border-radius: 10px;
-      margin-top: 8px;
       letter-spacing: 0.3px;
+      flex-shrink: 0;
     }
 
     .content {
@@ -288,9 +294,11 @@ function buildHtml(): string {
   <div class="hero">
     <div class="hero-icon">⚡</div>
     <div class="hero-text">
-      <div class="hero-title">What's New in CDS Debug</div>
+      <div class="hero-title-row">
+        <div class="hero-title">What's New in CDS Debug</div>
+        <div class="version-badge">🚀 ${entry.label}</div>
+      </div>
       <div class="hero-subtitle">Debug multiple SAP CAP services simultaneously — from VS Code.</div>
-      <div class="version-badge">${entry.label}</div>
     </div>
   </div>
 

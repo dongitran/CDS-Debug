@@ -713,7 +713,7 @@ export function getRendererScriptContent(): string {
                 \${state.debugPrefs.openBrowserOnAttach ? 'enabled' : 'off by default'}
               </span>
             </span>
-            <span class="pref-row-desc">When enabled, this extension opens the app URL in your browser the moment the debugger attaches. Disabled by default so the launcher stays focused until you opt in.</span>
+            <span class="pref-row-desc">When enabled, this extension opens the Chrome DevTools inspector the moment the debugger attaches. Disabled by default so the launcher stays focused until you opt in.</span>
           </div>
           <div class="toggle-switch \${state.debugPrefs.openBrowserOnAttach ? 'on' : ''}">
             <input type="checkbox" id="chk-open-browser" \${state.debugPrefs.openBrowserOnAttach ? 'checked' : ''} />

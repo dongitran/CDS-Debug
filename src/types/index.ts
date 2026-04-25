@@ -126,8 +126,8 @@ export const DEFAULT_CACHE_SETTINGS: CacheSettings = {
 /** User-facing debug behavior preferences (separate from cache settings). */
 export interface DebugPreferences {
   /**
-   * When true, the app URL is opened in the default browser automatically
-   * as soon as a debug session reaches the ATTACHED state. Default: false.
+   * When true, the Chrome DevTools inspector URL is opened automatically as
+   * soon as a debug session reaches the ATTACHED state. Default: false.
    */
   openBrowserOnAttach: boolean;
   /**

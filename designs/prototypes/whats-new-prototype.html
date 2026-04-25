@@ -93,12 +93,18 @@
       flex-shrink: 0;
     }
 
+    .hero-title-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
     .hero-title {
       font-size: 26px;
       font-weight: 700;
       letter-spacing: -.4px;
       color: var(--text);
-      margin-bottom: 6px;
     }
 
     .hero-sub {
@@ -111,7 +117,6 @@
       display: inline-flex;
       align-items: center;
       gap: 5px;
-      margin-top: 10px;
       background: var(--badge-bg);
       color: var(--badge-text);
       font-size: 11px;
@@ -120,6 +125,7 @@
       border-radius: 20px;
       border: 1px solid rgba(77,163,255,.25);
       letter-spacing: .3px;
+      flex-shrink: 0;
     }
 
     /* ── Sections ── */
@@ -401,9 +407,11 @@
     <div class="hero">
       <div class="hero-icon">⚡</div>
       <div>
-        <div class="hero-title">What's New in CDS Debug</div>
+        <div class="hero-title-row">
+          <div class="hero-title">What's New in CDS Debug</div>
+          <div class="version-chip">🚀 v0.3.32</div>
+        </div>
         <div class="hero-sub">Debug multiple SAP CAP services simultaneously — directly from VS Code.</div>
-        <div class="version-chip">🚀 v0.3.10</div>
       </div>
     </div>
 
