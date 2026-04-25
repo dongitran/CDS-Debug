@@ -21,60 +21,34 @@ interface ChangelogVersion {
 const CHANGELOG: ChangelogVersion[] = [
   {
     version: '0.3.10',
-    label: 'v0.3.10 — Spring 2025',
+    label: 'v0.3.10',
     features: [
       {
         icon: '📦',
         title: 'Package Browser',
         description:
-          'Browse every npm package loaded in an active debug session as a collapsible tree. Jump directly to any source file inside a package — no more hunting through node_modules.',
-      },
-      {
-        icon: '🔍',
-        title: 'Package Regex Filter',
-        description:
-          'Filter the package list by name using a regex pattern. The filter is remembered across sessions and can be pre-configured in VS Code workspace or user settings via <code>cdsDebug.packageRegexFilter</code>.',
-      },
-      {
-        icon: '🔄',
-        title: 'Auto-reconnect',
-        description:
-          'When an SSH tunnel drops unexpectedly (CF timeout, network blip), CDS Debug automatically re-establishes the tunnel up to 3 times with linear back-off — no manual intervention needed.',
+          'A new screen lets you browse every npm package loaded in an active debug session as a collapsible tree. Search by name, filter with a regex, and jump directly to any source file — no more hunting through node_modules manually.',
       },
       {
         icon: '📸',
         title: 'Breakpoint Snapshots',
         description:
-          'Capture variable context at any breakpoint without pausing execution. Snapshots accumulate in the sidebar so you can review them after the request completes. Enable in Settings → Breakpoint Snapshot Handling.',
-      },
-      {
-        icon: '🌿',
-        title: 'Branch Preparation',
-        description:
-          'Before attaching the debugger, CDS Debug can stash local changes, check out the correct git branch, and run <code>pnpm install &amp;&amp; pnpm build</code> so local sources always match the remote service.',
+          'Capture the full variable context at any breakpoint without pausing execution — CDS Debug auto-continues and accumulates snapshots in the sidebar for review after the request completes. Toggle in Settings → Breakpoint Snapshot Handling.',
       },
       {
         icon: '⚙️',
         title: 'Shared CAP Debug Config',
         description:
-          'Set a single <code>cdsDebug.sharedCapDebugConfig</code> in VS Code user settings to provide <code>remoteRoot</code> and <code>orgBranchMap</code> as a fallback for all workspaces — no more copying <code>cap-debug-config.json</code> everywhere.',
+          'Set <code>cdsDebug.sharedCapDebugConfig</code> once in VS Code user settings to share <code>remoteRoot</code> and <code>orgBranchMap</code> across every workspace — no more copying <code>cap-debug-config.json</code> into each project.',
       },
-    ],
-    fixes: [
       {
-        title: 'Suppressed save-before-start errors',
+        icon: '🛡️',
+        title: 'Stability & Fixes',
         description:
-          'VS Code no longer tries to save unrelated open editors when the debugger attaches, preventing misleading permission-denied errors.',
-      },
-      {
-        title: 'Package loading across new sessions',
-        description: 'Package entries are now reloaded correctly when a debug session is restarted.',
-      },
-      {
-        title: 'Generated srv outFiles path',
-        description: 'Source maps for generated CAP server files resolve correctly from the expected output path.',
+          'Suppressed spurious save-before-start permission errors, retry package loading when a session restarts, and corrected source map paths for generated CAP server files.',
       },
     ],
+    fixes: [],
   },
 ];
 
@@ -135,16 +109,6 @@ function buildHtml(): string {
         <div class="card-desc">${f.description}</div>
       </div>
     </div>`,
-    )
-    .join('');
-
-  const fixesHtml = entry.fixes
-    .map(
-      (f) => `
-    <li>
-      <span class="fix-title">${f.title}</span>
-      <span class="fix-desc"> — ${f.description}</span>
-    </li>`,
     )
     .join('');
 
@@ -228,7 +192,7 @@ function buildHtml(): string {
 
     .features-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      grid-template-columns: repeat(2, 1fr);
       gap: 12px;
       margin-bottom: 40px;
     }
@@ -330,16 +294,9 @@ function buildHtml(): string {
   </div>
 
   <div class="content">
-    <div class="section-title">New Features</div>
+    <div class="section-title">What's New</div>
     <div class="features-grid">
       ${featuresHtml}
-    </div>
-
-    <div class="fixes-section">
-      <div class="section-title">Bug Fixes &amp; Improvements</div>
-      <ul class="fixes-list">
-        ${fixesHtml}
-      </ul>
     </div>
 
     <div class="footer">

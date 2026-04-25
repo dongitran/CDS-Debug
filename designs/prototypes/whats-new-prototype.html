@@ -403,35 +403,19 @@
       <div>
         <div class="hero-title">What's New in CDS Debug</div>
         <div class="hero-sub">Debug multiple SAP CAP services simultaneously — directly from VS Code.</div>
-        <div class="version-chip">🚀 v0.3.10 — Spring 2025</div>
+        <div class="version-chip">🚀 v0.3.10</div>
       </div>
     </div>
 
     <div class="section">
-      <div class="section-label">New Features</div>
+      <div class="section-label">What's New</div>
       <div class="features-grid">
 
         <div class="card">
           <div class="card-icon">📦</div>
           <div>
             <div class="card-title">Package Browser</div>
-            <div class="card-desc">Browse every npm package loaded in an active debug session as a collapsible tree. Jump directly to any source file — no more hunting through <code>node_modules</code>.</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-icon">🔍</div>
-          <div>
-            <div class="card-title">Package Regex Filter</div>
-            <div class="card-desc">Filter the package list by name with a regex. Pre-configure a default via <code>cdsDebug.packageRegexFilter</code> in VS Code settings — synced two-way with the UI.</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-icon">🔄</div>
-          <div>
-            <div class="card-title">Auto-reconnect</div>
-            <div class="card-desc">SSH tunnel reconnects automatically (up to 3 attempts with linear back-off) when a CF timeout or network blip drops it mid-session.</div>
+            <div class="card-desc">A new screen lets you browse every npm package loaded in an active debug session as a collapsible tree. Search by name, filter with a regex, and jump directly to any source file — no more hunting through <code>node_modules</code> manually.</div>
           </div>
         </div>
 
@@ -439,15 +423,7 @@
           <div class="card-icon">📸</div>
           <div>
             <div class="card-title">Breakpoint Snapshots</div>
-            <div class="card-desc">Capture variable context at any breakpoint without pausing. Snapshots accumulate in the sidebar for post-request review. Enable in <code>Settings → Breakpoint Snapshot Handling</code>.</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-icon">🌿</div>
-          <div>
-            <div class="card-title">Branch Preparation</div>
-            <div class="card-desc">Before attaching, CDS Debug can stash local changes, check out the correct git branch, and run <code>pnpm install &amp;&amp; pnpm build</code> so sources always match the remote service.</div>
+            <div class="card-desc">Capture the full variable context at any breakpoint without pausing execution — CDS Debug auto-continues and accumulates snapshots in the sidebar for review after the request completes. Toggle in <code>Settings → Breakpoint Snapshot Handling</code>.</div>
           </div>
         </div>
 
@@ -455,33 +431,19 @@
           <div class="card-icon">⚙️</div>
           <div>
             <div class="card-title">Shared CAP Debug Config</div>
-            <div class="card-desc">Set <code>cdsDebug.sharedCapDebugConfig</code> once in VS Code user settings to share <code>remoteRoot</code> and <code>orgBranchMap</code> across all workspaces.</div>
+            <div class="card-desc">Set <code>cdsDebug.sharedCapDebugConfig</code> once in VS Code user settings to share <code>remoteRoot</code> and <code>orgBranchMap</code> across every workspace — no more copying <code>cap-debug-config.json</code> into each project.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🛡️</div>
+          <div>
+            <div class="card-title">Stability &amp; Fixes</div>
+            <div class="card-desc">Suppressed spurious save-before-start permission errors, retry package loading when a session restarts, and corrected source map paths for generated CAP server files.</div>
           </div>
         </div>
 
       </div>
-    </div>
-
-    <div class="section">
-      <div class="section-label">Bug Fixes &amp; Improvements</div>
-      <ul class="fixes-list">
-        <li class="fix-item">
-          <span class="fix-bullet">●</span>
-          <span><span class="fix-title">Suppressed save-before-start errors</span><span class="fix-desc"> — VS Code no longer tries to save unrelated open editors when the debugger attaches.</span></span>
-        </li>
-        <li class="fix-item">
-          <span class="fix-bullet">●</span>
-          <span><span class="fix-title">Package loading across new sessions</span><span class="fix-desc"> — Package entries reload correctly when a debug session is restarted.</span></span>
-        </li>
-        <li class="fix-item">
-          <span class="fix-bullet">●</span>
-          <span><span class="fix-title">Generated srv outFiles path</span><span class="fix-desc"> — Source maps for generated CAP server files resolve correctly from the expected output path.</span></span>
-        </li>
-        <li class="fix-item">
-          <span class="fix-bullet">●</span>
-          <span><span class="fix-title">Stale debug config cleanup on startup</span><span class="fix-desc"> — Configs left by a force-killed VS Code session are removed on next activation.</span></span>
-        </li>
-      </ul>
     </div>
 
     <div class="footer">
