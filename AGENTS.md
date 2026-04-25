@@ -33,7 +33,8 @@ cds-debug/
 │   │   ├── logger.ts               # Structured output channel logger
 │   │   ├── packageSourceBrowser.ts  # NPM package source viewer
 │   │   ├── processManager.ts        # Debug process lifecycle
-│   │   └── shellEnv.ts             # Shell environment variable resolution
+│   │   ├── shellEnv.ts             # Shell environment variable resolution
+│   │   └── whatsNewManager.ts       # What's New version tracking & show logic
 │   ├── storage/             # Persistence layer
 │   │   ├── cacheStore.ts            # App list cache (globalState)
 │   │   └── configStore.ts           # Config persistence (globalState)
@@ -49,7 +50,8 @@ cds-debug/
 │   │   ├── packageBrowserStyles.ts  # Package browser CSS
 │   │   ├── webviewRenderers.ts      # Screen renderers (region, org, ready, settings, etc.)
 │   │   ├── webviewScript.ts         # Client-side JS for webview
-│   │   └── webviewStyles.ts         # Main webview CSS
+│   │   ├── webviewStyles.ts         # Main webview CSS
+│   │   └── whatsNewPanel.ts         # What's New editor-tab panel (changelog content + HTML)
 │   └── extension.ts         # Extension entry point (activate/deactivate)
 ├── test/                    # Unit tests (Vitest)
 │   ├── core/                # Tests for src/core/*
@@ -133,4 +135,15 @@ pnpm test                 # Build extension + run Playwright
 pnpm test:report          # Open HTML report
 ```
 
+## What's New Workflow
 
+When shipping a notable release, update **both** in the same PR — neither alone is enough:
+
+| Step | File | Rule |
+|---|---|---|
+| 1. Prototype | `designs/prototypes/whats-new-prototype.html` | Update cards, screenshot with Playwright, review visually |
+| 2. In-code | `src/webview/whatsNewPanel.ts` | Update `CHANGELOG` constant — `label: "vX.Y.Z"` (no date suffix), max 4 cards |
+
+**Card content**: run `git log --oneline <last-stable>..HEAD`, pick the 4 most impactful changes. Fold fixes into a "Stability & Fixes" card rather than a separate section.
+
+**When panel shows**: stable versions only (no `-pre` suffix), once per version via `globalState` (`src/core/whatsNewManager.ts`).
