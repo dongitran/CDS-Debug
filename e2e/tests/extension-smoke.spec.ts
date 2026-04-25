@@ -3323,6 +3323,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
+        // Wait for the extension's settings responses to be fully processed before injecting.
+        // The extension sends GET_CACHE_CONFIG and GET_CREDENTIALS_STATUS responses in order;
+        // .cred-info-email only appears after CREDENTIALS_STATUS (the last response) is received,
+        // ensuring GET_CACHE_CONFIG's response has also landed — preventing a race where the
+        // extension's CACHE_CONFIG { enabled: true } response overwrites the injected value.
+        await expect(webview.locator('.cred-info-email')).toContainText(MOCK_ENV_EMAIL);
 
         // Inject CACHE_CONFIG with enabled=false
         await injectMessage(webview, {
