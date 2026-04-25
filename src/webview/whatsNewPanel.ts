@@ -20,8 +20,8 @@ interface ChangelogVersion {
 
 const CHANGELOG: ChangelogVersion[] = [
   {
-    version: '0.3.12',
-    label: 'v0.3.12',
+    version: '0.3.32',
+    label: 'v0.3.32',
     features: [
       {
         icon: '📦',
