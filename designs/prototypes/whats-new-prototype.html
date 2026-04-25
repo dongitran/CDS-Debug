@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CDS Debug — What's New Prototype</title>
+  <style>
+    :root {
+      --bg:           #0e1520;
+      --panel:        #141e2b;
+      --panel-soft:   #1a2636;
+      --panel-hover:  #1f2e40;
+      --line:         #243044;
+      --text:         #d8e7f5;
+      --muted:        #7a99b8;
+      --ok:           #4ecb93;
+      --warn:         #f2c14e;
+      --err:          #f07070;
+      --accent:       #4da3ff;
+      --accent-soft:  rgba(77,163,255,0.18);
+      --accent-dim:   rgba(77,163,255,0.08);
+      --badge-bg:     rgba(77,163,255,0.15);
+      --badge-text:   #82c4ff;
+      --fix-border:   #e2a84b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", "IBM Plex Sans", system-ui, sans-serif;
+      font-size: 13px;
+      background: radial-gradient(ellipse at top right, #1a2d45, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px 16px 40px;
+    }
+
+    /* ── Shell ──────────────────────────────────── */
+    .shell {
+      max-width: 960px;
+      margin: 0 auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, var(--panel) 0%, #0e1825 100%);
+      box-shadow: 0 24px 60px rgba(0,0,0,.45);
+      overflow: hidden;
+    }
+
+    /* ── Title bar ──────────────────────────────── */
+    .titlebar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 16px;
+      background: rgba(0,0,0,.25);
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+
+    .titlebar-dots { display: flex; gap: 6px; }
+    .dot {
+      width: 11px; height: 11px;
+      border-radius: 50%;
+    }
+    .dot-r { background: #ff5f57; }
+    .dot-y { background: #ffbd2e; }
+    .dot-g { background: #28c840; }
+
+    .titlebar-label {
+      margin-left: 8px;
+      color: var(--text);
+      opacity: .7;
+    }
+
+    /* ── Tab nav ────────────────────────────────── */
+    .tab-bar {
+      display: flex;
+      gap: 2px;
+      padding: 12px 20px 0;
+      border-bottom: 1px solid var(--line);
+      background: rgba(0,0,0,.1);
+    }
+
+    .tab {
+      padding: 7px 16px 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+      border-radius: 6px 6px 0 0;
+      cursor: pointer;
+      border: 1px solid transparent;
+      border-bottom: none;
+      transition: color .15s, background .15s;
+      user-select: none;
+    }
+    .tab:hover { color: var(--text); background: var(--accent-dim); }
+    .tab.active {
+      color: var(--accent);
+      background: var(--panel);
+      border-color: var(--line);
+      border-bottom-color: var(--panel);
+      margin-bottom: -1px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── Pages ──────────────────────────────────── */
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* ═══════════════════════════════════════════════
+       PAGE 1 — What's New
+    ═══════════════════════════════════════════════ */
+
+    .hero {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      padding: 36px 36px 30px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(135deg, rgba(77,163,255,.07) 0%, transparent 60%);
+    }
+
+    .hero-icon {
+      font-size: 52px;
+      line-height: 1;
+      filter: drop-shadow(0 0 18px rgba(77,163,255,.45));
+      flex-shrink: 0;
+    }
+
+    .hero-title {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -.4px;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .hero-sub {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .version-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 10px;
+      background: var(--badge-bg);
+      color: var(--badge-text);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+      border: 1px solid rgba(77,163,255,.25);
+      letter-spacing: .3px;
+    }
+
+    /* ── Features section ───────────────────────── */
+    .section {
+      padding: 28px 36px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section:last-child { border-bottom: none; }
+
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--muted);
+      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    @media (max-width: 620px) {
+      .features-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      display: flex;
+      gap: 14px;
+      padding: 16px;
+      background: var(--panel-soft);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      transition: border-color .18s, background .18s, transform .18s;
+      cursor: default;
+    }
+
+    .card:hover {
+      border-color: var(--accent);
+      background: var(--panel-hover);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0,0,0,.25);
+    }
+
+    .card-icon {
+      font-size: 24px;
+      line-height: 1;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 5px;
+    }
+
+    .card-desc {
+      font-size: 11.5px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .card-desc code {
+      font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+      font-size: 10.5px;
+      background: rgba(77,163,255,.12);
+      color: #82c4ff;
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    /* ── Fixes section ──────────────────────────── */
+    .fixes-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .fix-item {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 10px 14px;
+      background: var(--panel-soft);
+      border-left: 3px solid var(--fix-border);
+      border-radius: 0 8px 8px 0;
+      font-size: 12px;
+      line-height: 1.5;
+      transition: background .15s;
+    }
+    .fix-item:hover { background: var(--panel-hover); }
+
+    .fix-bullet {
+      color: var(--fix-border);
+      font-size: 14px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .fix-title { font-weight: 600; color: var(--text); }
+    .fix-desc { color: var(--muted); }
+
+    /* ── Footer ─────────────────────────────────── */
+    .footer {
+      padding: 22px 36px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: rgba(0,0,0,.12);
+      border-top: 1px solid var(--line);
+    }
+
+    .footer-text { font-size: 12px; color: var(--muted); }
+    .footer-text strong { color: var(--text); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 16px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn:hover { opacity: .85; transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+    }
+    .btn-ghost:hover { color: var(--text); border-color: var(--accent); }
+
+
+    /* ═══════════════════════════════════════════════
+       PAGE 2 — Release History
+    ═══════════════════════════════════════════════ */
+
+    .history-layout {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      min-height: 540px;
+    }
+
+    .history-sidebar {
+      border-right: 1px solid var(--line);
+      padding: 20px 0;
+      background: rgba(0,0,0,.12);
+    }
+
+    .history-sidebar-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--muted);
+      padding: 0 18px 12px;
+    }
+
+    .version-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 18px;
+      cursor: pointer;
+      transition: background .12s;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--muted);
+      border-left: 3px solid transparent;
+    }
+    .version-item:hover { background: var(--accent-dim); color: var(--text); }
+    .version-item.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-left-color: var(--accent);
+    }
+
+    .version-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--line);
+    }
+    .version-item.active .version-dot,
+    .version-item.latest .version-dot { background: var(--ok); }
+
+    .version-date {
+      margin-left: auto;
+      font-size: 10px;
+      color: var(--muted);
+      opacity: .7;
+    }
+
+    .history-content {
+      padding: 28px 32px;
+      overflow-y: auto;
+      max-height: 600px;
+    }
+
+    .h-version-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .h-version-number {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .h-version-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      padding: 3px 8px;
+      border-radius: 5px;
+    }
+    .badge-latest { background: rgba(78,203,147,.15); color: var(--ok); border: 1px solid rgba(78,203,147,.3); }
+    .badge-stable { background: rgba(77,163,255,.12); color: var(--badge-text); border: 1px solid rgba(77,163,255,.2); }
+    .badge-older  { background: rgba(255,255,255,.05); color: var(--muted); border: 1px solid var(--line); }
+
+    .h-date {
+      margin-left: auto;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .h-group {
+      margin-bottom: 22px;
+    }
+
+    .h-group-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .h-group-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .h-entry-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .h-entry {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+
+    .h-entry-icon {
+      font-size: 13px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .h-entry strong { color: var(--text); font-weight: 600; }
+
+    .h-entry code {
+      font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+      font-size: 11px;
+      background: rgba(77,163,255,.1);
+      color: #82c4ff;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    .history-pane { display: none; }
+    .history-pane.active { display: block; }
+
+    /* New version tag */
+    .new-tag {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      background: rgba(78,203,147,.18);
+      color: var(--ok);
+      padding: 1px 5px;
+      border-radius: 4px;
+      letter-spacing: .5px;
+      margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- Title bar -->
+  <div class="titlebar">
+    <div class="titlebar-dots">
+      <div class="dot dot-r"></div>
+      <div class="dot dot-y"></div>
+      <div class="dot dot-g"></div>
+    </div>
+    <span class="titlebar-label">⚡ CDS Debug — What's New (Prototype)</span>
+  </div>
+
+  <!-- Tab nav -->
+  <div class="tab-bar">
+    <div class="tab active" data-tab="whats-new">✨ What's New</div>
+    <div class="tab"          data-tab="history">📋 Release History</div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       PAGE 1 — What's New
+  ══════════════════════════════════════════ -->
+  <div class="page active" id="page-whats-new">
+
+    <div class="hero">
+      <div class="hero-icon">⚡</div>
+      <div>
+        <div class="hero-title">What's New in CDS Debug</div>
+        <div class="hero-sub">Debug multiple SAP CAP services simultaneously — directly from VS Code.</div>
+        <div class="version-chip">🚀 v0.3.10 — Spring 2025</div>
+      </div>
+    </div>
+
+    <!-- Features -->
+    <div class="section">
+      <div class="section-label">New Features</div>
+      <div class="features-grid">
+
+        <div class="card">
+          <div class="card-icon">📦</div>
+          <div>
+            <div class="card-title">Package Browser</div>
+            <div class="card-desc">Browse every npm package loaded in an active debug session as a collapsible tree. Jump directly to any source file — no more hunting through <code>node_modules</code>.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🔍</div>
+          <div>
+            <div class="card-title">Package Regex Filter</div>
+            <div class="card-desc">Filter the package list by name with a regex pattern. Pre-configure a default via <code>cdsDebug.packageRegexFilter</code> in VS Code settings — synced two-way with the UI.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🔄</div>
+          <div>
+            <div class="card-title">Auto-reconnect</div>
+            <div class="card-desc">SSH tunnel reconnects automatically (up to 3 attempts with linear back-off) when a CF timeout or network blip drops it mid-session.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">📸</div>
+          <div>
+            <div class="card-title">Breakpoint Snapshots</div>
+            <div class="card-desc">Capture variable context at any breakpoint without pausing execution. Snapshots accumulate in the sidebar for post-request review. Enable in <code>Settings → Breakpoint Snapshot Handling</code>.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🌿</div>
+          <div>
+            <div class="card-title">Branch Preparation</div>
+            <div class="card-desc">Before attaching, CDS Debug can stash local changes, check out the correct git branch, and run <code>pnpm install &amp;&amp; pnpm build</code> so sources always match the remote service.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">⚙️</div>
+          <div>
+            <div class="card-title">Shared CAP Debug Config</div>
+            <div class="card-desc">Set <code>cdsDebug.sharedCapDebugConfig</code> once in VS Code user settings to share <code>remoteRoot</code> and <code>orgBranchMap</code> across all workspaces.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Fixes -->
+    <div class="section">
+      <div class="section-label">Bug Fixes &amp; Improvements</div>
+      <ul class="fixes-list">
+        <li class="fix-item">
+          <span class="fix-bullet">●</span>
+          <span><span class="fix-title">Suppressed save-before-start errors</span><span class="fix-desc"> — VS Code no longer tries to save unrelated open editors when the debugger attaches, preventing misleading permission-denied errors.</span></span>
+        </li>
+        <li class="fix-item">
+          <span class="fix-bullet">●</span>
+          <span><span class="fix-title">Package loading across new sessions</span><span class="fix-desc"> — Package entries reload correctly when a debug session is restarted.</span></span>
+        </li>
+        <li class="fix-item">
+          <span class="fix-bullet">●</span>
+          <span><span class="fix-title">Generated srv outFiles path</span><span class="fix-desc"> — Source maps for generated CAP server files resolve correctly from the expected output path.</span></span>
+        </li>
+        <li class="fix-item">
+          <span class="fix-bullet">●</span>
+          <span><span class="fix-title">Stale debug config cleanup on startup</span><span class="fix-desc"> — Configs left by a force-killed VS Code session are removed on next activation.</span></span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <div class="footer-text">
+        <strong>Thank you for using CDS Debug!</strong><br/>
+        Found a bug or have a feature request?
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" onclick="alert('Opens GitHub Issues')">🐛 Report Issue</button>
+        <button class="btn btn-primary" onclick="alert('Panel closes')">Got it!</button>
+      </div>
+    </div>
+
+  </div><!-- /page-whats-new -->
+
+
+  <!-- ══════════════════════════════════════════
+       PAGE 2 — Release History
+  ══════════════════════════════════════════ -->
+  <div class="page" id="page-history">
+    <div class="history-layout">
+
+      <!-- Sidebar -->
+      <div class="history-sidebar">
+        <div class="history-sidebar-title">Versions</div>
+
+        <div class="version-item active latest" data-pane="v0310">
+          <div class="version-dot"></div>
+          v0.3.10
+          <span class="new-tag">NEW</span>
+          <span class="version-date">2025</span>
+        </div>
+        <div class="version-item" data-pane="v030">
+          <div class="version-dot"></div>
+          v0.3.0
+          <span class="version-date">2025</span>
+        </div>
+        <div class="version-item" data-pane="v0241">
+          <div class="version-dot"></div>
+          v0.2.41
+          <span class="version-date">2024</span>
+        </div>
+        <div class="version-item" data-pane="v010">
+          <div class="version-dot"></div>
+          v0.1.0
+          <span class="version-date">2024</span>
+        </div>
+        <div class="version-item" data-pane="v0021">
+          <div class="version-dot"></div>
+          v0.0.21
+          <span class="version-date">2024</span>
+        </div>
+      </div>
+
+      <!-- Content -->
+      <div class="history-content">
+
+        <!-- v0.3.10 -->
+        <div class="history-pane active" id="pane-v0310">
+          <div class="h-version-header">
+            <span class="h-version-number">v0.3.10</span>
+            <span class="h-version-badge badge-latest">Latest</span>
+            <span class="h-date">Spring 2025</span>
+          </div>
+
+          <div class="h-group">
+            <div class="h-group-label">✨ New Features</div>
+            <ul class="h-entry-list">
+              <li class="h-entry"><span class="h-entry-icon">📦</span><span><strong>Package Browser</strong> — Browse npm packages in debug sessions as a collapsible tree; jump to any source file.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🔍</span><span><strong>Package Regex Filter</strong> — Filter packages by name regex; synced with <code>cdsDebug.packageRegexFilter</code> VS Code setting.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🔄</span><span><strong>Auto-reconnect</strong> — SSH tunnel auto-reconnects up to 3 times on unexpected drops.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">📸</span><span><strong>Breakpoint Snapshots</strong> — Capture variable context without pausing; review after requests complete.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🌿</span><span><strong>Branch Preparation</strong> — Stash, checkout, install and build before attaching debugger.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">⚙️</span><span><strong>Shared CAP Debug Config</strong> — <code>cdsDebug.sharedCapDebugConfig</code> as a user-level fallback for all workspaces.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🆕</span><span><strong>What's New panel</strong> — Shown automatically after upgrading to a new stable release.</span></li>
+            </ul>
+          </div>
+
+          <div class="h-group">
+            <div class="h-group-label">🐛 Bug Fixes</div>
+            <ul class="h-entry-list">
+              <li class="h-entry"><span class="h-entry-icon">🔧</span><span>Suppress save-before-start to prevent permission errors on debug launch.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🔧</span><span>Package entries reload correctly when a debug session is restarted.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🔧</span><span>Source maps for generated CAP server files resolve from the correct output path.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🔧</span><span>Stale debug configs cleaned from <code>launch.json</code> on activation after force-kill.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- v0.3.0 -->
+        <div class="history-pane" id="pane-v030">
+          <div class="h-version-header">
+            <span class="h-version-number">v0.3.0</span>
+            <span class="h-version-badge badge-stable">Stable</span>
+            <span class="h-date">2025</span>
+          </div>
+          <div class="h-group">
+            <div class="h-group-label">✨ New Features</div>
+            <ul class="h-entry-list">
+              <li class="h-entry"><span class="h-entry-icon">📸</span><span><strong>Breakpoint snapshot foundation</strong> — Initial capture and display of variable context at breakpoints.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">▶️</span><span><strong>Auto-continue</strong> after snapshot capture — configurable via <code>cdsDebug.pauseOnBreakpoint</code>.</span></li>
+            </ul>
+          </div>
+          <div class="h-group">
+            <div class="h-group-label">⚡ Improvements</div>
+            <ul class="h-entry-list">
+              <li class="h-entry"><span class="h-entry-icon">🚀</span><span>Significant latency reduction for snapshot capture.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🎛️</span><span>Breakpoint snapshot handling toggle added to Settings panel (off by default).</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- v0.2.41 -->
+        <div class="history-pane" id="pane-v0241">
+          <div class="h-version-header">
+            <span class="h-version-number">v0.2.41</span>
+            <span class="h-version-badge badge-stable">Stable</span>
+            <span class="h-date">2024</span>
+          </div>
+          <div class="h-group">
+            <div class="h-group-label">✨ New Features</div>
+            <ul class="h-entry-list">
+              <li class="h-entry"><span class="h-entry-icon">⚙️</span><span><strong>Shared <code>cdsDebug.sharedCapDebugConfig</code></strong> — workspace-level fallback for CAP debug settings.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🗺️</span><span><strong>Region picker</strong> — 14 built-in CF regions plus custom endpoint support.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- v0.1.0 -->
+        <div class="history-pane" id="pane-v010">
+          <div class="h-version-header">
+            <span class="h-version-number">v0.1.0</span>
+            <span class="h-version-badge badge-older">Older</span>
+            <span class="h-date">2024</span>
+          </div>
+          <div class="h-group">
+            <div class="h-group-label">✨ New Features</div>
+            <ul class="h-entry-list">
+              <li class="h-entry"><span class="h-entry-icon">🌐</span><span>Renamed "Auto-open app in browser" → <strong>Open browser on debugger attach</strong> with live state badge.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">☑️</span><span><strong>Multi-select debug</strong> — tick any running apps and launch all sessions at once.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">⚡</span><span><strong>Background app cache</strong> with configurable sync interval — loading feels instant.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- v0.0.21 -->
+        <div class="history-pane" id="pane-v0021">
+          <div class="h-version-header">
+            <span class="h-version-number">v0.0.21</span>
+            <span class="h-version-badge badge-older">Older</span>
+            <span class="h-date">2024</span>
+          </div>
+          <div class="h-group">
+            <div class="h-group-label">✨ New Features</div>
+            <ul class="h-entry-list">
+              <li class="h-entry"><span class="h-entry-icon">✅</span><span>Select-all, Stop-all, Refresh controls.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🔢</span><span>Port display per active session.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🎨</span><span>Theme-aware status badges.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div><!-- /history-content -->
+    </div><!-- /history-layout -->
+  </div><!-- /page-history -->
+
+</div><!-- /shell -->
+
+<script>
+  // Tab switching
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      const target = 'page-' + tab.dataset.tab;
+      document.getElementById(target)?.classList.add('active');
+    });
+  });
+
+  // History sidebar switching
+  document.querySelectorAll('.version-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.version-item').forEach(v => v.classList.remove('active'));
+      document.querySelectorAll('.history-pane').forEach(p => p.classList.remove('active'));
+      item.classList.add('active');
+      const pane = item.dataset.pane;
+      document.getElementById('pane-' + pane)?.classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>

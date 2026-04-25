@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.10-pre.19",
+  "version": "0.3.10-pre.20",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -106,6 +106,10 @@
       {
         "command": "cdsDebug.clearCredentials",
         "title": "CDS Debug: Clear Saved Credentials"
+      },
+      {
+        "command": "cdsDebug.showWhatsNew",
+        "title": "CDS Debug: What's New"
       }
     ]
   },

@@ -8,6 +8,8 @@ import { disposeAllProcesses, initializeProcessManager, stopAllProcesses, getAct
 import { setSecretStorage, clearCredentialsFromSecretStorage } from './core/shellEnv';
 import { cleanStaleDebugConfigs, removeLaunchConfigs } from './core/launchConfigurator';
 import { disposeBreakpointSnapshotManager, initializeBreakpointSnapshotManager } from './core/breakpointSnapshotManager';
+import { showWhatsNewIfNeeded } from './core/whatsNewManager';
+import { WhatsNewPanel } from './webview/whatsNewPanel';
 
 export function activate(context: vscode.ExtensionContext): void {
   initConfigStore(context);
@@ -80,6 +82,14 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     }),
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cdsDebug.showWhatsNew', () => {
+      WhatsNewPanel.show(context);
+    }),
+  );
+
+  showWhatsNewIfNeeded(context);
 }
 
 export async function deactivate(): Promise<void> {
