@@ -4,7 +4,11 @@ import { logInfo, logWarn } from './logger';
 
 const INSPECTOR_METADATA_TIMEOUT_MS = 2_000;
 const LINUX_CHROME_COMMANDS = ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium'] as const;
-const SAFE_DEVTOOLS_URL_PATTERN = /^devtools:\/\/devtools\/bundled\/inspector\.html\?ws=localhost:\d+\/[A-Za-z0-9._~-]+$/;
+const DEVTOOLS_FRONTEND_KEYS = ['devtoolsFrontendUrl', 'devtoolsFrontendUrlCompat'] as const;
+const SAFE_DEVTOOLS_RAW_URL_PATTERN = /^[A-Za-z0-9:/?&=._~\-[\]]+$/;
+const SAFE_DEVTOOLS_BUNDLED_PATH_PATTERN = /^\/bundled\/[A-Za-z0-9._~-]+\.html$/;
+const SAFE_DEVTOOLS_QUERY_KEYS = new Set(['experiments', 'v8only', 'ws']);
+const LOCAL_WS_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const CHROME_SPAWN_OPTIONS: SpawnOptions = {
   detached: true,
   shell: false,
@@ -47,6 +51,68 @@ function readString(record: Record<string, unknown>, key: string): string | unde
   return typeof value === 'string' ? value : undefined;
 }
 
+function isSafeLocalInspectorWsPath(pathname: string): boolean {
+  const targetId = pathname.split('/').filter(Boolean).at(-1);
+  return targetId !== undefined && /^[A-Za-z0-9._~-]+$/.test(targetId);
+}
+
+function isSafeLocalInspectorWsValue(value: string | null): boolean {
+  if (value === null) return false;
+
+  try {
+    const wsUrl = new URL(`ws://${value}`);
+    return LOCAL_WS_HOSTS.has(wsUrl.hostname)
+      && wsUrl.port.length > 0
+      && isSafeLocalInspectorWsPath(wsUrl.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function hasOnlySafeDevToolsQueryKeys(searchParams: URLSearchParams): boolean {
+  for (const key of searchParams.keys()) {
+    if (!SAFE_DEVTOOLS_QUERY_KEYS.has(key)) return false;
+  }
+  return true;
+}
+
+function isSafeDevToolsFrontendUrl(rawUrl: string): boolean {
+  if (!SAFE_DEVTOOLS_RAW_URL_PATTERN.test(rawUrl)) return false;
+
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.protocol === 'devtools:'
+      && parsed.hostname === 'devtools'
+      && SAFE_DEVTOOLS_BUNDLED_PATH_PATTERN.test(parsed.pathname)
+      && hasOnlySafeDevToolsQueryKeys(parsed.searchParams)
+      && isSafeLocalInspectorWsValue(parsed.searchParams.get('ws'));
+  } catch {
+    return false;
+  }
+}
+
+function extractDevToolsFrontendUrlFromEntry(entry: unknown): string | null {
+  if (typeof entry !== 'object' || entry === null) return null;
+
+  const record = entry as Record<string, unknown>;
+  for (const key of DEVTOOLS_FRONTEND_KEYS) {
+    const frontendUrl = readString(record, key);
+    if (frontendUrl !== undefined && isSafeDevToolsFrontendUrl(frontendUrl)) return frontendUrl;
+  }
+  return null;
+}
+
+function extractDevToolsFrontendUrl(metadata: unknown): string | null {
+  if (!Array.isArray(metadata)) return null;
+
+  for (const entry of metadata) {
+    const frontendUrl = extractDevToolsFrontendUrlFromEntry(entry);
+    if (frontendUrl !== null) return frontendUrl;
+  }
+
+  return null;
+}
+
 function extractTargetIdFromEntry(entry: unknown): string | null {
   if (typeof entry !== 'object' || entry === null) return null;
 
@@ -87,7 +153,7 @@ function windowsChromePath(basePath: string): string {
 }
 
 function getCmdStartChromeCommand(url: string): ChromeLaunchCommand | null {
-  if (!SAFE_DEVTOOLS_URL_PATTERN.test(url)) return null;
+  if (!isSafeDevToolsFrontendUrl(url)) return null;
   return { command: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '""', 'chrome', `"${url}"`] };
 }
 
@@ -134,7 +200,7 @@ function getWslWindowsChromeCommands(url: string): ChromeLaunchCommand[] {
 
 function getLinuxChromeCommands(url: string, env: NodeJS.ProcessEnv): ChromeLaunchCommand[] {
   const commands = LINUX_CHROME_COMMANDS.map((command) => toChromeCommand(command, url));
-  return isWslEnvironment(env) ? [...commands, ...getWslWindowsChromeCommands(url)] : commands;
+  return isWslEnvironment(env) ? [...getWslWindowsChromeCommands(url), ...commands] : commands;
 }
 
 export function getChromeLaunchCommands(
@@ -238,10 +304,16 @@ async function fetchInspectorMetadata(port: number, path: string): Promise<unkno
 
 export async function resolveChromeDevToolsUrl(port: number): Promise<string | null> {
   const listMetadata = await fetchInspectorMetadata(port, '/json/list');
+  const listFrontendUrl = extractDevToolsFrontendUrl(listMetadata);
+  if (listFrontendUrl !== null) return listFrontendUrl;
+
   const listTargetId = extractInspectorTargetId(listMetadata);
   if (listTargetId !== null) return buildChromeDevToolsUrl(port, listTargetId);
 
   const metadata = await fetchInspectorMetadata(port, '/json');
+  const frontendUrl = extractDevToolsFrontendUrl(metadata);
+  if (frontendUrl !== null) return frontendUrl;
+
   const targetId = extractInspectorTargetId(metadata);
   return targetId === null ? null : buildChromeDevToolsUrl(port, targetId);
 }

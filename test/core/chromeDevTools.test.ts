@@ -12,6 +12,11 @@ interface InspectorServer {
   port: number;
 }
 
+interface InspectorResponse {
+  body: string | ((port: number) => string);
+  statusCode?: number;
+}
+
 interface MockSpawnChild extends EventEmitter {
   unref: ReturnType<typeof vi.fn>;
 }
@@ -71,13 +76,20 @@ import {
 
 const servers: Server[] = [];
 
-async function createInspectorServer(responses: Record<string, { body: string; statusCode?: number }>): Promise<InspectorServer> {
+async function createInspectorServer(responses: Record<string, InspectorResponse>): Promise<InspectorServer> {
   const server = createServer((req, res) => {
     const path = req.url ?? '/';
     const response = responses[path] ?? { body: 'not found', statusCode: 404 };
+    const address = server.address();
+    if (address === null || typeof address === 'string') {
+      res.statusCode = 500;
+      res.end('Inspector test server did not expose a TCP port.');
+      return;
+    }
+    const body = typeof response.body === 'function' ? response.body(address.port) : response.body;
     res.statusCode = response.statusCode ?? 200;
     res.setHeader('content-type', 'application/json');
-    res.end(response.body);
+    res.end(body);
   });
 
   await new Promise<void>((resolve) => {
@@ -173,6 +185,21 @@ describe('chromeDevTools', () => {
     );
   });
 
+  it('prefers the canonical DevTools frontend URL from Node inspector metadata', async () => {
+    const { port } = await createInspectorServer({
+      '/json/list': {
+        body: (serverPort) => JSON.stringify([{
+          devtoolsFrontendUrl: `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=127.0.0.1:${serverPort.toString()}/target-from-frontend`,
+          id: 'target-from-id',
+        }]),
+      },
+    });
+
+    await expect(resolveChromeDevToolsUrl(port)).resolves.toBe(
+      `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=127.0.0.1:${port.toString()}/target-from-frontend`,
+    );
+  });
+
   it('falls back to /json when /json/list does not return a target', async () => {
     const { port } = await createInspectorServer({
       '/json/list': { body: '[]' },
@@ -222,22 +249,35 @@ describe('chromeDevTools', () => {
     ]);
   });
 
-  it('adds a safe Windows Chrome fallback when running from WSL', () => {
+  it('prefers Windows Chrome before Linux wrappers when running from WSL', () => {
     const url = buildChromeDevToolsUrl(9229, 'target-from-wsl');
 
     expect(getChromeLaunchCommands(url, {
       env: { WSL_DISTRO_NAME: 'Ubuntu' },
       platform: 'linux',
-    }).slice(4)).toEqual([
+    })).toEqual([
       { command: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '""', 'chrome', `"${url}"`] },
       { command: '/mnt/c/Windows/System32/cmd.exe', args: ['/d', '/s', '/c', 'start', '""', 'chrome', `"${url}"`] },
       { command: '/mnt/c/Program Files/Google/Chrome/Application/chrome.exe', args: [url] },
       { command: '/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe', args: [url] },
+      { command: 'google-chrome', args: [url] },
+      { command: 'google-chrome-stable', args: [url] },
+      { command: 'chromium-browser', args: [url] },
+      { command: 'chromium', args: [url] },
     ]);
   });
 
+  it('uses command-shell fallback for canonical Node DevTools frontend URLs', () => {
+    const url = 'devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=127.0.0.1:9229/target-from-node';
+
+    expect(getChromeLaunchCommands(url, { env: {}, platform: 'win32' })[0]).toEqual({
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', 'start', '""', 'chrome', `"${url}"`],
+    });
+  });
+
   it('does not add command-shell fallbacks for unsafe DevTools URLs', () => {
-    const url = 'devtools://devtools/bundled/inspector.html?ws=localhost:9229/target&bad';
+    const url = 'devtools://devtools/bundled/inspector.html?ws=localhost:9229/target"bad';
 
     expect(getChromeLaunchCommands(url, { env: {}, platform: 'win32' })).toEqual([
       { command: 'chrome.exe', args: [url] },
