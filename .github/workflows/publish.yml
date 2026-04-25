@@ -79,3 +79,14 @@ jobs:
         run: npx @vscode/vsce publish --pre-release --skip-duplicate --no-dependencies
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Create GitHub Release (stable only)
+        if: steps.publish_meta.outputs.channel == 'stable'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.publish_meta.outputs.publish_version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes-file CHANGELOG.md \
+            --latest
