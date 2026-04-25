@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { initConfigStore, clearConfig } from './storage/configStore';
-import { initCacheStore } from './storage/cacheStore';
+import { initCacheStore, getDebugSessionPackagePreferences } from './storage/cacheStore';
 import { initCacheSync, disposeCacheSync } from './core/cacheSync';
 import { DebugLauncherViewProvider } from './webview/debugPanel';
 import { disposeLogger, logWarn } from './core/logger';
@@ -40,6 +40,17 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(DebugLauncherViewProvider.viewId, provider, {
       webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('cdsDebug.packageRegexFilter')) {
+        provider.postMessage({
+          type: 'DEBUG_SESSION_PACKAGE_PREFS',
+          payload: getDebugSessionPackagePreferences(),
+        });
+      }
     }),
   );
 

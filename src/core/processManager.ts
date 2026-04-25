@@ -728,7 +728,7 @@ async function probeTunnelAndAttach(
   debugAttachQueue = currentQueue
     .then(async () => {
       if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return null;
-      return vscode.debug.startDebugging(workspaceFolder, launchConfigName);
+      return vscode.debug.startDebugging(workspaceFolder, launchConfigName, { suppressSaveBeforeStart: true });
     })
     .then((success) => {
       if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;

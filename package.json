@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.10-pre.17",
+  "version": "0.3.10-pre.19",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -62,6 +62,11 @@
           "minimum": 20,
           "maximum": 1000,
           "markdownDescription": "Maximum number of breakpoint context snapshots kept in memory for the webview list."
+        },
+        "cdsDebug.packageRegexFilter": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default regex filter applied to package names in the Packages screen. This acts as an initial value and can be overridden per session via the extension UI. If modified in the UI, the extension will attempt to update the appropriate scope (Workspace or User) if it was previously set there."
         },
         "cdsDebug.sharedCapDebugConfig": {
           "type": "object",

@@ -108,6 +108,25 @@ Precedence is:
 2. user `cdsDebug.sharedCapDebugConfig`
 3. workspace `.vscode/cap-debug-config.json`
 
+### Optional — pre-configure the Package Regex Filter
+
+The Packages screen has a **Package Regex Filter** field that narrows which packages are shown. You can set a default value in VS Code settings so it is pre-populated every time:
+
+```json
+// .vscode/settings.json  (workspace scope)
+{
+  "cdsDebug.packageRegexFilter": "^@my-org/"
+}
+```
+
+Or in your user `settings.json` to apply it across all workspaces.
+
+**Sync behaviour:**
+
+- On first load, if `cdsDebug.packageRegexFilter` is set at workspace or user scope, the extension picks it up automatically.
+- When you edit the filter in the Packages UI, the extension saves it back to the VS Code setting at the same scope where it was originally set (workspace or user), keeping settings and UI in sync.
+- If you later change the VS Code setting directly (e.g. via `settings.json`), the extension detects the change and updates the UI immediately.
+
 ---
 
 ## 🛠️ Commands

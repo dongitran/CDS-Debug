@@ -100,14 +100,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   constructor(private readonly context: vscode.ExtensionContext) {
     debugProcessEvents.on('statusChanged', (payload: { appName: string, status: string, message?: string }) => {
-      this.post({ type: 'APP_DEBUG_STATUS', payload });
+      this.postMessage({ type: 'APP_DEBUG_STATUS', payload });
     });
     cacheSyncEvents.on('progress', (payload: SyncProgress) => {
-      this.post({ type: 'SYNC_STATUS', payload });
+      this.postMessage({ type: 'SYNC_STATUS', payload });
     });
     breakpointSnapshotEvents.on('snapshotAdded', (snapshot: unknown) => {
       if (!isBreakpointSnapshot(snapshot)) return;
-      this.post({ type: 'BREAKPOINT_SNAPSHOT_ADDED', payload: { snapshot } });
+      this.postMessage({ type: 'BREAKPOINT_SNAPSHOT_ADDED', payload: { snapshot } });
     });
   }
 
@@ -130,7 +130,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     logInfo('Panel loaded.');
   }
 
-  private post(message: ExtensionMessage): void {
+  public postMessage(message: ExtensionMessage): void {
     void this.view?.webview.postMessage(message);
   }
 
@@ -141,7 +141,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       case 'LOAD_CONFIG': {
         const config = getConfig();
         const credentialStatus = await this.buildCredentialStatus();
-        this.post({
+        this.postMessage({
           type: 'CONFIG_LOADED',
           payload: {
             config: config ?? null,
@@ -152,9 +152,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         // Push current debug preferences immediately so the webview's in-memory
         // state always reflects globalState — not a stale acquireVsCodeApi() snapshot
         // from a previous VS Code session where openBrowserOnAttach may have been true.
-        this.post({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
-        this.post({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
-        this.post({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
+        this.postMessage({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
+        this.postMessage({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
+        this.postMessage({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
         break;
       }
 
@@ -164,7 +164,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       case 'GET_CREDENTIALS_STATUS': {
         const status = await this.buildCredentialStatus();
-        this.post({ type: 'CREDENTIALS_STATUS', payload: status });
+        this.postMessage({ type: 'CREDENTIALS_STATUS', payload: status });
         break;
       }
 
@@ -202,7 +202,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       case 'CLEAR_BREAKPOINT_SNAPSHOTS':
         clearBreakpointSnapshots();
-        this.post({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
+        this.postMessage({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
         break;
 
       case 'LOAD_PACKAGE_SOURCES':
@@ -240,7 +240,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'GET_SYNC_STATUS':
-        this.post({ type: 'SYNC_STATUS', payload: getCurrentSyncProgress() });
+        this.postMessage({ type: 'SYNC_STATUS', payload: getCurrentSyncProgress() });
         break;
 
       case 'TRIGGER_SYNC':
@@ -248,31 +248,31 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'GET_CACHE_CONFIG':
-        this.post({ type: 'CACHE_CONFIG', payload: getCacheSettings() });
+        this.postMessage({ type: 'CACHE_CONFIG', payload: getCacheSettings() });
         break;
 
       case 'REQUEST_CHANGE_MAPPING': {
         stopAllProcesses();
-        this.post({ type: 'PROCEED_CHANGE_MAPPING' });
+        this.postMessage({ type: 'PROCEED_CHANGE_MAPPING' });
         break;
       }
 
       case 'GET_DEBUG_PREFS':
-        this.post({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
+        this.postMessage({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
         break;
 
       case 'SAVE_DEBUG_PREFS':
         await saveDebugPreferences(raw.payload);
-        this.post({ type: 'DEBUG_PREFS', payload: raw.payload });
+        this.postMessage({ type: 'DEBUG_PREFS', payload: raw.payload });
         break;
 
       case 'GET_DEBUG_SESSION_PACKAGE_PREFS':
-        this.post({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
+        this.postMessage({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
         break;
 
       case 'SAVE_DEBUG_SESSION_PACKAGE_PREFS':
         await saveDebugSessionPackagePreferences(raw.payload);
-        this.post({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
+        this.postMessage({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
         break;
 
       case 'SAVE_CACHE_CONFIG': {
@@ -286,7 +286,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         };
         await saveCacheSettings(settings);
         restartCacheSyncTimer();
-        this.post({ type: 'CACHE_CONFIG', payload: settings });
+        this.postMessage({ type: 'CACHE_CONFIG', payload: settings });
         break;
       }
     }
@@ -296,7 +296,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const params = getSessionParams(appName);
     if (!params) {
       // Params cleared (e.g. extension restarted) — cannot retry automatically.
-      this.post({ type: 'DEBUG_ERROR', payload: { message: `Cannot retry ${appName}: session parameters lost. Please start the debug session again.` } });
+      this.postMessage({ type: 'DEBUG_ERROR', payload: { message: `Cannot retry ${appName}: session parameters lost. Please start the debug session again.` } });
       return;
     }
     logInfo(`[Retry] Restarting tunnel for ${appName} on port ${params.port.toString()}`);
@@ -337,10 +337,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     switch (command.action) {
       case 'EMIT_DEBUG_CONNECTING':
-        this.post({ type: 'DEBUG_CONNECTING', payload: command.payload });
+        this.postMessage({ type: 'DEBUG_CONNECTING', payload: command.payload });
         return;
       case 'EMIT_APP_DEBUG_STATUS':
-        this.post({ type: 'APP_DEBUG_STATUS', payload: command.payload });
+        this.postMessage({ type: 'APP_DEBUG_STATUS', payload: command.payload });
         return;
       case 'SET_PACKAGE_FIXTURE':
       case 'CLEAR_PACKAGE_FIXTURES':
@@ -357,12 +357,12 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const log = this.buildPackageLogger(appName);
     try {
       const packages = await this.getOrLoadPackageEntriesForApp(appName, log, true);
-      this.post({ type: 'PACKAGE_SOURCES_LOADED', payload: { appName, packages } });
+      this.postMessage({ type: 'PACKAGE_SOURCES_LOADED', payload: { appName, packages } });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logError(`Failed to load package sources for ${appName}: ${message}`);
       log(`Load failed: ${message}`);
-      this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
+      this.postMessage({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
     }
   }
 
@@ -380,7 +380,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       if (!existingIndex) this.packageSearchIndexByApp.set(appName, index);
 
       const searchResults = await searchPackageEntries(index, query, { packageNameFilterRegex });
-      this.post({
+      this.postMessage({
         type: 'PACKAGE_SEARCH_RESULTS',
         payload: { appName, query, requestId, packages: searchResults },
       });
@@ -388,7 +388,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const message = err instanceof Error ? err.message : String(err);
       logError(`Failed to search package sources for ${appName}: ${message}`);
       log(`Search failed: ${message}`);
-      this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
+      this.postMessage({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
     }
   }
 
@@ -401,7 +401,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       ? (getE2eDebugSessionById(source.debugSessionId) ?? getDebugSessionById(source.debugSessionId))
       : (getE2eActiveDebugSessionForApp(appName) ?? getActiveDebugSessionForApp(appName));
     if (!session) {
-      this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message: `No attached debug session found for ${appName}.` } });
+      this.postMessage({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message: `No attached debug session found for ${appName}.` } });
       return;
     }
 
@@ -421,7 +421,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const message = err instanceof Error ? err.message : String(err);
       logError(`Failed to open package source for ${appName}: ${message}`);
       this.logPackageDiagnostic(appName, `Open failed: ${message}`);
-      this.post({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
+      this.postMessage({ type: 'PACKAGE_SOURCES_ERROR', payload: { appName, message } });
     }
   }
 
@@ -468,7 +468,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     if (!selected) return;
 
     logInfo(`Group folder selected: ${selected.fsPath}`);
-    this.post({ type: 'GROUP_FOLDER_SELECTED', payload: { path: selected.fsPath } });
+    this.postMessage({ type: 'GROUP_FOLDER_SELECTED', payload: { path: selected.fsPath } });
   }
 
   private async handleLogin(apiEndpoint: string): Promise<void> {
@@ -477,14 +477,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     if (!email || !password) {
       const msg = 'No SAP credentials found. Please set your credentials in the extension setup screen.';
       logError(msg);
-      this.post({ type: 'LOGIN_ERROR', payload: { message: msg } });
+      this.postMessage({ type: 'LOGIN_ERROR', payload: { message: msg } });
       return;
     }
 
     if (!apiEndpoint.startsWith('https://')) {
       const msg = 'API endpoint must start with https://';
       logError(msg);
-      this.post({ type: 'LOGIN_ERROR', payload: { message: msg } });
+      this.postMessage({ type: 'LOGIN_ERROR', payload: { message: msg } });
       return;
     }
 
@@ -519,7 +519,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         orgs,
         orgGroupMappings: validMappings,
       });
-      this.post({ type: 'LOGIN_SUCCESS', payload: { orgs } });
+      this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs } });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Login failed: ${msg}`);
@@ -528,7 +528,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       // avoid a conflicting screen transition.
       const revoked = await this.handleAuthFailure(err);
       if (!revoked) {
-        this.post({ type: 'LOGIN_ERROR', payload: { message: msg } });
+        this.postMessage({ type: 'LOGIN_ERROR', payload: { message: msg } });
       }
     }
   }
@@ -554,7 +554,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     if (!mapping) {
       const msg = `No local folder mapped for org: ${org}`;
       logWarn(msg);
-      this.post({ type: 'APPS_ERROR', payload: { message: msg } });
+      this.postMessage({ type: 'APPS_ERROR', payload: { message: msg } });
       return;
     }
 
@@ -567,7 +567,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         const ttlMs = cacheSettings.intervalHours * 60 * 60 * 1000;
         if (ageMs < ttlMs) {
           logInfo(`Apps served from cache for org: ${org} (${Math.floor(ageMs / 60_000).toString()}m old).`);
-          this.post({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
+          this.postMessage({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
           // Warm up the CF session in the background so that handleStartDebug
           // never hits an expired token when the app list came from cache.
           // Failures are silently retried with a full re-login.
@@ -582,11 +582,11 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const apps = await cfTargetAndApps(org);
       const started = apps.filter((a) => a.state === 'started').length;
       logInfo(`Apps loaded: ${apps.length.toString()} total, ${started.toString()} started.`);
-      this.post({ type: 'APPS_LOADED', payload: { apps } });
+      this.postMessage({ type: 'APPS_LOADED', payload: { apps } });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Failed to load apps for ${org}: ${msg}`);
-      this.post({ type: 'APPS_ERROR', payload: { message: msg } });
+      this.postMessage({ type: 'APPS_ERROR', payload: { message: msg } });
     }
   }
 
@@ -598,7 +598,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     if (!mapping) {
       const msg = `No mapping found for org: ${org}`;
       logError(msg);
-      this.post({ type: 'DEBUG_ERROR', payload: { message: msg } });
+      this.postMessage({ type: 'DEBUG_ERROR', payload: { message: msg } });
       return;
     }
 
@@ -625,7 +625,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         // Auth failure → clear stale keychain creds and redirect to credential setup.
         const revoked = await this.handleAuthFailure(retryErr);
         if (!revoked) {
-          this.post({ type: 'DEBUG_ERROR', payload: { message: `CF target failed: ${msg}` } });
+          this.postMessage({ type: 'DEBUG_ERROR', payload: { message: `CF target failed: ${msg}` } });
         }
         return;
       }
@@ -698,7 +698,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
           targetBranch: b.targetBranch ?? '',
           currentBranch: b.currentBranch ?? 'unknown',
         }));
-        this.post({ type: 'BRANCH_PREP_START', payload: { services: prepServices } });
+        this.postMessage({ type: 'BRANCH_PREP_START', payload: { services: prepServices } });
 
         const prepSuccessful = await this.runBranchPreparation(targets, branchInfos);
         finalTargets = [...targetsSkippingPrep, ...prepSuccessful];
@@ -710,7 +710,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
 
     if (finalTargets.length === 0) {
-      this.post({ type: 'DEBUG_ERROR', payload: { message: 'Branch preparation failed for all services.' } });
+      this.postMessage({ type: 'DEBUG_ERROR', payload: { message: 'Branch preparation failed for all services.' } });
       return;
     }
 
@@ -829,7 +829,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const postStatus = (appName: string, step: BranchPrepStep, message?: string): void => {
       const payload: { appName: string; step: BranchPrepStep; message?: string } = { appName, step };
       if (message !== undefined) payload.message = message;
-      this.post({ type: 'BRANCH_PREP_STATUS', payload });
+      this.postMessage({ type: 'BRANCH_PREP_STATUS', payload });
     };
 
     for (const info of branchInfos) {
@@ -925,7 +925,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       ports[target.appName] = target.port;
     }
     const noLocalFolderApps = targets.filter((t) => t.noLocalFolder).map((t) => t.appName);
-    this.post({
+    this.postMessage({
       type: 'DEBUG_CONNECTING',
       payload: {
         appNames: targets.map((t) => t.appName),
@@ -960,7 +960,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     if (!safeUri) {
       const msg = 'Blocked unsafe or malformed app URL.';
       logWarn(msg);
-      this.post({ type: 'DEBUG_ERROR', payload: { message: msg } });
+      this.postMessage({ type: 'DEBUG_ERROR', payload: { message: msg } });
       return;
     }
     void vscode.env.openExternal(safeUri);
@@ -983,24 +983,24 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   private async handleSaveCredentials(email: string, password: string): Promise<void> {
     const trimmedEmail = email.trim();
     if (trimmedEmail.length === 0 || !trimmedEmail.includes('@')) {
-      this.post({ type: 'CREDENTIALS_ERROR', payload: { message: 'Please enter a valid email address.' } });
+      this.postMessage({ type: 'CREDENTIALS_ERROR', payload: { message: 'Please enter a valid email address.' } });
       return;
     }
     if (!password) {
-      this.post({ type: 'CREDENTIALS_ERROR', payload: { message: 'Password is required.' } });
+      this.postMessage({ type: 'CREDENTIALS_ERROR', payload: { message: 'Password is required.' } });
       return;
     }
     try {
       await saveCredentialsToSecretStorage(trimmedEmail, password);
       logInfo(`[Credentials] Saved credentials for ${maskEmail(trimmedEmail)} to SecretStorage.`);
-      this.post({
+      this.postMessage({
         type: 'CREDENTIALS_SAVED',
         payload: { email: trimmedEmail, source: 'keychain' },
       });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`[Credentials] Failed to save credentials: ${msg}`);
-      this.post({ type: 'CREDENTIALS_ERROR', payload: { message: `Could not save credentials: ${msg}` } });
+      this.postMessage({ type: 'CREDENTIALS_ERROR', payload: { message: `Could not save credentials: ${msg}` } });
     }
   }
 
@@ -1008,7 +1008,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     await clearCredentialsFromSecretStorage();
     const status = await this.buildCredentialStatus();
     logInfo('[Credentials] Credentials cleared from SecretStorage.');
-    this.post({ type: 'CREDENTIALS_STATUS', payload: status });
+    this.postMessage({ type: 'CREDENTIALS_STATUS', payload: status });
   }
 
   /**
@@ -1028,7 +1028,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     // Only auto-revoke keychain credentials — env-var credentials are managed externally.
     await clearCredentialsFromSecretStorage();
     logInfo('[Credentials] Auth failure with keychain credentials — cleared and prompting for new credentials.');
-    this.post({
+    this.postMessage({
       type: 'CREDENTIALS_REVOKED',
       payload: { message: 'Credentials rejected by Cloud Foundry. Please enter your updated credentials.' },
     });

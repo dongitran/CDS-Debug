@@ -1,4 +1,4 @@
-import type * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import type {
   CacheSettings,
   CfApp,
@@ -119,18 +119,51 @@ function readDebugSessionPackagePreferences(value: unknown): Partial<DebugSessio
 
 export function getDebugSessionPackagePreferences(): DebugSessionPackagePreferences {
   const stored = ctx().globalState.get<unknown>(DEBUG_SESSION_PACKAGE_PREFS_KEY);
-  return {
+  const prefs = {
     ...DEFAULT_DEBUG_SESSION_PACKAGE_PREFERENCES,
     ...readDebugSessionPackagePreferences(stored),
   };
+
+  const config = vscode.workspace.getConfiguration('cdsDebug');
+  const inspect = config.inspect<string>('packageRegexFilter');
+  
+  const lastVsCodeValue = ctx().globalState.get<string>('cdsDebug.lastVsCodePackageRegexFilter');
+  const currentVsCodeValue = inspect?.workspaceValue ?? inspect?.globalValue ?? '';
+
+  // If the VS Code setting changed from outside since our last sync, take it.
+  if (currentVsCodeValue !== lastVsCodeValue) {
+    void ctx().globalState.update('cdsDebug.lastVsCodePackageRegexFilter', currentVsCodeValue);
+    
+    // Only take it if it was actually explicitly set in workspace or user settings
+    if (inspect?.workspaceValue !== undefined || inspect?.globalValue !== undefined) {
+      prefs.packageNameFilterRegex = currentVsCodeValue;
+      void saveDebugSessionPackagePreferences(prefs, true);
+    }
+  }
+
+  return prefs;
 }
 
 export async function saveDebugSessionPackagePreferences(
   prefs: DebugSessionPackagePreferences,
+  skipVsCodeSync = false
 ): Promise<void> {
   const normalized: DebugSessionPackagePreferences = {
     ...DEFAULT_DEBUG_SESSION_PACKAGE_PREFERENCES,
     ...readDebugSessionPackagePreferences(prefs),
   };
   await ctx().globalState.update(DEBUG_SESSION_PACKAGE_PREFS_KEY, normalized);
+
+  if (!skipVsCodeSync) {
+    const config = vscode.workspace.getConfiguration('cdsDebug');
+    const inspect = config.inspect<string>('packageRegexFilter');
+
+    if (inspect?.workspaceValue !== undefined) {
+      await config.update('packageRegexFilter', normalized.packageNameFilterRegex, vscode.ConfigurationTarget.Workspace);
+      await ctx().globalState.update('cdsDebug.lastVsCodePackageRegexFilter', normalized.packageNameFilterRegex);
+    } else if (inspect?.globalValue !== undefined) {
+      await config.update('packageRegexFilter', normalized.packageNameFilterRegex, vscode.ConfigurationTarget.Global);
+      await ctx().globalState.update('cdsDebug.lastVsCodePackageRegexFilter', normalized.packageNameFilterRegex);
+    }
+  }
 }

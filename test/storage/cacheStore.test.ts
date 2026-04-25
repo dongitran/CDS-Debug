@@ -1,4 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('vscode', () => ({
+  workspace: {
+    getConfiguration: () => ({
+      inspect: () => undefined,
+      update: () => Promise.resolve(),
+    }),
+  },
+}));
 import {
   initCacheStore,
   getCachedApps,
