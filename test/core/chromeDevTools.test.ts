@@ -195,11 +195,11 @@ describe('chromeDevTools', () => {
       },
       platform: 'win32',
     })).toEqual([
+      { command: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '""', 'chrome', `"${url}"`] },
       { command: 'chrome.exe', args: [url] },
       { command: 'C:\\Users\\eliot\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe', args: [url] },
       { command: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', args: [url] },
       { command: 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe', args: [url] },
-      { command: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '""', 'chrome', url] },
     ]);
   });
 
@@ -228,10 +228,12 @@ describe('chromeDevTools', () => {
     expect(getChromeLaunchCommands(url, {
       env: { WSL_DISTRO_NAME: 'Ubuntu' },
       platform: 'linux',
-    })).toContainEqual({
-      command: 'cmd.exe',
-      args: ['/d', '/s', '/c', 'start', '""', 'chrome', url],
-    });
+    }).slice(4)).toEqual([
+      { command: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '""', 'chrome', `"${url}"`] },
+      { command: '/mnt/c/Windows/System32/cmd.exe', args: ['/d', '/s', '/c', 'start', '""', 'chrome', `"${url}"`] },
+      { command: '/mnt/c/Program Files/Google/Chrome/Application/chrome.exe', args: [url] },
+      { command: '/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe', args: [url] },
+    ]);
   });
 
   it('does not add command-shell fallbacks for unsafe DevTools URLs', () => {

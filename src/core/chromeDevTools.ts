@@ -88,7 +88,7 @@ function windowsChromePath(basePath: string): string {
 
 function getCmdStartChromeCommand(url: string): ChromeLaunchCommand | null {
   if (!SAFE_DEVTOOLS_URL_PATTERN.test(url)) return null;
-  return { command: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '""', 'chrome', url] };
+  return { command: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '""', 'chrome', `"${url}"`] };
 }
 
 function getWindowsChromeCommands(url: string, env: NodeJS.ProcessEnv): ChromeLaunchCommand[] {
@@ -103,7 +103,7 @@ function getWindowsChromeCommands(url: string, env: NodeJS.ProcessEnv): ChromeLa
 
   const launchCommands = commands.map((command) => toChromeCommand(command, url));
   const cmdStart = getCmdStartChromeCommand(url);
-  return cmdStart === null ? launchCommands : [...launchCommands, cmdStart];
+  return cmdStart === null ? launchCommands : [cmdStart, ...launchCommands];
 }
 
 function getMacChromeCommands(url: string): ChromeLaunchCommand[] {
@@ -122,8 +122,11 @@ function getWslWindowsChromeCommands(url: string): ChromeLaunchCommand[] {
 
   const cmdStart = getCmdStartChromeCommand(url);
   if (cmdStart !== null) {
-    commands.push(cmdStart);
-    commands.push({ command: '/mnt/c/Windows/System32/cmd.exe', args: cmdStart.args });
+    return [
+      cmdStart,
+      { command: '/mnt/c/Windows/System32/cmd.exe', args: cmdStart.args },
+      ...commands,
+    ];
   }
 
   return commands;
