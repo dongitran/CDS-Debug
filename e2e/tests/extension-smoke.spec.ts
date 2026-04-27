@@ -647,12 +647,17 @@ async function expectRegionScreen(webview: Frame): Promise<void> {
   await expect(webview.locator('.step-badge', { hasText: '1/3' })).toBeVisible();
   await expect(webview.getByText('CF Region')).toBeVisible();
   await expect(webview.getByText('Select Region')).toBeVisible();
+  await expect(webview.getByLabel('Search regions')).toBeVisible();
+  await expect(webview.getByRole('radiogroup', { name: 'Cloud Foundry regions' })).toBeVisible();
   await expect(webview.getByRole('button', { name: 'Login to Cloud Foundry' })).toBeVisible();
   // Region cards are rendered with radio inputs for every region
-  await expect(webview.locator('input[name="cf-region"][value="eu10"]')).toBeAttached();
-  await expect(webview.locator('input[name="cf-region"][value="us10"]')).toBeAttached();
+  await expect(webview.getByRole('radio', { name: /eu10/i })).toBeAttached();
+  await expect(webview.getByRole('radio', { name: /us10/i })).toBeAttached();
+  await expect(webview.getByRole('radio', { name: /ae01/i })).toBeAttached();
+  await expect(webview.getByRole('radio', { name: /cn40/i })).toBeAttached();
+  await expect(webview.getByRole('radio', { name: /sa31/i })).toBeAttached();
   // Custom endpoint card is always present
-  await expect(webview.locator('input[name="cf-region"][value="custom"]')).toBeAttached();
+  await expect(webview.getByRole('radio', { name: /Custom endpoint/i })).toBeAttached();
   // Region screen must not leak launcher/setup controls
   await expect(webview.locator('#search-input')).toHaveCount(0);
   await expect(webview.locator('#btn-start-debug')).toHaveCount(0);
@@ -1511,10 +1516,21 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await webview.getByRole('tab', { name: 'Region' }).click();
       await expect(webview.getByRole('tab', { name: 'Region' })).toHaveAttribute('aria-selected', 'true');
       await expect(webview.getByText('Select Region')).toBeVisible();
-      await expect(webview.locator('#region-search-input')).toBeVisible();
-      await webview.locator('#region-search-input').fill('us west');
+      const regionSearch = webview.getByLabel('Search regions');
+      const regionList = webview.getByRole('radiogroup', { name: 'Cloud Foundry regions' });
+      await expect(regionSearch).toBeVisible();
+      await expect.poll(async () => regionList.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+
+      await regionSearch.fill('us west');
       await expect(webview.locator('.region-card', { hasText: 'us20' })).toBeVisible();
       await expect(webview.locator('.region-card', { hasText: 'eu10' })).toHaveCount(0);
+
+      await regionSearch.fill('china');
+      await expect(webview.locator('.region-card', { hasText: 'cn40' })).toBeVisible();
+      await expect(webview.locator('.region-card', { hasText: 'cn20' })).toBeVisible();
+      await webview.locator('.region-card', { hasText: 'cn40' }).click();
+      await expect(webview.locator('.radio-desc', { hasText: 'api.cf.cn40.platform.sapcloud.cn' })).toBeVisible();
+
       await expect(webview.getByRole('button', { name: 'Login to Cloud Foundry' })).toBeEnabled();
       await captureStepEvidence(workbenchPage, 'region-tab-filtered-results');
     });

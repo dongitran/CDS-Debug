@@ -184,57 +184,88 @@ export function getStyles(): string {
       height: 14px;
       fill: currentColor;
     }
-    .region-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
+    .region-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
       margin-bottom: 8px;
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+      overflow-y: auto;
+      background: var(--vscode-editor-background);
     }
-    .region-tab-panel .region-grid {
+    .region-tab-panel .region-list {
       flex: 1;
       min-height: 120px;
-      overflow-y: auto;
-      padding-right: 2px;
-      align-content: start;
     }
     .region-card {
       display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-      padding: 8px 6px;
-      border-radius: 4px;
-      border: 1px solid var(--vscode-input-border, transparent);
+      align-items: flex-start;
+      gap: 8px;
+      padding: 7px 8px;
+      border-bottom: 1px solid var(--vscode-input-border, transparent);
       cursor: pointer;
-      text-align: center;
       transition: border-color 0.1s, background 0.1s;
+      min-width: 0;
     }
     .region-card:hover { background: var(--vscode-list-hoverBackground); }
+    .region-card:last-child { border-bottom: none; }
     .region-card.selected {
-      border-color: var(--vscode-focusBorder);
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
+      box-shadow: inset 3px 0 0 var(--vscode-focusBorder);
     }
     .region-card input[type=radio] {
       position: absolute;
       opacity: 0;
       width: 1px;
       height: 1px;
-      pointer-events: none;
     }
-    .region-code { font-size: 13px; font-weight: 700; font-family: var(--vscode-editor-font-family); }
-    .region-name { font-size: 10px; color: var(--vscode-descriptionForeground); }
+    .region-card-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      flex: 1;
+    }
+    .region-main {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-width: 0;
+    }
+    .region-code {
+      flex: 0 0 42px;
+      font-size: 12px;
+      font-weight: 700;
+      font-family: var(--vscode-editor-font-family);
+      text-transform: uppercase;
+    }
+    .custom-region-code {
+      font-size: 11px;
+      text-transform: none;
+    }
+    .region-name {
+      min-width: 0;
+      font-size: 12px;
+      color: var(--vscode-foreground);
+      overflow-wrap: anywhere;
+    }
+    .region-endpoint {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      font-family: var(--vscode-editor-font-family);
+      overflow-wrap: anywhere;
+      line-height: 1.35;
+    }
     .region-card.selected .region-name { color: inherit; opacity: 0.8; }
-    .region-card-custom {
-      grid-column: 1 / -1;
-    }
+    .region-card.selected .region-endpoint { color: inherit; opacity: 0.7; }
 
     .region-search-block {
       margin-bottom: 8px;
     }
 
     .region-list-empty {
-      grid-column: 1 / -1;
       padding: 10px 6px;
       color: var(--vscode-descriptionForeground);
       font-size: 12px;
@@ -923,11 +954,6 @@ export function getStyles(): string {
       background: var(--vscode-button-background);
       border-radius: 2px;
       transition: width 0.4s ease;
-    }
-
-    @media (max-width: 260px) {
-      .region-grid { grid-template-columns: 1fr; }
-      .region-card-custom { grid-column: 1; }
     }
 
     /* Debug preferences toggle row */

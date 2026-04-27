@@ -6,6 +6,30 @@
  */
 import { getRendererScriptContent } from './webviewRenderers';
 import { getPackageBrowserScriptContent } from './packageBrowserContent';
+import { getAllRegions } from '@saptools/cf-sync';
+
+interface WebviewCfRegion {
+  readonly code: string;
+  readonly name: string;
+  readonly label: string;
+  readonly apiEndpoint: string;
+}
+
+function removeRegionKeySuffix(label: string, code: string): string {
+  const suffix = ` (${code})`;
+  return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+}
+
+const WEBVIEW_CF_REGIONS: readonly WebviewCfRegion[] = getAllRegions()
+  .map((region) => ({
+    code: region.key,
+    name: removeRegionKeySuffix(region.label, region.key),
+    label: region.label,
+    apiEndpoint: region.apiEndpoint,
+  }))
+  .sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code));
+
+const WEBVIEW_CF_REGIONS_JSON = JSON.stringify(WEBVIEW_CF_REGIONS);
 
 export function getScript(nonce: string): string {
   return `<script nonce="${nonce}">
@@ -33,28 +57,7 @@ export function getScript(nonce: string): string {
       PREPARING_BRANCHES: 'preparing-branches',
     };
 
-    const CF_REGIONS = [
-      { code: 'us10', name: 'US East (VA)' },
-      { code: 'us11', name: 'US East (us11)' },
-      { code: 'us20', name: 'US West (WA)' },
-      { code: 'us21', name: 'US West (us21)' },
-      { code: 'us30', name: 'US Central (Iowa)' },
-      { code: 'eu10', name: 'Europe (Frankfurt)' },
-      { code: 'eu20', name: 'Europe (Amsterdam)' },
-      { code: 'eu30', name: 'Europe (Frankfurt) GCP' },
-      { code: 'ch20', name: 'Switzerland (Zürich)' },
-      { code: 'ap10', name: 'Australia (Sydney)' },
-      { code: 'ap11', name: 'Singapore' },
-      { code: 'ap12', name: 'South Korea (Seoul)' },
-      { code: 'ap20', name: 'APJ (Osaka)' },
-      { code: 'ap21', name: 'Singapore (Azure)' },
-      { code: 'jp10', name: 'Japan (Tokyo)' },
-      { code: 'jp20', name: 'Japan (Osaka)' },
-      { code: 'in30', name: 'India (Mumbai)' },
-      { code: 'br10', name: 'Brazil (São Paulo)' },
-      { code: 'ca10', name: 'Canada (Montreal)' },
-      { code: 'ca20', name: 'Canada (Toronto)' },
-    ];
+    const CF_REGIONS = ${WEBVIEW_CF_REGIONS_JSON};
 
     const LOADING_MESSAGES = [
       "Opening SSH tunnel...",
@@ -146,13 +149,29 @@ export function getScript(nonce: string): string {
         .replace(/"/g, '&quot;');
     }
 
+    function normalizeEndpointValue(endpoint) {
+      return String(endpoint || '').trim().replace(new RegExp('/+$'), '');
+    }
+
+    function findRegionByCode(code) {
+      return CF_REGIONS.find(region => region.code === code) || null;
+    }
+
     function regionToEndpoint(code) {
-      return 'https://api.cf.' + code + '.hana.ondemand.com';
+      const region = findRegionByCode(code);
+      return region ? region.apiEndpoint : 'https://api.cf.' + code + '.hana.ondemand.com';
     }
 
     function endpointToRegion(endpoint) {
-      const m = endpoint.match(new RegExp('api[.]cf[.]([^.]+)[.]hana[.]ondemand[.]com'));
-      return m ? m[1] : null;
+      const normalized = normalizeEndpointValue(endpoint);
+      const region = CF_REGIONS.find(r => normalizeEndpointValue(r.apiEndpoint) === normalized);
+      if (region) return region.code;
+
+      const hanaMatch = normalized.match(new RegExp('api[.]cf[.]([^.]+)[.]hana[.]ondemand[.]com'));
+      if (hanaMatch) return hanaMatch[1];
+
+      const chinaMatch = normalized.match(new RegExp('api[.]cf[.]([^.]+)[.]platform[.]sapcloud[.]cn'));
+      return chinaMatch ? chinaMatch[1] : null;
     }
 
     function getRegionDisplay() {
@@ -275,9 +294,9 @@ export function getScript(nonce: string): string {
     }
 
     function refreshRegionResults() {
-      const grid = document.querySelector('.region-grid');
-      if (!grid) return;
-      grid.innerHTML = renderRegionCards();
+      const list = document.querySelector('.region-list');
+      if (!list) return;
+      list.innerHTML = renderRegionCards();
     }
 
     function beginRegionLogin() {
@@ -377,8 +396,8 @@ export function getScript(nonce: string): string {
         });
       });
 
-      const regionGrid = document.querySelector('.region-grid');
-      regionGrid?.addEventListener('change', e => {
+      const regionList = document.querySelector('.region-list');
+      regionList?.addEventListener('change', e => {
         const input = e.target.closest('input[name="cf-region"]');
         if (!input) return;
         const value = input.value;

@@ -12,10 +12,10 @@ This folder contains a standalone E2E harness for the `cds-debug` VS Code extens
 Current suite validates end-to-end user behavior with comprehensive per-screen element verification.
 
 ### Onboarding and Launcher (19 tests)
-1. User can login and see mocked CF org list — verifies all REGION elements (step-badge 1/3, radio inputs, endpoint `.radio-desc`) and SELECT_ORG elements (step-badge 2/3, info-box, section label, disabled Next button, back button, `.org-item` labels with radio inputs).
+1. User can login and see mocked CF org list — verifies all REGION elements (step-badge 1/3, searchable scrollable 41-region list, representative region radio inputs, endpoint `.radio-desc`) and SELECT_ORG elements (step-badge 2/3, info-box, section label, disabled Next button, back button, `.org-item` labels with radio inputs).
 2. User can keep org search hidden until synced topology is ready.
 3. User can search a synced org across regions and continue after confirming — verifies the Step 1 org search tab, staged native result button selection, explicit footer confirmation, and Step 3 folder handoff.
-4. User can switch to region fallback and filter regions after synced topology is ready — verifies the Region tab search input, filtered region list, and manual login button.
+4. User can switch to region fallback and filter regions after synced topology is ready — verifies the Region tab search input, scrollable filtered region list, China endpoint mapping, and manual login button.
 5. User can see setup screen when credentials are missing — verifies all SETUP_CREDENTIALS elements (info-box, inputs, password toggle, save button, env hint, no cancel button).
 6. User can see setup credential validation errors.
 7. User can see non-HTTPS endpoint validation error.

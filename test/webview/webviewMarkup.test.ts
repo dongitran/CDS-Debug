@@ -2,7 +2,34 @@ import { describe, expect, it } from 'vitest';
 
 import { getPackageBrowserScriptContent } from '../../src/webview/packageBrowserContent';
 import { getPackageBrowserStyles } from '../../src/webview/packageBrowserStyles';
+import { getScript } from '../../src/webview/webviewScript';
 import { getRendererScriptContent } from '../../src/webview/webviewRenderers';
+
+interface WebviewRegion {
+  readonly code: string;
+  readonly name: string;
+  readonly label: string;
+  readonly apiEndpoint: string;
+}
+
+function isWebviewRegion(value: unknown): value is WebviewRegion {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.code === 'string'
+    && typeof record.name === 'string'
+    && typeof record.label === 'string'
+    && typeof record.apiEndpoint === 'string';
+}
+
+function readInjectedRegions(script: string): WebviewRegion[] {
+  const match = /const CF_REGIONS = ([\s\S]*?);\n/.exec(script);
+  if (!match?.[1]) throw new Error('CF_REGIONS catalog was not injected');
+  const parsed: unknown = JSON.parse(match[1]);
+  if (!Array.isArray(parsed) || !parsed.every(isWebviewRegion)) {
+    throw new Error('CF_REGIONS catalog has an unexpected shape');
+  }
+  return parsed;
+}
 
 describe('webview markup contracts', () => {
   it('keeps Package as the only active-session secondary action', () => {
@@ -20,6 +47,8 @@ describe('webview markup contracts', () => {
     expect(rendererScript).toContain("renderSearchField('region-search-input'");
     expect(rendererScript).toContain('search-input-icon');
     expect(rendererScript).toContain('region-selector-tabs');
+    expect(rendererScript).toContain('class="region-list"');
+    expect(rendererScript).toContain('role="radiogroup"');
     expect(rendererScript).toContain('data-region-selector-mode="org"');
     expect(rendererScript).toContain('data-region-selector-mode="region"');
     expect(rendererScript).toContain('class="org-search-row ${selected ?');
@@ -27,6 +56,22 @@ describe('webview markup contracts', () => {
     expect(rendererScript).toContain('aria-pressed="');
     expect(rendererScript).toContain('Continue with Selected Org');
     expect(rendererScript).toContain('CF Region / Org');
+  });
+
+  it('injects the complete sorted Cloud Foundry region catalog', () => {
+    const regions = readInjectedRegions(getScript('test-nonce'));
+    const sortedNames = regions.map((region) => region.name);
+
+    expect(regions).toHaveLength(41);
+    expect(sortedNames).toEqual([...sortedNames].sort((a, b) => a.localeCompare(b)));
+    expect(regions[0]?.code).toBe('ap12');
+    expect(regions.some((region) => region.code === 'ae01')).toBe(true);
+    expect(regions.some((region) => region.code === 'sa31')).toBe(true);
+    expect(regions.some((region) => region.code === 'uk20')).toBe(true);
+    expect(regions.find((region) => region.code === 'cn20')?.apiEndpoint)
+      .toBe('https://api.cf.cn20.platform.sapcloud.cn');
+    expect(regions.find((region) => region.code === 'cn40')?.apiEndpoint)
+      .toBe('https://api.cf.cn40.platform.sapcloud.cn');
   });
 
   it('keeps the package browser screen minimal', () => {

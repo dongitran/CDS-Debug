@@ -30,7 +30,9 @@ export function getRendererScriptContent(): string {
       const q = String(query || '').trim().toLowerCase();
       if (q.length === 0) return CF_REGIONS;
       return CF_REGIONS.filter(region => {
-        const haystack = (region.code + ' ' + region.name).toLowerCase();
+        const haystack = (
+          region.code + ' ' + region.name + ' ' + region.label + ' ' + region.apiEndpoint
+        ).toLowerCase();
         return haystack.indexOf(q) !== -1;
       });
     }
@@ -115,8 +117,13 @@ export function getRendererScriptContent(): string {
         <label class="region-card \${!state.useCustomEndpoint && state.selectedRegion === r.code ? 'selected' : ''}">
           <input type="radio" name="cf-region" value="\${escape(r.code)}"
             \${!state.useCustomEndpoint && state.selectedRegion === r.code ? 'checked' : ''} />
-          <span class="region-code">\${escape(r.code)}</span>
-          <span class="region-name">\${escape(r.name)}</span>
+          <span class="region-card-content">
+            <span class="region-main">
+              <span class="region-code">\${escape(r.code)}</span>
+              <span class="region-name">\${escape(r.name)}</span>
+            </span>
+            <span class="region-endpoint">\${escape(r.apiEndpoint)}</span>
+          </span>
         </label>
       \`).join('');
 
@@ -124,7 +131,13 @@ export function getRendererScriptContent(): string {
         <label class="region-card region-card-custom \${state.useCustomEndpoint ? 'selected' : ''}">
           <input type="radio" name="cf-region" value="custom"
             \${state.useCustomEndpoint ? 'checked' : ''} />
-          <span class="region-code" style="font-size:11px">Custom endpoint</span>
+          <span class="region-card-content">
+            <span class="region-main">
+              <span class="region-code custom-region-code">Custom</span>
+              <span class="region-name">Custom endpoint</span>
+            </span>
+            <span class="region-endpoint">Enter a full CF API URL</span>
+          </span>
         </label>
       \` : '';
 
@@ -137,13 +150,13 @@ export function getRendererScriptContent(): string {
     function renderRegionPickerPanel(includeSearch) {
       const customInput = state.useCustomEndpoint ? \`
         <input class="input" id="api-endpoint-custom"
-          placeholder="https://api.cf.<region>.hana.ondemand.com"
+          placeholder="https://api.cf.<region>.<domain>"
           value="\${escape(state.apiEndpoint)}" />
         <div class="radio-desc" style="margin-top:4px">Enter your full CF API URL</div>
         <div style="height:8px"></div>
       \` : \`
         <div class="radio-desc" style="margin-bottom:8px">
-          Endpoint: <code>https://api.cf.\${escape(state.selectedRegion)}.hana.ondemand.com</code>
+          Endpoint: <code>\${escape(regionToEndpoint(state.selectedRegion))}</code>
         </div>
       \`;
 
@@ -156,7 +169,7 @@ export function getRendererScriptContent(): string {
       return \`
         <div class="section-label">Select Region</div>
         \${searchHtml}
-        <div class="region-grid">
+        <div class="region-list" role="radiogroup" aria-label="Cloud Foundry regions">
           \${renderRegionCards()}
         </div>
         \${customInput}
@@ -206,7 +219,7 @@ export function getRendererScriptContent(): string {
           \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
           \${topologyReady ? renderRegionTabs() : ''}
           <div class="region-tab-panel" role="tabpanel">
-            \${topologyReady ? activePanel : renderRegionPickerPanel(false)}
+            \${topologyReady ? activePanel : renderRegionPickerPanel(true)}
           </div>
           \${renderRegionFooterButton(topologyReady)}
         </div>
