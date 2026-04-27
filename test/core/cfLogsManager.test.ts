@@ -1,6 +1,5 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 
 interface MockChildProcess extends EventEmitter {
   stdout: EventEmitter;
@@ -49,7 +48,7 @@ beforeEach(() => {
   childProcessMockState.spawn.mockImplementation(() => {
     const child = createMockChildProcess();
     childProcessMockState.children.push(child);
-    return child as unknown as ChildProcessWithoutNullStreams;
+    return child;
   });
 });
 
