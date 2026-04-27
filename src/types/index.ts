@@ -115,6 +115,24 @@ export interface SyncProgress {
   total: number;
 }
 
+/**
+ * One Cloud Foundry org entry as discovered by cf-sync's structure file.
+ * Powers the cross-region org search shown on the CF Region step.
+ */
+export interface CfTopologyOrg {
+  regionKey: string;
+  regionLabel: string;
+  apiEndpoint: string;
+  orgName: string;
+  spaces: string[];
+}
+
+export interface CfTopology {
+  /** True when cf-sync has finished a sync at least once and produced at least one accessible org. */
+  ready: boolean;
+  accounts: CfTopologyOrg[];
+}
+
 export interface CacheSettings {
   enabled: boolean;
   intervalHours: number;
@@ -323,6 +341,7 @@ export type WebviewMessage =
   | { type: 'GET_SYNC_STATUS' }
   | { type: 'GET_CACHE_CONFIG' }
   | { type: 'SAVE_CACHE_CONFIG'; payload: CacheSettings }
+  | { type: 'GET_CF_TOPOLOGY' }
   | { type: 'GET_DEBUG_PREFS' }
   | { type: 'SAVE_DEBUG_PREFS'; payload: DebugPreferences }
   | { type: 'GET_DEBUG_SESSION_PACKAGE_PREFS' }
@@ -374,6 +393,7 @@ export type ExtensionMessage =
   | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }>; credentialStatus: CredentialStatus } }
   | { type: 'SYNC_STATUS'; payload: SyncProgress }
   | { type: 'CACHE_CONFIG'; payload: CacheSettings }
+  | { type: 'CF_TOPOLOGY'; payload: CfTopology }
   | { type: 'DEBUG_PREFS'; payload: DebugPreferences }
   | { type: 'DEBUG_SESSION_PACKAGE_PREFS'; payload: DebugSessionPackagePreferences }
   | { type: 'BRANCH_PREP_START'; payload: { services: { appName: string; currentBranch: string; targetBranch: string }[] } }

@@ -5,6 +5,67 @@
  */
 export function getRendererScriptContent(): string {
   return `
+    function filterTopologyAccounts(accounts, query) {
+      const q = String(query || '').trim().toLowerCase();
+      if (q.length === 0) return accounts.slice(0, 50);
+      const matches = [];
+      for (const account of accounts) {
+        const haystack = (
+          account.orgName + ' ' + account.regionKey + ' ' + account.regionLabel
+        ).toLowerCase();
+        if (haystack.indexOf(q) !== -1) matches.push(account);
+        if (matches.length >= 50) break;
+      }
+      return matches;
+    }
+
+    function findTopologyAccount(regionKey, orgName) {
+      const accounts = (state.cfTopology && state.cfTopology.accounts) || [];
+      for (const account of accounts) {
+        if (account.regionKey === regionKey && account.orgName === orgName) return account;
+      }
+      return null;
+    }
+
+    function renderOrgSearchBlock() {
+      const topology = state.cfTopology || { ready: false, accounts: [] };
+      if (!topology.ready || !Array.isArray(topology.accounts) || topology.accounts.length === 0) {
+        return '';
+      }
+      const filtered = filterTopologyAccounts(topology.accounts, state.orgSearchQuery);
+      const rows = filtered.map(account => {
+        const spaceCount = Array.isArray(account.spaces) ? account.spaces.length : 0;
+        const meta = account.regionKey + ' · ' + spaceCount + ' space' + (spaceCount === 1 ? '' : 's');
+        return \`
+          <button class="org-search-row" type="button"
+               data-org-search-region="\${escape(account.regionKey)}"
+               data-org-search-org="\${escape(account.orgName)}"
+               title="\${escape(account.orgName)} — \${escape(account.regionLabel)}">
+            <span class="org-search-org">\${escape(account.orgName)}</span>
+            <span class="org-search-meta">\${escape(meta)}</span>
+          </button>
+        \`;
+      }).join('');
+      const isEmptyResults = filtered.length === 0;
+      const resultsHtml = isEmptyResults
+        ? \`<div class="org-search-results empty">No org matches "\${escape(state.orgSearchQuery || '')}"</div>\`
+        : \`<div class="org-search-results">\${rows}</div>\`;
+      const totalLabel = topology.accounts.length === 1
+        ? '1 org synced across all regions'
+        : topology.accounts.length + ' orgs synced across all regions';
+      return \`
+        <div class="section-label">Search org (across regions)</div>
+        <div class="org-search-block">
+          <input class="input" id="org-search-input" type="search"
+            placeholder="Type to search orgs in any region…"
+            value="\${escape(state.orgSearchQuery || '')}"
+            autocomplete="off" spellcheck="false" />
+          \${resultsHtml}
+          <div class="radio-desc">\${escape(totalLabel)}</div>
+        </div>
+      \`;
+    }
+
     function renderRegion() {
       const regionCards = CF_REGIONS.map(r => \`
         <label class="region-card \${!state.useCustomEndpoint && state.selectedRegion === r.code ? 'selected' : ''}">
@@ -36,11 +97,13 @@ export function getRendererScriptContent(): string {
       \`;
 
       return \`
+        <div class="region-layout">
         <div class="step-header">
           <span class="step-badge">1/3</span>
-          <span class="step-title">CF Region</span>
+          <span class="step-title">CF Region / Org</span>
         </div>
         \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
+        \${renderOrgSearchBlock()}
         <div class="section-label">Select Region</div>
         <div class="region-grid">
           \${regionCards}
@@ -48,6 +111,7 @@ export function getRendererScriptContent(): string {
         </div>
         \${customInput}
         <button class="btn" id="btn-login">Login to Cloud Foundry</button>
+        </div>
       \`;
     }
 
@@ -1073,6 +1137,7 @@ export function getRendererScriptContent(): string {
 
       $('btn-logout-settings')?.addEventListener('click', () => {
         state.error = null;
+        state.pendingTopologyOrg = null;
         state.screen = SCREENS.REGION;
         render();
         vscode.postMessage({ type: 'RESET_LOGIN' });

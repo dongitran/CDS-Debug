@@ -15,6 +15,11 @@ describe('webview markup contracts', () => {
     expect(rendererScript).toContain('Select CF Space');
     expect(rendererScript).toContain('name="cf-space"');
     expect(rendererScript).toContain('Space</span>');
+    expect(rendererScript).toContain('Search org (across regions)');
+    expect(rendererScript).toContain('id="org-search-input"');
+    expect(rendererScript).toContain('<button class="org-search-row" type="button"');
+    expect(rendererScript).toContain('data-org-search-region');
+    expect(rendererScript).toContain('CF Region / Org');
   });
 
   it('keeps the package browser screen minimal', () => {

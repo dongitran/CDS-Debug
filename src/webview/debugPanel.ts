@@ -51,6 +51,7 @@ import {
   saveDebugSessionPackagePreferences,
 } from '../storage/cacheStore';
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
+import { getTopologySnapshot, getTopologySnapshotSync } from '../core/cfTopology';
 import { logError, logInfo, logWarn } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
 import {
@@ -115,6 +116,11 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     });
     cacheSyncEvents.on('progress', (payload: SyncProgress) => {
       this.postMessage({ type: 'SYNC_STATUS', payload });
+      // When a sync run finishes, refresh the cross-region org topology so the
+      // CF Region step's org search reflects the latest accessible orgs.
+      if (!payload.isRunning && payload.lastCompletedAt !== undefined) {
+        void this.pushCfTopology();
+      }
     });
     breakpointSnapshotEvents.on('snapshotAdded', (snapshot: unknown) => {
       if (!isBreakpointSnapshot(snapshot)) return;
@@ -145,6 +151,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     void this.view?.webview.postMessage(message);
   }
 
+  private async pushCfTopology(): Promise<void> {
+    try {
+      const topology = await getTopologySnapshot();
+      this.postMessage({ type: 'CF_TOPOLOGY', payload: topology });
+    } catch (err: unknown) {
+      logWarn(`[CfTopology] Failed to read cf-sync topology: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async handleMessage(raw: unknown): Promise<void> {
     if (!isWebviewMessage(raw)) return;
 
@@ -166,8 +181,17 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
         this.postMessage({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
         this.postMessage({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
+        // Synchronous best-effort first so the CF Region step can render the org
+        // search input on the very first paint when cf-sync has data on disk.
+        this.postMessage({ type: 'CF_TOPOLOGY', payload: getTopologySnapshotSync() });
+        void this.pushCfTopology();
         break;
       }
+
+      case 'GET_CF_TOPOLOGY':
+        this.postMessage({ type: 'CF_TOPOLOGY', payload: getTopologySnapshotSync() });
+        void this.pushCfTopology();
+        break;
 
       case 'SAVE_CREDENTIALS':
         await this.handleSaveCredentials(raw.payload.email, raw.payload.password);

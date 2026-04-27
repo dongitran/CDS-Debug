@@ -342,7 +342,7 @@ async function createMockCfCli(mockBinDir: string, scenario: CfScenario): Promis
   await chmod(cfPath, 0o755);
 }
 
-function buildVsCodeEnv(mockBinDir: string, credentialMode: CredentialMode): NodeJS.ProcessEnv {
+function buildVsCodeEnv(mockBinDir: string, credentialMode: CredentialMode, userDataDir: string): NodeJS.ProcessEnv {
   const inheritedPath = process.env.PATH ?? '';
   const credentials = credentialMode === 'env'
     ? { SAP_EMAIL: MOCK_ENV_EMAIL, SAP_PASSWORD: MOCK_ENV_PASSWORD }
@@ -353,6 +353,7 @@ function buildVsCodeEnv(mockBinDir: string, credentialMode: CredentialMode): Nod
     ...credentials,
     CDS_DEBUG_DISABLE_BACKGROUND_SYNC: '1',
     CDS_DEBUG_E2E_MODE: '1',
+    CDS_DEBUG_CF_STRUCTURE_PATH: join(userDataDir, '.saptools', 'cf-structure.json'),
     SHELL: '/usr/bin/false',
     PATH: `${mockBinDir}${delimiter}${inheritedPath}`,
   };
@@ -560,7 +561,7 @@ async function withVsCodeSession(
   const diagnostics: SessionDiagnostics = createSessionDiagnostics();
 
   try {
-    const env = buildVsCodeEnv(artifacts.mockBinDir, options.credentialMode);
+    const env = buildVsCodeEnv(artifacts.mockBinDir, options.credentialMode, artifacts.userDataDir);
     artifacts.appProcess = launchVsCode(
       repoRoot,
       artifacts.userDataDir,
@@ -1408,6 +1409,74 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.locator('.error-box')).toHaveCount(0);
       await expect(webview.locator('#btn-login')).toHaveCount(0);
       await expect(webview.locator('#btn-save-creds')).toHaveCount(0);
+
+      const errorBoxEvents = await stopErrorBoxMonitor(webview);
+      expect(errorBoxEvents).toEqual([]);
+    });
+  });
+
+  test('User can keep org search hidden until synced topology is ready', async () => {
+    await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+      const webview = await openCdsDebugWebview(workbenchPage);
+      await expectRegionScreen(webview);
+
+      await injectMessage(webview, {
+        type: 'CF_TOPOLOGY',
+        payload: { ready: false, accounts: [] },
+      });
+
+      await expect(webview.locator('#org-search-input')).toHaveCount(0);
+      await expect(webview.locator('.org-search-row')).toHaveCount(0);
+      await expect(webview.getByText('Select Region')).toBeVisible();
+      await expect(webview.getByRole('button', { name: 'Login to Cloud Foundry' })).toBeVisible();
+    });
+  });
+
+  test('User can search a synced org across regions and continue to local folder', async () => {
+    await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+      const webview = await openCdsDebugWebview(workbenchPage);
+      await expectRegionScreen(webview);
+      await expect(webview.locator('#org-search-input')).toHaveCount(0);
+      await startErrorBoxMonitor(webview);
+
+      await injectMessage(webview, {
+        type: 'CF_TOPOLOGY',
+        payload: {
+          ready: true,
+          accounts: [
+            {
+              regionKey: 'eu10',
+              regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
+              apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+              orgName: 'mock-org-alpha',
+              spaces: ['app'],
+            },
+            {
+              regionKey: 'us10',
+              regionLabel: 'US East (VA) - AWS (us10)',
+              apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
+              orgName: 'mock-org-beta',
+              spaces: ['app'],
+            },
+          ],
+        },
+      });
+
+      await expect(webview.getByText('Search org (across regions)')).toBeVisible();
+      await webview.locator('#org-search-input').fill('beta');
+      await expect(webview.getByRole('button', { name: /mock-org-beta/ })).toBeVisible();
+      await expect(webview.getByRole('button', { name: /mock-org-alpha/ })).toHaveCount(0);
+      await captureStepEvidence(workbenchPage, 'org-search-synced-results');
+
+      await webview.getByRole('button', { name: /mock-org-beta/ }).click();
+
+      await expect(webview.getByText('Select Local Folder')).toBeVisible({ timeout: 15_000 });
+      await expect(webview.locator('.step-badge', { hasText: '3/3' })).toBeVisible();
+      await expect(webview.locator('.info-box', { hasText: 'mock-org-beta' })).toBeVisible();
+      await expect(webview.locator('.info-box', { hasText: 'app' })).toBeVisible();
+      await expect(webview.getByText('Select CF Org')).toHaveCount(0);
+      await expect(webview.locator('#btn-save-mapping')).toBeDisabled();
+      await captureStepEvidence(workbenchPage, 'org-search-folder-shortcut');
 
       const errorBoxEvents = await stopErrorBoxMonitor(webview);
       expect(errorBoxEvents).toEqual([]);

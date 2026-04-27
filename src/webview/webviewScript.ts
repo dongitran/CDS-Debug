@@ -124,6 +124,13 @@ export function getScript(nonce: string): string {
       },
       packageSettingsDraftRegex: '',
       packageSettingsError: null,
+      // Cross-region org topology populated from cf-sync's structure file. Powers
+      // the search input shown above the region grid on the CF Region step.
+      cfTopology: { ready: false, accounts: [] },
+      orgSearchQuery: '',
+      // region/org pair the user picked from the search; consumed by LOGIN_SUCCESS
+      // to skip Step 2/3 (Select Org) when the live org list still contains it.
+      pendingTopologyOrg: null,
     };
 
     // === UTILS ===
@@ -212,6 +219,60 @@ export function getScript(nonce: string): string {
       syncSelectedSnapshot();
     }
 
+    // === ORG SEARCH HELPERS ===
+
+    /**
+     * Re-renders only the org-search results block when the user types into the
+     * search input. A full render() would rebuild the whole region grid and
+     * destroy the input element (taking focus with it).
+     */
+    function refreshOrgSearchResults() {
+      const block = document.querySelector('.org-search-block');
+      if (!block) return;
+      const accounts = (state.cfTopology && state.cfTopology.accounts) || [];
+      const filtered = filterTopologyAccounts(accounts, state.orgSearchQuery);
+      const resultsEl = block.querySelector('.org-search-results');
+      if (!resultsEl) return;
+      if (filtered.length === 0) {
+        resultsEl.className = 'org-search-results empty';
+        resultsEl.innerHTML = 'No org matches "' + escape(state.orgSearchQuery || '') + '"';
+        return;
+      }
+      resultsEl.className = 'org-search-results';
+      resultsEl.innerHTML = filtered.map(account => {
+        const spaceCount = Array.isArray(account.spaces) ? account.spaces.length : 0;
+        const meta = account.regionKey + ' · ' + spaceCount + ' space' + (spaceCount === 1 ? '' : 's');
+        return ''
+          + '<button class="org-search-row" type="button"'
+          + ' data-org-search-region="' + escape(account.regionKey) + '"'
+          + ' data-org-search-org="' + escape(account.orgName) + '"'
+          + ' title="' + escape(account.orgName) + ' — ' + escape(account.regionLabel) + '">'
+          +   '<span class="org-search-org">' + escape(account.orgName) + '</span>'
+          +   '<span class="org-search-meta">' + escape(meta) + '</span>'
+          + '</button>';
+      }).join('');
+    }
+
+    /**
+     * Triggered when the user clicks an org row from the search results or hits
+     * Enter on the search input. Stages the topology selection and kicks off the
+     * normal LOGIN flow against the org's region.
+     */
+    function selectTopologyOrg(regionKey, orgName) {
+      const account = findTopologyAccount(regionKey, orgName);
+      if (!account) return;
+      state.error = null;
+      state.useCustomEndpoint = false;
+      state.selectedRegion = regionKey;
+      state.apiEndpoint = account.apiEndpoint;
+      state.selectedOrg = orgName;
+      state.selectedSpace = null;
+      state.pendingTopologyOrg = { regionKey, orgName };
+      state.screen = SCREENS.LOGGING_IN;
+      render();
+      vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: account.apiEndpoint } });
+    }
+
     function addBreakpointSnapshot(snapshot) {
       state.breakpointSnapshots = [snapshot, ...state.breakpointSnapshots].slice(0, 300);
       syncSelectedSnapshot();
@@ -272,10 +333,45 @@ export function getScript(nonce: string): string {
         const endpoint = state.useCustomEndpoint ? state.apiEndpoint : regionToEndpoint(state.selectedRegion);
         state.apiEndpoint = endpoint;
         state.error = null;
+        // Region-only login: clear any stale topology selection so LOGIN_SUCCESS
+        // takes the standard SELECT_ORG path rather than auto-skipping it.
+        state.pendingTopologyOrg = null;
         state.screen = SCREENS.LOGGING_IN;
         render();
         vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: endpoint } });
       });
+
+      // Cross-region org search (only present when cf-sync has data).
+      const orgSearchInput = $('org-search-input');
+      if (orgSearchInput) {
+        orgSearchInput.addEventListener('input', e => {
+          state.orgSearchQuery = e.target.value;
+          // Lightweight refresh that does not rebuild the whole region grid —
+          // avoids losing focus on the search input while typing.
+          refreshOrgSearchResults();
+        });
+        orgSearchInput.addEventListener('keydown', e => {
+          if (e.key !== 'Enter') return;
+          const accounts = filterTopologyAccounts(
+            (state.cfTopology && state.cfTopology.accounts) || [],
+            state.orgSearchQuery,
+          );
+          if (accounts.length === 0) return;
+          e.preventDefault();
+          // Enter activates the first match. Most full org-name searches narrow
+          // down to a single hit, so this saves a click.
+          const first = accounts[0];
+          selectTopologyOrg(first.regionKey, first.orgName);
+        });
+      }
+      const orgSearchResults = document.querySelector('.org-search-results');
+      if (orgSearchResults) {
+        orgSearchResults.addEventListener('click', e => {
+          const row = e.target.closest('[data-org-search-region][data-org-search-org]');
+          if (!row) return;
+          selectTopologyOrg(row.dataset.orgSearchRegion, row.dataset.orgSearchOrg);
+        });
+      }
 
       document.querySelectorAll('input[name="cf-org"]').forEach(el => {
         el.addEventListener('change', e => {
@@ -478,6 +574,7 @@ export function getScript(nonce: string): string {
       $('btn-cancel-login')?.addEventListener('click', () => {
         state.screen = SCREENS.REGION;
         state.error = null;
+        state.pendingTopologyOrg = null;
         render();
       });
 
@@ -510,17 +607,38 @@ export function getScript(nonce: string): string {
           state.error = null;
           render();
           return;
-        case 'LOGIN_SUCCESS':
+        case 'LOGIN_SUCCESS': {
           state.orgs = msg.payload.orgs;
           state.spacesByOrg = {};
           state.selectedSpace = null;
           state.isReconnecting = false;
-          state.screen = SCREENS.SELECT_ORG;
           state.error = null;
+          // Topology shortcut: when the user picked an org from the cross-region
+          // search, the live org list should still contain it. Skip Step 2/3 by
+          // requesting spaces immediately. If the org has been removed since the
+          // last sync, fall back to the standard SELECT_ORG flow with an inline
+          // error so the user understands why their pick was discarded.
+          if (state.pendingTopologyOrg) {
+            const expectedOrg = state.pendingTopologyOrg.orgName;
+            state.pendingTopologyOrg = null;
+            if (Array.isArray(state.orgs) && state.orgs.indexOf(expectedOrg) !== -1) {
+              state.selectedOrg = expectedOrg;
+              state.screen = SCREENS.LOADING_SPACES;
+              render();
+              vscode.postMessage({ type: 'LOAD_SPACES', payload: { org: expectedOrg } });
+              return;
+            }
+            state.error = 'Org "' + expectedOrg + '" is no longer available in this region. Please refresh cf-sync or pick a different org.';
+            state.screen = SCREENS.SELECT_ORG;
+            break;
+          }
+          state.screen = SCREENS.SELECT_ORG;
           break;
+        }
         case 'LOGIN_ERROR':
           state.isReconnecting = false;
           state.error = msg.payload.message;
+          state.pendingTopologyOrg = null;
           state.screen = SCREENS.REGION;
           break;
         case 'SPACES_LOADED': {
@@ -677,6 +795,26 @@ export function getScript(nonce: string): string {
           // the updated status will be picked up next time they open settings.
           if (state.screen === SCREENS.SETTINGS) render();
           return;
+        case 'CF_TOPOLOGY': {
+          const incoming = msg.payload && Array.isArray(msg.payload.accounts)
+            ? msg.payload
+            : { ready: false, accounts: [] };
+          state.cfTopology = incoming;
+          // Only re-render when the REGION step is visible AND the search-block's
+          // visibility itself toggles (ready ↔ not-ready). Pure result-set changes
+          // (more orgs synced) get a partial refresh that preserves the input
+          // focus + caret position so users typing during a sync don't lose work.
+          if (state.screen === SCREENS.REGION) {
+            const hasSearchBlock = !!document.querySelector('.org-search-block');
+            const shouldHaveBlock = !!incoming.ready && incoming.accounts.length > 0;
+            if (hasSearchBlock !== shouldHaveBlock) {
+              render();
+            } else if (shouldHaveBlock) {
+              refreshOrgSearchResults();
+            }
+          }
+          return;
+        }
         case 'CACHE_CONFIG':
           state.cacheConfig = msg.payload;
           if (state.screen === SCREENS.SETTINGS) render();

@@ -117,11 +117,23 @@ export function getStyles(): string {
     .radio-item input[type=radio] { cursor: pointer; }
     .radio-desc { font-size: 11px; color: var(--vscode-descriptionForeground); }
 
+    .region-layout {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+    }
     .region-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 6px;
       margin-bottom: 8px;
+    }
+    .region-layout .region-grid {
+      flex: 1;
+      min-height: 160px;
+      overflow-y: auto;
+      padding-right: 2px;
     }
     .region-card {
       display: flex;
@@ -153,6 +165,64 @@ export function getStyles(): string {
     .region-card.selected .region-name { color: inherit; opacity: 0.8; }
     .region-card-custom {
       grid-column: 1 / -1;
+    }
+
+    /* Cross-region org search shown above the region grid when cf-sync has data. */
+    .org-search-block {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .org-search-results {
+      max-height: 180px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+      background: var(--vscode-input-background);
+    }
+    .org-search-results.empty {
+      padding: 8px 10px;
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
+      text-align: center;
+    }
+    .org-search-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: background 0.1s;
+      border-radius: 0;
+      border: 0;
+      width: 100%;
+      color: var(--vscode-foreground);
+      background: transparent;
+      font: inherit;
+      text-align: left;
+    }
+    .org-search-row:hover { background: var(--vscode-list-hoverBackground); }
+    .org-search-row:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: -1px;
+    }
+    .org-search-org {
+      font-size: 12px;
+      font-family: var(--vscode-editor-font-family);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+    .org-search-meta {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      flex-shrink: 0;
     }
 
     /* flex:1 + min-height:0 lets it fill whatever space .ready-layout has left after
