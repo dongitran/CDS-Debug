@@ -308,7 +308,7 @@ export type E2eBridgeCommand =
 export type WebviewMessage =
   | { type: 'SELECT_GROUP_FOLDER' }
   | { type: 'LOGIN'; payload: { apiEndpoint: string } }
-  | { type: 'LOAD_APPS'; payload: { org: string } }
+  | { type: 'LOAD_APPS'; payload: { org: string; forceRefresh?: boolean } }
   | { type: 'START_DEBUG'; payload: { appNames: string[]; org: string } }
   | { type: 'STOP_DEBUG'; payload: { appName: string } }
   | { type: 'STOP_ALL_DEBUG' }

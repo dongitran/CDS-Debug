@@ -5,6 +5,7 @@ import type {
   BreakpointContextSnapshot,
   CacheSettings,
   CapDebugConfig,
+  CfApp,
   CredentialStatus,
   DebugTarget,
   E2eBridgeCommand,
@@ -16,8 +17,9 @@ import type {
   SyncProgress,
   WebviewMessage,
 } from '../types/index';
-import { DEFAULT_CACHE_SETTINGS } from '../types/index';
+import { CF_DEFAULT_SPACE, DEFAULT_CACHE_SETTINGS } from '../types/index';
 import { CfCliError, cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
+import { refreshCfSyncSpace } from '../core/cfSpaceRefresh';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, buildFallbackTargets, getFolderNameCandidates } from '../core/appMapper';
 import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig } from '../core/launchConfigurator';
@@ -35,6 +37,7 @@ import {
   getCacheSettings,
   getDebugPreferences,
   getDebugSessionPackagePreferences,
+  saveCachedApps,
   saveCacheSettings,
   saveDebugPreferences,
   saveDebugSessionPackagePreferences,
@@ -185,7 +188,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'LOAD_APPS':
-        await this.handleLoadApps(raw.payload.org);
+        await this.handleLoadApps(raw.payload.org, raw.payload.forceRefresh === true);
         break;
 
       case 'START_DEBUG':
@@ -546,7 +549,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private async handleLoadApps(org: string): Promise<void> {
+  private async handleLoadApps(org: string, forceRefresh = false): Promise<void> {
     const config = getConfig();
     if (!config) return;
 
@@ -560,7 +563,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     // Serve from background cache when enabled and fresh (within configured interval).
     const cacheSettings = getCacheSettings();
-    if (cacheSettings.enabled) {
+    if (!forceRefresh && cacheSettings.enabled) {
       const cached = getCachedApps(config.apiEndpoint, org);
       if (cached) {
         const ageMs = Date.now() - cached.cachedAt;
@@ -577,16 +580,56 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    if (forceRefresh) {
+      const credentialsRevoked = await this.refreshCfSyncSpaceCache(config.apiEndpoint, org);
+      if (credentialsRevoked) return;
+    }
+
     logInfo(`Loading apps for org: ${org} …`);
     try {
-      const apps = await cfTargetAndApps(org);
+      const apps = await this.loadLiveApps(config.apiEndpoint, org);
+      await saveCachedApps(config.apiEndpoint, org, apps);
       const started = apps.filter((a) => a.state === 'started').length;
       logInfo(`Apps loaded: ${apps.length.toString()} total, ${started.toString()} started.`);
       this.postMessage({ type: 'APPS_LOADED', payload: { apps } });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Failed to load apps for ${org}: ${msg}`);
-      this.postMessage({ type: 'APPS_ERROR', payload: { message: msg } });
+      const revoked = await this.handleAuthFailure(err);
+      if (!revoked) {
+        this.postMessage({ type: 'APPS_ERROR', payload: { message: msg } });
+      }
+    }
+  }
+
+  private async refreshCfSyncSpaceCache(apiEndpoint: string, org: string): Promise<boolean> {
+    const { email, password } = await getCredentials();
+    const result = await refreshCfSyncSpace({ apiEndpoint, orgName: org, email, password });
+
+    if (result.status === 'refreshed') {
+      logInfo(`[Reload] cf-sync refreshed ${result.regionKey}/${org}/${CF_DEFAULT_SPACE} (${result.appCount.toString()} app(s)).`);
+      return false;
+    }
+
+    if (result.status === 'skipped') {
+      logWarn(`[Reload] cf-sync space refresh skipped: ${result.reason}.`);
+      return false;
+    }
+
+    const revoked = await this.handleAuthFailure(result.error);
+    if (revoked) return true;
+    logWarn(`[Reload] cf-sync space refresh failed: ${extractErrorMessage(result.error)}`);
+    return false;
+  }
+
+  private async loadLiveApps(apiEndpoint: string, org: string): Promise<CfApp[]> {
+    try {
+      return await cfTargetAndApps(org);
+    } catch (err: unknown) {
+      if (!isAuthError(err)) throw err;
+      logInfo(`cfTargetAndApps auth failed — attempting re-login before loading apps for ${org}.`);
+      await this.reLogin(apiEndpoint);
+      return await cfTargetAndApps(org);
     }
   }
 

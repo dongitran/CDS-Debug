@@ -360,7 +360,7 @@ export function getScript(nonce: string): string {
         state.error = null;
         state.screen = SCREENS.LOADING_APPS;
         render();
-        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
+        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, forceRefresh: true } });
       });
 
       $('chk-select-all')?.addEventListener('change', function(e) {
@@ -405,7 +405,7 @@ export function getScript(nonce: string): string {
         state.error = null;
         state.screen = SCREENS.LOADING_APPS;
         render();
-        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
+        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, forceRefresh: true } });
       });
 
       $('btn-cancel-login')?.addEventListener('click', () => {

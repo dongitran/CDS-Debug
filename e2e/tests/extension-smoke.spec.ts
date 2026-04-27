@@ -33,7 +33,8 @@ type CfScenario =
   | 'slow-auth'
   | 'slow-apps'
   | 'slow-target'
-  | 'slow-target-after-apps';
+  | 'slow-target-after-apps'
+  | 'reload-changes';
 
 interface SessionOptions {
   credentialMode: CredentialMode;
@@ -108,6 +109,7 @@ cmd="\${1:-}"
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 slow_target_after_apps_ready="$script_dir/.slow-target-after-apps-ready"
 slow_target_after_apps_used="$script_dir/.slow-target-after-apps-used"
+reload_apps_count="$script_dir/.reload-apps-count"
 
 case "$cmd" in
   api)
@@ -160,6 +162,30 @@ OUT
     fi
     if [[ "$SCENARIO" == "slow-target-after-apps" ]]; then
       touch "$slow_target_after_apps_ready"
+    fi
+    if [[ "$SCENARIO" == "reload-changes" ]]; then
+      count=0
+      if [[ -f "$reload_apps_count" ]]; then
+        count="$(cat "$reload_apps_count")"
+      fi
+      next_count=$((count + 1))
+      echo "$next_count" > "$reload_apps_count"
+      if [[ "$next_count" -eq 1 ]]; then
+        cat <<'OUT'
+name   requested state   processes   routes
+mock-service-a   started   1/1   mock-service-a.cfapps.example.com
+mock-service-b   stopped   0/1   mock-service-b.cfapps.example.com
+mock-service-c   started   2/2   mock-service-c.cfapps.example.com
+OUT
+      else
+        cat <<'OUT'
+name   requested state   processes   routes
+mock-service-a   started   1/1   mock-service-a.cfapps.example.com
+mock-service-b   stopped   0/1   mock-service-b.cfapps.example.com
+mock-service-d   started   1/1   mock-service-d.cfapps.example.com
+OUT
+      fi
+      exit 0
     fi
     cat <<'OUT'
 name   requested state   processes   routes
@@ -2973,18 +2999,19 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
 
     test('Refresh Apps reloads and re-displays the app list', async () => {
-      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'reload-changes' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
+        await expect(webview.getByText('mock-service-c')).toBeVisible();
+        await expect(webview.locator('.app-row', { hasText: 'mock-service-d' })).toHaveCount(0);
 
-        // Trigger a refresh — the extension re-fetches apps from CF
         await webview.locator('#btn-refresh-apps').click();
 
-        // After reload, the ready screen returns with the same app list
         await expectReadyScreen(webview);
         await expect(webview.getByText('mock-service-a')).toBeVisible();
         await expect(webview.getByText('mock-service-b')).toBeVisible();
-        await expect(webview.getByText('mock-service-c')).toBeVisible();
+        await expect(webview.getByText('mock-service-d')).toBeVisible();
+        await expect(webview.locator('.app-row', { hasText: 'mock-service-c' })).toHaveCount(0);
       });
     });
   });

@@ -52,7 +52,7 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
 30. DEBUG_ERROR clears PENDING sessions, shows error message, and shows `#btn-retry-apps` alongside the error box.
 31. Change Mapping with no active sessions returns to Select CF Org.
 32. Cancel app loading returns to **Ready** screen (not Select Folder) when apps were previously loaded — verifies the `state.apps.length > 0` conditional branch.
-33. Refresh Apps reloads and redisplays the app list.
+33. Refresh Apps bypasses cache and redisplays the latest app list.
 
 ### Settings Screen (6 tests)
 34. Keychain credentials section — verifies `.cred-source-badge.keychain`, email display, `#btn-update-credentials`, and `#btn-clear-credentials` via injected CREDENTIALS_STATUS.
