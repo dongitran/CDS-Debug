@@ -569,13 +569,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   private async handleLoadSpaces(org: string): Promise<void> {
     const config = getConfig();
-    if (!config) {
-      this.postMessage({
-        type: 'SPACES_ERROR',
-        payload: { org, message: 'Configuration is missing. Select a region again.' },
-      });
-      return;
-    }
+    if (!config) return;
 
     logInfo(`Loading spaces for org: ${org} …`);
     try {
