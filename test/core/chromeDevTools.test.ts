@@ -214,20 +214,22 @@ describe('chromeDevTools', () => {
   it('builds Windows Chrome commands that pass the DevTools URL directly to Chrome', () => {
     const url = buildChromeDevToolsUrl(9229, 'target-from-windows');
 
-    expect(getChromeLaunchCommands(url, {
+    const commands = getChromeLaunchCommands(url, {
       env: {
-        LOCALAPPDATA: 'C:\\Users\\eliot\\AppData\\Local',
+        LOCALAPPDATA: 'C:\\Users\\sample\\AppData\\Local',
         ProgramFiles: 'C:\\Program Files',
         'ProgramFiles(x86)': 'C:\\Program Files (x86)',
       },
       platform: 'win32',
-    })).toEqual([
+    });
+
+    expect(commands).toEqual([
       { command: 'chrome.exe', args: [url] },
-      { command: 'C:\\Users\\eliot\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe', args: [url] },
+      { command: 'C:\\Users\\sample\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe', args: [url] },
       { command: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', args: [url] },
       { command: 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe', args: [url] },
-      { command: 'cmd.exe', args: ['/d', '/s', '/c', `start "" chrome "${url}"`] },
     ]);
+    expect(commands.some((command) => command.command.toLowerCase().endsWith('cmd.exe'))).toBe(false);
   });
 
   it('builds macOS Chrome commands equivalent to cds debug', () => {
@@ -252,37 +254,35 @@ describe('chromeDevTools', () => {
   it('prefers Windows Chrome before Linux wrappers when running from WSL', () => {
     const url = buildChromeDevToolsUrl(9229, 'target-from-wsl');
 
-    expect(getChromeLaunchCommands(url, {
+    const commands = getChromeLaunchCommands(url, {
       env: { WSL_DISTRO_NAME: 'Ubuntu' },
       platform: 'linux',
-    })).toEqual([
+    });
+
+    expect(commands).toEqual([
       { command: '/mnt/c/Program Files/Google/Chrome/Application/chrome.exe', args: [url] },
       { command: '/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe', args: [url] },
-      { command: '/mnt/c/Windows/System32/cmd.exe', args: ['/d', '/s', '/c', `start "" chrome "${url}"`] },
-      { command: 'cmd.exe', args: ['/d', '/s', '/c', `start "" chrome "${url}"`] },
       { command: 'google-chrome', args: [url] },
       { command: 'google-chrome-stable', args: [url] },
       { command: 'chromium-browser', args: [url] },
       { command: 'chromium', args: [url] },
     ]);
+    expect(commands.some((command) => command.command.toLowerCase().endsWith('cmd.exe'))).toBe(false);
   });
 
-  it('uses command-shell fallback for canonical Node DevTools frontend URLs', () => {
+  it('passes canonical Node DevTools frontend URLs directly to Windows Chrome commands', () => {
     const url = 'devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=127.0.0.1:9229/target-from-node';
     const commands = getChromeLaunchCommands(url, { env: {}, platform: 'win32' });
 
-    expect(commands[commands.length - 1]).toEqual({
-      command: 'cmd.exe',
-      args: ['/d', '/s', '/c', `start "" chrome "${url}"`],
-    });
+    expect(commands).toEqual([{ command: 'chrome.exe', args: [url] }]);
   });
 
-  it('does not pass a quoted DevTools URL as a separate cmd.exe argument', () => {
+  it('does not create command-shell fallback arguments for DevTools URLs', () => {
     const url = 'devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=127.0.0.1:9229/target-from-node';
-    const cmdStart = getChromeLaunchCommands(url, { env: {}, platform: 'win32' }).find((command) => command.command === 'cmd.exe');
 
-    expect(cmdStart?.args).toEqual(['/d', '/s', '/c', `start "" chrome "${url}"`]);
-    expect(cmdStart?.args).not.toContain(`"${url}"`);
+    expect(getChromeLaunchCommands(url, { env: {}, platform: 'win32' })).not.toContainEqual(
+      expect.objectContaining({ command: 'cmd.exe' }),
+    );
   });
 
   it('does not add command-shell fallbacks for unsafe DevTools URLs', () => {
