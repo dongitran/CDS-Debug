@@ -1432,7 +1432,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
   });
 
-  test('User can search a synced org across regions and continue to local folder', async () => {
+  test('User can search a synced org across regions and continue after confirming', async () => {
     await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await expectRegionScreen(webview);
@@ -1463,13 +1463,21 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       });
 
       await expect(webview.getByText('Search org (across regions)')).toBeVisible();
+      await expect(webview.getByRole('tab', { name: 'Org' })).toHaveAttribute('aria-selected', 'true');
+      await expect(webview.getByRole('tab', { name: 'Region' })).toBeVisible();
+      await expect(webview.getByText('Select Region')).toHaveCount(0);
       await webview.locator('#org-search-input').fill('beta');
       await expect(webview.getByRole('button', { name: /mock-org-beta/ })).toBeVisible();
       await expect(webview.getByRole('button', { name: /mock-org-alpha/ })).toHaveCount(0);
       await captureStepEvidence(workbenchPage, 'org-search-synced-results');
 
       await webview.getByRole('button', { name: /mock-org-beta/ }).click();
+      await expect(webview.locator('.step-badge', { hasText: '1/3' })).toBeVisible();
+      await expect(webview.getByText('Select Local Folder')).toHaveCount(0);
+      await expect(webview.locator('#btn-login')).toBeEnabled();
+      await captureStepEvidence(workbenchPage, 'org-search-staged-selection');
 
+      await webview.locator('#btn-login').click();
       await expect(webview.getByText('Select Local Folder')).toBeVisible({ timeout: 15_000 });
       await expect(webview.locator('.step-badge', { hasText: '3/3' })).toBeVisible();
       await expect(webview.locator('.info-box', { hasText: 'mock-org-beta' })).toBeVisible();
@@ -1480,6 +1488,35 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
       const errorBoxEvents = await stopErrorBoxMonitor(webview);
       expect(errorBoxEvents).toEqual([]);
+    });
+  });
+
+  test('User can switch to region fallback and filter regions after synced topology is ready', async () => {
+    await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+      const webview = await openCdsDebugWebview(workbenchPage);
+      await injectMessage(webview, {
+        type: 'CF_TOPOLOGY',
+        payload: {
+          ready: true,
+          accounts: [{
+            regionKey: 'us10',
+            regionLabel: 'US East (VA) - AWS (us10)',
+            apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
+            orgName: 'mock-org-beta',
+            spaces: ['app'],
+          }],
+        },
+      });
+
+      await webview.getByRole('tab', { name: 'Region' }).click();
+      await expect(webview.getByRole('tab', { name: 'Region' })).toHaveAttribute('aria-selected', 'true');
+      await expect(webview.getByText('Select Region')).toBeVisible();
+      await expect(webview.locator('#region-search-input')).toBeVisible();
+      await webview.locator('#region-search-input').fill('us west');
+      await expect(webview.locator('.region-card', { hasText: 'us20' })).toBeVisible();
+      await expect(webview.locator('.region-card', { hasText: 'eu10' })).toHaveCount(0);
+      await expect(webview.getByRole('button', { name: 'Login to Cloud Foundry' })).toBeEnabled();
+      await captureStepEvidence(workbenchPage, 'region-tab-filtered-results');
     });
   });
 

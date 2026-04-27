@@ -5,6 +5,13 @@
  */
 export function getRendererScriptContent(): string {
   return `
+    function hasReadyTopology() {
+      return !!state.cfTopology
+        && state.cfTopology.ready
+        && Array.isArray(state.cfTopology.accounts)
+        && state.cfTopology.accounts.length > 0;
+    }
+
     function filterTopologyAccounts(accounts, query) {
       const q = String(query || '').trim().toLowerCase();
       if (q.length === 0) return accounts.slice(0, 50);
@@ -19,6 +26,21 @@ export function getRendererScriptContent(): string {
       return matches;
     }
 
+    function filterRegions(query) {
+      const q = String(query || '').trim().toLowerCase();
+      if (q.length === 0) return CF_REGIONS;
+      return CF_REGIONS.filter(region => {
+        const haystack = (region.code + ' ' + region.name).toLowerCase();
+        return haystack.indexOf(q) !== -1;
+      });
+    }
+
+    function shouldShowCustomRegion(query) {
+      const q = String(query || '').trim().toLowerCase();
+      if (q.length === 0 || state.useCustomEndpoint) return true;
+      return 'custom endpoint api url'.indexOf(q) !== -1;
+    }
+
     function findTopologyAccount(regionKey, orgName) {
       const accounts = (state.cfTopology && state.cfTopology.accounts) || [];
       for (const account of accounts) {
@@ -27,47 +49,69 @@ export function getRendererScriptContent(): string {
       return null;
     }
 
-    function renderOrgSearchBlock() {
-      const topology = state.cfTopology || { ready: false, accounts: [] };
-      if (!topology.ready || !Array.isArray(topology.accounts) || topology.accounts.length === 0) {
-        return '';
-      }
-      const filtered = filterTopologyAccounts(topology.accounts, state.orgSearchQuery);
+    function isSelectedTopologyOrg(account) {
+      return !!state.selectedTopologyOrg
+        && state.selectedTopologyOrg.regionKey === account.regionKey
+        && state.selectedTopologyOrg.orgName === account.orgName;
+    }
+
+    function renderSearchField(inputId, value, placeholder, label) {
+      return \`
+        <label class="sr-only" for="\${escape(inputId)}">\${escape(label)}</label>
+        <div class="search-input-wrap">
+          <span class="search-input-icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16" focusable="false">
+              <path d="M6.75 2.25a4.5 4.5 0 0 1 3.56 7.25l3.1 3.1a.57.57 0 0 1-.81.81l-3.1-3.1a4.5 4.5 0 1 1-2.75-8.06Zm0 1.15a3.35 3.35 0 1 0 0 6.7 3.35 3.35 0 0 0 0-6.7Z"></path>
+            </svg>
+          </span>
+          <input class="input search-input" id="\${escape(inputId)}" type="search"
+            placeholder="\${escape(placeholder)}"
+            value="\${escape(value || '')}"
+            autocomplete="off" spellcheck="false" />
+        </div>
+      \`;
+    }
+
+    function renderOrgSearchRows(filtered) {
       const rows = filtered.map(account => {
         const spaceCount = Array.isArray(account.spaces) ? account.spaces.length : 0;
         const meta = account.regionKey + ' · ' + spaceCount + ' space' + (spaceCount === 1 ? '' : 's');
+        const selected = isSelectedTopologyOrg(account);
         return \`
-          <button class="org-search-row" type="button"
+          <button class="org-search-row \${selected ? 'selected' : ''}" type="button"
                data-org-search-region="\${escape(account.regionKey)}"
                data-org-search-org="\${escape(account.orgName)}"
+               aria-pressed="\${selected ? 'true' : 'false'}"
                title="\${escape(account.orgName)} — \${escape(account.regionLabel)}">
             <span class="org-search-org">\${escape(account.orgName)}</span>
             <span class="org-search-meta">\${escape(meta)}</span>
           </button>
         \`;
       }).join('');
-      const isEmptyResults = filtered.length === 0;
-      const resultsHtml = isEmptyResults
+      return filtered.length === 0
         ? \`<div class="org-search-results empty">No org matches "\${escape(state.orgSearchQuery || '')}"</div>\`
         : \`<div class="org-search-results">\${rows}</div>\`;
+    }
+
+    function renderOrgSearchPanel() {
+      const topology = state.cfTopology || { ready: false, accounts: [] };
+      const filtered = filterTopologyAccounts(topology.accounts || [], state.orgSearchQuery);
       const totalLabel = topology.accounts.length === 1
         ? '1 org synced across all regions'
         : topology.accounts.length + ' orgs synced across all regions';
       return \`
         <div class="section-label">Search org (across regions)</div>
         <div class="org-search-block">
-          <input class="input" id="org-search-input" type="search"
-            placeholder="Type to search orgs in any region…"
-            value="\${escape(state.orgSearchQuery || '')}"
-            autocomplete="off" spellcheck="false" />
-          \${resultsHtml}
+          \${renderSearchField('org-search-input', state.orgSearchQuery, 'Type to search orgs in any region...', 'Search orgs across regions')}
+          \${renderOrgSearchRows(filtered)}
           <div class="radio-desc">\${escape(totalLabel)}</div>
         </div>
       \`;
     }
 
-    function renderRegion() {
-      const regionCards = CF_REGIONS.map(r => \`
+    function renderRegionCards() {
+      const filteredRegions = filterRegions(state.regionSearchQuery);
+      const regionCards = filteredRegions.map(r => \`
         <label class="region-card \${!state.useCustomEndpoint && state.selectedRegion === r.code ? 'selected' : ''}">
           <input type="radio" name="cf-region" value="\${escape(r.code)}"
             \${!state.useCustomEndpoint && state.selectedRegion === r.code ? 'checked' : ''} />
@@ -76,14 +120,21 @@ export function getRendererScriptContent(): string {
         </label>
       \`).join('');
 
-      const customCard = \`
+      const customCard = shouldShowCustomRegion(state.regionSearchQuery) ? \`
         <label class="region-card region-card-custom \${state.useCustomEndpoint ? 'selected' : ''}">
           <input type="radio" name="cf-region" value="custom"
             \${state.useCustomEndpoint ? 'checked' : ''} />
           <span class="region-code" style="font-size:11px">Custom endpoint</span>
         </label>
-      \`;
+      \` : '';
 
+      if (!regionCards && !customCard) {
+        return \`<div class="region-list-empty">No regions match "\${escape(state.regionSearchQuery || '')}"</div>\`;
+      }
+      return regionCards + customCard;
+    }
+
+    function renderRegionPickerPanel(includeSearch) {
       const customInput = state.useCustomEndpoint ? \`
         <input class="input" id="api-endpoint-custom"
           placeholder="https://api.cf.<region>.hana.ondemand.com"
@@ -96,21 +147,68 @@ export function getRendererScriptContent(): string {
         </div>
       \`;
 
-      return \`
-        <div class="region-layout">
-        <div class="step-header">
-          <span class="step-badge">1/3</span>
-          <span class="step-title">CF Region / Org</span>
+      const searchHtml = includeSearch ? \`
+        <div class="region-search-block">
+          \${renderSearchField('region-search-input', state.regionSearchQuery, 'Type to filter regions...', 'Search regions')}
         </div>
-        \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
-        \${renderOrgSearchBlock()}
+      \` : '';
+
+      return \`
         <div class="section-label">Select Region</div>
+        \${searchHtml}
         <div class="region-grid">
-          \${regionCards}
-          \${customCard}
+          \${renderRegionCards()}
         </div>
         \${customInput}
-        <button class="btn" id="btn-login">Login to Cloud Foundry</button>
+      \`;
+    }
+
+    function renderRegionTabs() {
+      const mode = state.regionSelectorMode === 'region' ? 'region' : 'org';
+      return \`
+        <div class="region-selector-tabs" role="tablist" aria-label="Cloud Foundry selector">
+          <button class="selector-tab \${mode === 'org' ? 'active' : ''}" type="button"
+            role="tab" aria-selected="\${mode === 'org' ? 'true' : 'false'}"
+            data-region-selector-mode="org">Org</button>
+          <button class="selector-tab \${mode === 'region' ? 'active' : ''}" type="button"
+            role="tab" aria-selected="\${mode === 'region' ? 'true' : 'false'}"
+            data-region-selector-mode="region">Region</button>
+        </div>
+      \`;
+    }
+
+    function renderRegionFooterButton(topologyReady) {
+      if (!topologyReady || state.regionSelectorMode === 'region') {
+        return '<button class="btn" id="btn-login">Login to Cloud Foundry</button>';
+      }
+      const disabled = findSelectedTopologyAccount() ? '' : 'disabled';
+      const label = disabled ? 'Select an Org to Continue' : 'Continue with Selected Org';
+      return \`<button class="btn" id="btn-login" \${disabled}>\${label}</button>\`;
+    }
+
+    function findSelectedTopologyAccount() {
+      if (!state.selectedTopologyOrg) return null;
+      return findTopologyAccount(state.selectedTopologyOrg.regionKey, state.selectedTopologyOrg.orgName);
+    }
+
+    function renderRegion() {
+      const topologyReady = hasReadyTopology();
+      const activePanel = state.regionSelectorMode === 'region'
+        ? renderRegionPickerPanel(true)
+        : renderOrgSearchPanel();
+
+      return \`
+        <div class="region-layout \${topologyReady ? 'topology-ready' : ''}">
+          <div class="step-header">
+            <span class="step-badge">1/3</span>
+            <span class="step-title">CF Region / Org</span>
+          </div>
+          \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
+          \${topologyReady ? renderRegionTabs() : ''}
+          <div class="region-tab-panel" role="tabpanel">
+            \${topologyReady ? activePanel : renderRegionPickerPanel(false)}
+          </div>
+          \${renderRegionFooterButton(topologyReady)}
         </div>
       \`;
     }
@@ -1137,6 +1235,7 @@ export function getRendererScriptContent(): string {
 
       $('btn-logout-settings')?.addEventListener('click', () => {
         state.error = null;
+        state.selectedTopologyOrg = null;
         state.pendingTopologyOrg = null;
         state.screen = SCREENS.REGION;
         render();

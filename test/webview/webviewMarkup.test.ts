@@ -16,9 +16,16 @@ describe('webview markup contracts', () => {
     expect(rendererScript).toContain('name="cf-space"');
     expect(rendererScript).toContain('Space</span>');
     expect(rendererScript).toContain('Search org (across regions)');
-    expect(rendererScript).toContain('id="org-search-input"');
-    expect(rendererScript).toContain('<button class="org-search-row" type="button"');
+    expect(rendererScript).toContain("renderSearchField('org-search-input'");
+    expect(rendererScript).toContain("renderSearchField('region-search-input'");
+    expect(rendererScript).toContain('search-input-icon');
+    expect(rendererScript).toContain('region-selector-tabs');
+    expect(rendererScript).toContain('data-region-selector-mode="org"');
+    expect(rendererScript).toContain('data-region-selector-mode="region"');
+    expect(rendererScript).toContain('class="org-search-row ${selected ?');
     expect(rendererScript).toContain('data-org-search-region');
+    expect(rendererScript).toContain('aria-pressed="');
+    expect(rendererScript).toContain('Continue with Selected Org');
     expect(rendererScript).toContain('CF Region / Org');
   });
 

@@ -125,9 +125,12 @@ export function getScript(nonce: string): string {
       packageSettingsDraftRegex: '',
       packageSettingsError: null,
       // Cross-region org topology populated from cf-sync's structure file. Powers
-      // the search input shown above the region grid on the CF Region step.
+      // the Org tab shown on the CF Region / Org step.
       cfTopology: { ready: false, accounts: [] },
       orgSearchQuery: '',
+      regionSearchQuery: '',
+      regionSelectorMode: 'org',
+      selectedTopologyOrg: null,
       // region/org pair the user picked from the search; consumed by LOGIN_SUCCESS
       // to skip Step 2/3 (Select Org) when the live org list still contains it.
       pendingTopologyOrg: null,
@@ -226,6 +229,40 @@ export function getScript(nonce: string): string {
      * search input. A full render() would rebuild the whole region grid and
      * destroy the input element (taking focus with it).
      */
+    function selectedTopologyOrgStillExists() {
+      return !!findSelectedTopologyAccount();
+    }
+
+    function syncSelectedTopologyOrgWithFilter() {
+      if (!state.selectedTopologyOrg) return;
+      const filtered = filterTopologyAccounts(
+        (state.cfTopology && state.cfTopology.accounts) || [],
+        state.orgSearchQuery,
+      );
+      const stillVisible = filtered.some(account =>
+        account.regionKey === state.selectedTopologyOrg.regionKey
+        && account.orgName === state.selectedTopologyOrg.orgName
+      );
+      if (!stillVisible) state.selectedTopologyOrg = null;
+    }
+
+    function refreshRegionFooterButton() {
+      const loginBtn = document.getElementById('btn-login');
+      if (!loginBtn) return;
+      if (!hasReadyTopology() || state.regionSelectorMode === 'region') {
+        loginBtn.textContent = 'Login to Cloud Foundry';
+        loginBtn.removeAttribute('disabled');
+        return;
+      }
+      if (selectedTopologyOrgStillExists()) {
+        loginBtn.textContent = 'Continue with Selected Org';
+        loginBtn.removeAttribute('disabled');
+      } else {
+        loginBtn.textContent = 'Select an Org to Continue';
+        loginBtn.setAttribute('disabled', '');
+      }
+    }
+
     function refreshOrgSearchResults() {
       const block = document.querySelector('.org-search-block');
       if (!block) return;
@@ -233,32 +270,32 @@ export function getScript(nonce: string): string {
       const filtered = filterTopologyAccounts(accounts, state.orgSearchQuery);
       const resultsEl = block.querySelector('.org-search-results');
       if (!resultsEl) return;
-      if (filtered.length === 0) {
-        resultsEl.className = 'org-search-results empty';
-        resultsEl.innerHTML = 'No org matches "' + escape(state.orgSearchQuery || '') + '"';
-        return;
-      }
-      resultsEl.className = 'org-search-results';
-      resultsEl.innerHTML = filtered.map(account => {
-        const spaceCount = Array.isArray(account.spaces) ? account.spaces.length : 0;
-        const meta = account.regionKey + ' · ' + spaceCount + ' space' + (spaceCount === 1 ? '' : 's');
-        return ''
-          + '<button class="org-search-row" type="button"'
-          + ' data-org-search-region="' + escape(account.regionKey) + '"'
-          + ' data-org-search-org="' + escape(account.orgName) + '"'
-          + ' title="' + escape(account.orgName) + ' — ' + escape(account.regionLabel) + '">'
-          +   '<span class="org-search-org">' + escape(account.orgName) + '</span>'
-          +   '<span class="org-search-meta">' + escape(meta) + '</span>'
-          + '</button>';
-      }).join('');
+      resultsEl.outerHTML = renderOrgSearchRows(filtered);
+      refreshRegionFooterButton();
+    }
+
+    function refreshRegionResults() {
+      const grid = document.querySelector('.region-grid');
+      if (!grid) return;
+      grid.innerHTML = renderRegionCards();
+    }
+
+    function beginRegionLogin() {
+      const endpoint = state.useCustomEndpoint ? state.apiEndpoint : regionToEndpoint(state.selectedRegion);
+      state.apiEndpoint = endpoint;
+      state.error = null;
+      state.selectedTopologyOrg = null;
+      state.pendingTopologyOrg = null;
+      state.screen = SCREENS.LOGGING_IN;
+      render();
+      vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: endpoint } });
     }
 
     /**
-     * Triggered when the user clicks an org row from the search results or hits
-     * Enter on the search input. Stages the topology selection and kicks off the
-     * normal LOGIN flow against the org's region.
+     * Selecting a synced org only stages the choice. The footer button starts
+     * login so users can review the selected org/region before continuing.
      */
-    function selectTopologyOrg(regionKey, orgName) {
+    function stageTopologyOrg(regionKey, orgName) {
       const account = findTopologyAccount(regionKey, orgName);
       if (!account) return;
       state.error = null;
@@ -267,7 +304,24 @@ export function getScript(nonce: string): string {
       state.apiEndpoint = account.apiEndpoint;
       state.selectedOrg = orgName;
       state.selectedSpace = null;
-      state.pendingTopologyOrg = { regionKey, orgName };
+      state.selectedTopologyOrg = { regionKey, orgName };
+      render();
+    }
+
+    function continueWithSelectedTopologyOrg() {
+      const account = findSelectedTopologyAccount();
+      if (!account) {
+        state.error = 'Select an org before continuing.';
+        render();
+        return;
+      }
+      state.error = null;
+      state.useCustomEndpoint = false;
+      state.selectedRegion = account.regionKey;
+      state.apiEndpoint = account.apiEndpoint;
+      state.selectedOrg = account.orgName;
+      state.selectedSpace = null;
+      state.pendingTopologyOrg = { regionKey: account.regionKey, orgName: account.orgName };
       state.screen = SCREENS.LOGGING_IN;
       render();
       vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: account.apiEndpoint } });
@@ -313,32 +367,40 @@ export function getScript(nonce: string): string {
     function attachListeners() {
       const $ = id => document.getElementById(id);
 
-      document.querySelectorAll('input[name="cf-region"]').forEach(el => {
-        el.addEventListener('change', e => {
-          const value = e.target.value;
-          if (value === 'custom') {
-            state.useCustomEndpoint = true;
-          } else {
-            state.useCustomEndpoint = false;
-            state.selectedRegion = value;
-            state.apiEndpoint = regionToEndpoint(value);
-          }
+      document.querySelectorAll('[data-region-selector-mode]').forEach(el => {
+        el.addEventListener('click', e => {
+          const mode = e.currentTarget.dataset.regionSelectorMode;
+          if (mode !== 'org' && mode !== 'region') return;
+          state.regionSelectorMode = mode;
+          state.error = null;
           render();
         });
+      });
+
+      const regionGrid = document.querySelector('.region-grid');
+      regionGrid?.addEventListener('change', e => {
+        const input = e.target.closest('input[name="cf-region"]');
+        if (!input) return;
+        const value = input.value;
+        state.selectedTopologyOrg = null;
+        if (value === 'custom') {
+          state.useCustomEndpoint = true;
+        } else {
+          state.useCustomEndpoint = false;
+          state.selectedRegion = value;
+          state.apiEndpoint = regionToEndpoint(value);
+        }
+        render();
       });
 
       $('api-endpoint-custom')?.addEventListener('input', e => { state.apiEndpoint = e.target.value; });
 
       $('btn-login')?.addEventListener('click', () => {
-        const endpoint = state.useCustomEndpoint ? state.apiEndpoint : regionToEndpoint(state.selectedRegion);
-        state.apiEndpoint = endpoint;
-        state.error = null;
-        // Region-only login: clear any stale topology selection so LOGIN_SUCCESS
-        // takes the standard SELECT_ORG path rather than auto-skipping it.
-        state.pendingTopologyOrg = null;
-        state.screen = SCREENS.LOGGING_IN;
-        render();
-        vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: endpoint } });
+        if (hasReadyTopology() && state.regionSelectorMode !== 'region') {
+          continueWithSelectedTopologyOrg();
+          return;
+        }
+        beginRegionLogin();
       });
 
       // Cross-region org search (only present when cf-sync has data).
@@ -346,6 +408,7 @@ export function getScript(nonce: string): string {
       if (orgSearchInput) {
         orgSearchInput.addEventListener('input', e => {
           state.orgSearchQuery = e.target.value;
+          syncSelectedTopologyOrgWithFilter();
           // Lightweight refresh that does not rebuild the whole region grid —
           // avoids losing focus on the search input while typing.
           refreshOrgSearchResults();
@@ -361,17 +424,22 @@ export function getScript(nonce: string): string {
           // Enter activates the first match. Most full org-name searches narrow
           // down to a single hit, so this saves a click.
           const first = accounts[0];
-          selectTopologyOrg(first.regionKey, first.orgName);
+          stageTopologyOrg(first.regionKey, first.orgName);
         });
       }
-      const orgSearchResults = document.querySelector('.org-search-results');
-      if (orgSearchResults) {
-        orgSearchResults.addEventListener('click', e => {
+      const orgSearchBlock = document.querySelector('.org-search-block');
+      if (orgSearchBlock) {
+        orgSearchBlock.addEventListener('click', e => {
           const row = e.target.closest('[data-org-search-region][data-org-search-org]');
           if (!row) return;
-          selectTopologyOrg(row.dataset.orgSearchRegion, row.dataset.orgSearchOrg);
+          stageTopologyOrg(row.dataset.orgSearchRegion, row.dataset.orgSearchOrg);
         });
       }
+
+      $('region-search-input')?.addEventListener('input', e => {
+        state.regionSearchQuery = e.target.value;
+        refreshRegionResults();
+      });
 
       document.querySelectorAll('input[name="cf-org"]').forEach(el => {
         el.addEventListener('change', e => {
@@ -574,6 +642,7 @@ export function getScript(nonce: string): string {
       $('btn-cancel-login')?.addEventListener('click', () => {
         state.screen = SCREENS.REGION;
         state.error = null;
+        state.selectedTopologyOrg = null;
         state.pendingTopologyOrg = null;
         render();
       });
@@ -638,6 +707,7 @@ export function getScript(nonce: string): string {
         case 'LOGIN_ERROR':
           state.isReconnecting = false;
           state.error = msg.payload.message;
+          state.selectedTopologyOrg = null;
           state.pendingTopologyOrg = null;
           state.screen = SCREENS.REGION;
           break;
@@ -800,17 +870,22 @@ export function getScript(nonce: string): string {
             ? msg.payload
             : { ready: false, accounts: [] };
           state.cfTopology = incoming;
+          if (!selectedTopologyOrgStillExists()) {
+            state.selectedTopologyOrg = null;
+          }
           // Only re-render when the REGION step is visible AND the search-block's
           // visibility itself toggles (ready ↔ not-ready). Pure result-set changes
           // (more orgs synced) get a partial refresh that preserves the input
           // focus + caret position so users typing during a sync don't lose work.
           if (state.screen === SCREENS.REGION) {
-            const hasSearchBlock = !!document.querySelector('.org-search-block');
+            const hasSearchBlock = !!document.querySelector('.region-selector-tabs');
             const shouldHaveBlock = !!incoming.ready && incoming.accounts.length > 0;
             if (hasSearchBlock !== shouldHaveBlock) {
               render();
-            } else if (shouldHaveBlock) {
+            } else if (shouldHaveBlock && state.regionSelectorMode !== 'region') {
               refreshOrgSearchResults();
+            } else {
+              refreshRegionFooterButton();
             }
           }
           return;

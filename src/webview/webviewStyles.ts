@@ -123,17 +123,79 @@ export function getStyles(): string {
       height: 100%;
       min-height: 0;
     }
+    .region-tab-panel {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .region-layout > .btn {
+      flex-shrink: 0;
+    }
+    .region-selector-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 3px;
+      margin-bottom: 10px;
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 6px;
+      background: var(--vscode-editorGroupHeader-tabsBackground);
+    }
+    .selector-tab {
+      flex: 1;
+      border: none;
+      border-radius: 4px;
+      padding: 5px 8px;
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+    }
+    .selector-tab:hover {
+      color: var(--vscode-foreground);
+      background: var(--vscode-list-hoverBackground);
+    }
+    .selector-tab.active {
+      color: var(--vscode-list-activeSelectionForeground);
+      background: var(--vscode-list-activeSelectionBackground);
+    }
+    .search-input-wrap {
+      position: relative;
+      width: 100%;
+    }
+    .search-input {
+      padding-left: 28px;
+    }
+    .search-input-icon {
+      position: absolute;
+      left: 9px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--vscode-descriptionForeground);
+      width: 14px;
+      height: 14px;
+      pointer-events: none;
+      opacity: 0.9;
+    }
+    .search-input-icon svg {
+      display: block;
+      width: 14px;
+      height: 14px;
+      fill: currentColor;
+    }
     .region-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 6px;
       margin-bottom: 8px;
     }
-    .region-layout .region-grid {
+    .region-tab-panel .region-grid {
       flex: 1;
-      min-height: 160px;
+      min-height: 120px;
       overflow-y: auto;
       padding-right: 2px;
+      align-content: start;
     }
     .region-card {
       display: flex;
@@ -167,15 +229,30 @@ export function getStyles(): string {
       grid-column: 1 / -1;
     }
 
-    /* Cross-region org search shown above the region grid when cf-sync has data. */
+    .region-search-block {
+      margin-bottom: 8px;
+    }
+
+    .region-list-empty {
+      grid-column: 1 / -1;
+      padding: 10px 6px;
+      color: var(--vscode-descriptionForeground);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    /* Cross-region org search shown in the Org tab when cf-sync has data. */
     .org-search-block {
       display: flex;
       flex-direction: column;
       gap: 6px;
-      margin-bottom: 12px;
+      flex: 1;
+      min-height: 0;
+      margin-bottom: 8px;
     }
     .org-search-results {
-      max-height: 180px;
+      flex: 1;
+      min-height: 0;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
@@ -189,6 +266,9 @@ export function getStyles(): string {
       color: var(--vscode-descriptionForeground);
       font-size: 11px;
       text-align: center;
+    }
+    .org-search-results.empty {
+      flex: 0 0 auto;
     }
     .org-search-row {
       display: flex;
@@ -207,6 +287,14 @@ export function getStyles(): string {
       text-align: left;
     }
     .org-search-row:hover { background: var(--vscode-list-hoverBackground); }
+    .org-search-row.selected {
+      color: var(--vscode-list-activeSelectionForeground);
+      background: var(--vscode-list-activeSelectionBackground);
+    }
+    .org-search-row.selected .org-search-meta {
+      color: inherit;
+      opacity: 0.82;
+    }
     .org-search-row:focus-visible {
       outline: 1px solid var(--vscode-focusBorder);
       outline-offset: -1px;
