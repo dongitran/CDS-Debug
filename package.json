@@ -127,7 +127,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.2",
     "@types/vscode": "1.116.0",
     "@vitest/coverage-v8": "^4.1.2",
