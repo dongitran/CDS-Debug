@@ -21,6 +21,8 @@ export function getScript(nonce: string): string {
       REGION: 'region',
       LOGGING_IN: 'logging-in',
       SELECT_ORG: 'select-org',
+      LOADING_SPACES: 'loading-spaces',
+      SELECT_SPACE: 'select-space',
       SELECT_FOLDER: 'select-folder',
       LOADING_APPS: 'loading-apps',
       READY: 'ready',
@@ -71,12 +73,14 @@ export function getScript(nonce: string): string {
       orgs: [],
       mappings: [],
       selectedOrg: null,
+      spacesByOrg: {},
+      selectedSpace: null,
       selectedFolder: null,
-      // Per-org folder cache: { [cfOrg]: groupFolderPath }
+      // Per-target folder cache: { [JSON.stringify([cfOrg, cfSpace])]: groupFolderPath }
       // Populated from saved orgGroupMappings on CONFIG_LOADED and updated whenever the
       // user confirms a folder. Enables auto-restoring the previously selected folder
-      // when the user switches back to an org they have used before.
-      foldersByOrg: {},
+      // when the user switches back to an org/space they have used before.
+      foldersByTarget: {},
       apps: [],
       selectedApps: new Set(),
       searchQuery: '',
@@ -150,11 +154,37 @@ export function getScript(nonce: string): string {
       return region ? state.selectedRegion + ' \u2014 ' + region.name : state.selectedRegion;
     }
 
+    function mappingSpace(mapping) {
+      return mapping.cfSpace || 'app';
+    }
+
+    function targetKey(org, space) {
+      return JSON.stringify([org, space || 'app']);
+    }
+
+    function selectedTargetKey() {
+      if (!state.selectedOrg || !state.selectedSpace) return null;
+      return targetKey(state.selectedOrg, state.selectedSpace);
+    }
+
+    function selectedOrgSpaces() {
+      return state.selectedOrg ? (state.spacesByOrg[state.selectedOrg] || []) : [];
+    }
+
+    function restoreFolderForSelectedTarget() {
+      const key = selectedTargetKey();
+      state.selectedFolder = key ? (state.foldersByTarget[key] || null) : null;
+    }
+
     function buildLiveStatus() {
       if (state.error) return 'Error: ' + state.error;
       if (state.screen === SCREENS.LOGGING_IN) return 'Logging in to Cloud Foundry...';
+      if (state.screen === SCREENS.LOADING_SPACES && state.selectedOrg) {
+        return 'Loading spaces for ' + state.selectedOrg + '...';
+      }
       if (state.screen === SCREENS.LOADING_APPS && state.selectedOrg) {
-        return 'Loading apps for ' + state.selectedOrg + '...';
+        const target = state.selectedSpace ? state.selectedOrg + ' / ' + state.selectedSpace : state.selectedOrg;
+        return 'Loading apps for ' + target + '...';
       }
       const activeCount = Object.keys(state.activeSessions).length;
       if (activeCount > 0) {
@@ -203,6 +233,8 @@ export function getScript(nonce: string): string {
         case SCREENS.REGION:              return renderRegion();
         case SCREENS.LOGGING_IN:          return renderLoggingIn();
         case SCREENS.SELECT_ORG:          return renderSelectOrg();
+        case SCREENS.LOADING_SPACES:      return renderLoadingSpaces();
+        case SCREENS.SELECT_SPACE:        return renderSelectSpace();
         case SCREENS.SELECT_FOLDER:       return renderSelectFolder();
         case SCREENS.LOADING_APPS:        return renderLoadingApps();
         case SCREENS.READY:               return renderReady();
@@ -248,6 +280,7 @@ export function getScript(nonce: string): string {
       document.querySelectorAll('input[name="cf-org"]').forEach(el => {
         el.addEventListener('change', e => {
           state.selectedOrg = e.target.value;
+          state.selectedSpace = null;
           // Patch classes in-place — calling render() resets scroll position
           document.querySelectorAll('label.org-item').forEach(label => {
             const inp = label.querySelector('input[name="cf-org"]');
@@ -259,13 +292,36 @@ export function getScript(nonce: string): string {
       });
 
       $('btn-next-org')?.addEventListener('click', () => {
+        if (!state.selectedOrg) return;
         state.error = null;
-        // Auto-restore the folder previously used with this org (if any).
-        // The user can still override by clicking "Browse…" on the next screen.
-        state.selectedFolder = (state.selectedOrg && state.foldersByOrg[state.selectedOrg])
-          ? state.foldersByOrg[state.selectedOrg]
-          : null;
+        state.screen = SCREENS.LOADING_SPACES;
+        render();
+        vscode.postMessage({ type: 'LOAD_SPACES', payload: { org: state.selectedOrg } });
+      });
+
+      document.querySelectorAll('input[name="cf-space"]').forEach(el => {
+        el.addEventListener('change', e => {
+          state.selectedSpace = e.target.value;
+          document.querySelectorAll('label.space-item').forEach(label => {
+            const inp = label.querySelector('input[name="cf-space"]');
+            if (inp) label.classList.toggle('selected', inp.value === state.selectedSpace);
+          });
+          const nextBtn = document.getElementById('btn-next-space');
+          if (nextBtn) nextBtn.removeAttribute('disabled');
+        });
+      });
+
+      $('btn-next-space')?.addEventListener('click', () => {
+        if (!state.selectedOrg || !state.selectedSpace) return;
+        state.error = null;
+        restoreFolderForSelectedTarget();
         state.screen = SCREENS.SELECT_FOLDER;
+        render();
+      });
+
+      $('btn-back-space-org')?.addEventListener('click', () => {
+        state.screen = SCREENS.SELECT_ORG;
+        state.error = null;
         render();
       });
 
@@ -274,17 +330,20 @@ export function getScript(nonce: string): string {
       });
 
       $('btn-save-mapping')?.addEventListener('click', () => {
-        if (!state.selectedOrg || !state.selectedFolder) return;
-        // Update in-memory per-org folder cache so that if the user switches orgs
-        // during the same session, coming back here auto-restores this folder.
-        state.foldersByOrg[state.selectedOrg] = state.selectedFolder;
-        const mappings = [{ cfOrg: state.selectedOrg, groupFolderPath: state.selectedFolder }];
+        if (!state.selectedOrg || !state.selectedSpace || !state.selectedFolder) return;
+        const key = selectedTargetKey();
+        if (key) state.foldersByTarget[key] = state.selectedFolder;
+        const mappings = [{
+          cfOrg: state.selectedOrg,
+          cfSpace: state.selectedSpace,
+          groupFolderPath: state.selectedFolder
+        }];
         state.mappings = mappings;
         state.error = null;
         state.screen = SCREENS.LOADING_APPS;
         render();
         vscode.postMessage({ type: 'SAVE_MAPPINGS', payload: { mappings } });
-        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
+        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, space: state.selectedSpace } });
       });
 
       $('btn-back-region')?.addEventListener('click', () => {
@@ -292,7 +351,9 @@ export function getScript(nonce: string): string {
       });
 
       $('btn-back-select-org')?.addEventListener('click', () => {
-        state.screen = SCREENS.SELECT_ORG; state.error = null; render();
+        state.screen = selectedOrgSpaces().length > 1 ? SCREENS.SELECT_SPACE : SCREENS.SELECT_ORG;
+        state.error = null;
+        render();
       });
 
       $('search-input')?.addEventListener('input', e => {
@@ -356,11 +417,14 @@ export function getScript(nonce: string): string {
       }
 
       $('btn-refresh-apps')?.addEventListener('click', () => {
-        if (!state.selectedOrg) return;
+        if (!state.selectedOrg || !state.selectedSpace) return;
         state.error = null;
         state.screen = SCREENS.LOADING_APPS;
         render();
-        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, forceRefresh: true } });
+        vscode.postMessage({
+          type: 'LOAD_APPS',
+          payload: { org: state.selectedOrg, space: state.selectedSpace, forceRefresh: true }
+        });
       });
 
       $('chk-select-all')?.addEventListener('change', function(e) {
@@ -387,7 +451,7 @@ export function getScript(nonce: string): string {
         });
         refreshActiveSessionsPanel();
         refreshAppListSection();
-        vscode.postMessage({ type: 'START_DEBUG', payload: { appNames, org: state.selectedOrg } });
+        vscode.postMessage({ type: 'START_DEBUG', payload: { appNames, org: state.selectedOrg, space: state.selectedSpace } });
       });
 
       $('btn-remap')?.addEventListener('click', () => {
@@ -401,11 +465,14 @@ export function getScript(nonce: string): string {
       });
 
       $('btn-retry-apps')?.addEventListener('click', () => {
-        if (!state.selectedOrg) return;
+        if (!state.selectedOrg || !state.selectedSpace) return;
         state.error = null;
         state.screen = SCREENS.LOADING_APPS;
         render();
-        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, forceRefresh: true } });
+        vscode.postMessage({
+          type: 'LOAD_APPS',
+          payload: { org: state.selectedOrg, space: state.selectedSpace, forceRefresh: true }
+        });
       });
 
       $('btn-cancel-login')?.addEventListener('click', () => {
@@ -445,6 +512,8 @@ export function getScript(nonce: string): string {
           return;
         case 'LOGIN_SUCCESS':
           state.orgs = msg.payload.orgs;
+          state.spacesByOrg = {};
+          state.selectedSpace = null;
           state.isReconnecting = false;
           state.screen = SCREENS.SELECT_ORG;
           state.error = null;
@@ -453,6 +522,26 @@ export function getScript(nonce: string): string {
           state.isReconnecting = false;
           state.error = msg.payload.message;
           state.screen = SCREENS.REGION;
+          break;
+        case 'SPACES_LOADED': {
+          if (msg.payload.org !== state.selectedOrg || state.screen !== SCREENS.LOADING_SPACES) return;
+          const spaces = Array.isArray(msg.payload.spaces) ? msg.payload.spaces : [];
+          state.spacesByOrg[msg.payload.org] = spaces;
+          if (spaces.length === 1) {
+            state.selectedSpace = spaces[0];
+            restoreFolderForSelectedTarget();
+            state.screen = SCREENS.SELECT_FOLDER;
+          } else {
+            if (!spaces.includes(state.selectedSpace)) state.selectedSpace = null;
+            state.screen = SCREENS.SELECT_SPACE;
+          }
+          state.error = null;
+          break;
+        }
+        case 'SPACES_ERROR':
+          if (msg.payload.org !== state.selectedOrg || state.screen !== SCREENS.LOADING_SPACES) return;
+          state.error = msg.payload.message;
+          state.screen = SCREENS.SELECT_ORG;
           break;
         case 'APPS_LOADED':
           state.apps = msg.payload.apps;
@@ -721,11 +810,11 @@ export function getScript(nonce: string): string {
             state.activeSessions = restoredSessions;
             state.orgs = cfg.orgs ?? [];
             state.mappings = cfg.orgGroupMappings;
-            // Rebuild the per-org folder cache from all persisted mappings so that
-            // switching orgs in the same session auto-restores the correct folder.
-            state.foldersByOrg = {};
+            // Rebuild the per-target folder cache from all persisted mappings so that
+            // switching orgs/spaces auto-restores the correct folder.
+            state.foldersByTarget = {};
             for (const m of cfg.orgGroupMappings) {
-              state.foldersByOrg[m.cfOrg] = m.groupFolderPath;
+              state.foldersByTarget[targetKey(m.cfOrg, mappingSpace(m))] = m.groupFolderPath;
             }
           }
 
@@ -736,14 +825,16 @@ export function getScript(nonce: string): string {
           }
 
           if (cfg && state.mappings.length > 0) {
-            state.selectedOrg = state.mappings[0].cfOrg;
-            state.selectedFolder = state.mappings[0].groupFolderPath;
+            const mapping = state.mappings[0];
+            state.selectedOrg = mapping.cfOrg;
+            state.selectedSpace = mappingSpace(mapping);
+            state.selectedFolder = mapping.groupFolderPath;
             // Mark as restoring so APPS_ERROR can trigger auto-reconnect instead
             // of leaving the user stuck on a broken READY screen.
             state.isRestoringSession = true;
             state.screen = SCREENS.LOADING_APPS;
             render();
-            vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
+            vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, space: state.selectedSpace } });
             return;
           }
 
@@ -762,12 +853,14 @@ export function getScript(nonce: string): string {
           if (state.screen === SCREENS.SETUP_CREDENTIALS) {
             // If saved config had mappings, restore the session; else go to REGION.
             if (state.mappings && state.mappings.length > 0) {
-              state.selectedOrg = state.mappings[0].cfOrg;
-              state.selectedFolder = state.mappings[0].groupFolderPath;
+              const mapping = state.mappings[0];
+              state.selectedOrg = mapping.cfOrg;
+              state.selectedSpace = mappingSpace(mapping);
+              state.selectedFolder = mapping.groupFolderPath;
               state.isRestoringSession = true;
               state.screen = SCREENS.LOADING_APPS;
               render();
-              vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg } });
+              vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, space: state.selectedSpace } });
               return;
             }
             state.screen = SCREENS.REGION;

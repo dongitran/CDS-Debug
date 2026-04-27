@@ -47,6 +47,8 @@ export interface CfApp {
 
 export interface OrgGroupMapping {
   cfOrg: string;
+  /** Missing in legacy configs; treated as CF_DEFAULT_SPACE. */
+  cfSpace?: string;
   groupFolderPath: string; // absolute path to the local group folder
 }
 
@@ -308,8 +310,9 @@ export type E2eBridgeCommand =
 export type WebviewMessage =
   | { type: 'SELECT_GROUP_FOLDER' }
   | { type: 'LOGIN'; payload: { apiEndpoint: string } }
-  | { type: 'LOAD_APPS'; payload: { org: string; forceRefresh?: boolean } }
-  | { type: 'START_DEBUG'; payload: { appNames: string[]; org: string } }
+  | { type: 'LOAD_SPACES'; payload: { org: string } }
+  | { type: 'LOAD_APPS'; payload: { org: string; space?: string; forceRefresh?: boolean } }
+  | { type: 'START_DEBUG'; payload: { appNames: string[]; org: string; space?: string } }
   | { type: 'STOP_DEBUG'; payload: { appName: string } }
   | { type: 'STOP_ALL_DEBUG' }
   | { type: 'OPEN_APP_URL'; payload: { url: string; source: 'manual' | 'auto' } }
@@ -360,6 +363,8 @@ export type ExtensionMessage =
   | { type: 'GROUP_FOLDER_SELECTED'; payload: { path: string } }
   | { type: 'LOGIN_SUCCESS'; payload: { orgs: string[] } }
   | { type: 'LOGIN_ERROR'; payload: { message: string } }
+  | { type: 'SPACES_LOADED'; payload: { org: string; spaces: string[] } }
+  | { type: 'SPACES_ERROR'; payload: { org: string; message: string } }
   | { type: 'APPS_LOADED'; payload: { apps: CfApp[] } }
   | { type: 'APPS_ERROR'; payload: { message: string } }
   | { type: 'DEBUG_STARTED'; payload: { count: number } }

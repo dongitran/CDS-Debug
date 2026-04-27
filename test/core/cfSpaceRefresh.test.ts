@@ -51,6 +51,32 @@ describe('cfSpaceRefresh', () => {
     expect(result).toEqual({ status: 'refreshed', regionKey: 'eu10', appCount: 2 });
   });
 
+  it('refreshes the requested space when one is provided', async () => {
+    syncSpaceMock.mockResolvedValue({
+      space: {
+        name: 'dev',
+        apps: [{ name: 'sample-service-a' }],
+      },
+    });
+
+    const result = await refreshCfSyncSpace({
+      apiEndpoint: EU10_ENDPOINT,
+      orgName: 'demo-org',
+      spaceName: 'dev',
+      email: 'demo@example.com',
+      password: 'secret',
+    });
+
+    expect(syncSpaceMock).toHaveBeenCalledWith({
+      regionKey: 'eu10',
+      orgName: 'demo-org',
+      spaceName: 'dev',
+      email: 'demo@example.com',
+      password: 'secret',
+    });
+    expect(result).toEqual({ status: 'refreshed', regionKey: 'eu10', appCount: 1 });
+  });
+
   it('skips when credentials are missing', async () => {
     await expect(refreshCfSyncSpace({ apiEndpoint: EU10_ENDPOINT, orgName: 'demo-org' })).resolves.toEqual({
       status: 'skipped',

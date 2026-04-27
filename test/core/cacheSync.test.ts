@@ -111,7 +111,7 @@ describe('populateCacheFromStructure', () => {
     expect(saveCachedOrgs).toHaveBeenCalledWith(EU10_ENDPOINT, ['demo-org-a', 'demo-org-b']);
   });
 
-  it('flattens apps from all spaces of an org', async () => {
+  it('saves apps per space instead of flattening them under the org', async () => {
     const structure = makeStructure({
       regions: [
         {
@@ -137,11 +137,13 @@ describe('populateCacheFromStructure', () => {
     expect(saveCachedApps).toHaveBeenCalledWith(EU10_ENDPOINT, 'demo-org', [
       { name: 'sample-svc-1', state: 'stopped', urls: [] },
       { name: 'sample-svc-2', state: 'stopped', urls: [] },
+    ], 'demo-space-a');
+    expect(saveCachedApps).toHaveBeenCalledWith(EU10_ENDPOINT, 'demo-org', [
       { name: 'sample-svc-3', state: 'stopped', urls: [] },
-    ]);
+    ], 'demo-space-b');
   });
 
-  it('deduplicates apps that appear in multiple spaces', async () => {
+  it('keeps apps with the same name isolated by space', async () => {
     const structure = makeStructure({
       regions: [
         {
@@ -164,11 +166,13 @@ describe('populateCacheFromStructure', () => {
 
     await populateCacheFromStructure(structure);
 
-    const call = vi.mocked(saveCachedApps).mock.calls[0];
-    const apps = call?.[2] ?? [];
-    const names = apps.map((a) => a.name);
-    expect(names).toEqual(['shared-svc', 'unique-svc']);
-    expect(apps).toHaveLength(2);
+    expect(saveCachedApps).toHaveBeenCalledWith(EU10_ENDPOINT, 'demo-org', [
+      { name: 'shared-svc', state: 'stopped', urls: [] },
+      { name: 'unique-svc', state: 'stopped', urls: [] },
+    ], 'demo-space-a');
+    expect(saveCachedApps).toHaveBeenCalledWith(EU10_ENDPOINT, 'demo-org', [
+      { name: 'shared-svc', state: 'stopped', urls: [] },
+    ], 'demo-space-b');
   });
 
   it('saves empty apps list for an org with no spaces', async () => {
@@ -299,7 +303,7 @@ describe('populateCacheFromStructure', () => {
         state: 'stopped',
         urls: ['sample-service-stopped.cfapps.example.com'],
       },
-    ]);
+    ], 'demo-space');
   });
 
   it('keeps older name-only cf-sync snapshots as stopped for backward compatibility', async () => {
@@ -324,7 +328,7 @@ describe('populateCacheFromStructure', () => {
 
     expect(saveCachedApps).toHaveBeenCalledWith(EU10_ENDPOINT, 'demo-org', [
       { name: 'legacy-app', state: 'stopped', urls: [] },
-    ]);
+    ], 'demo-space');
   });
 });
 

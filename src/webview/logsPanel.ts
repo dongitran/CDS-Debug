@@ -1,7 +1,7 @@
 import type * as vscode from 'vscode';
 import type { LogsExtensionMessage, LogsWebviewMessage } from '../types/index';
 import { cfLogsManager } from '../core/cfLogsManager';
-import { getConfig } from '../storage/configStore';
+import { getConfig, mappingSpace } from '../storage/configStore';
 import { cfTarget } from '../core/cfClient';
 import { logError, logInfo, logWarn } from '../core/logger';
 
@@ -310,7 +310,7 @@ export class CfLogsViewProvider implements vscode.WebviewViewProvider {
       logWarn(`[CfLogs] No org mapping found — cannot stream logs for ${appName}.`);
       return;
     }
-    const space = 'dev';
+    const space = mappingSpace(mapping);
     const org = mapping.cfOrg;
 
     if (cfLogsManager.isStreaming(appName)) {
@@ -348,7 +348,7 @@ export class CfLogsViewProvider implements vscode.WebviewViewProvider {
           this.postLogs({ type: 'LOGS_ERROR', payload: { appName, message: 'No CF org configured. Complete setup in the Debug Launcher panel first.' } });
           return;
         }
-        const space = 'dev';
+        const space = mappingSpace(mapping);
         const org = mapping.cfOrg;
         logInfo(`[CfLogs] Starting stream for ${appName} in ${org}/${space}.`);
         try {

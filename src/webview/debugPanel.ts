@@ -18,13 +18,21 @@ import type {
   WebviewMessage,
 } from '../types/index';
 import { CF_DEFAULT_SPACE, DEFAULT_CACHE_SETTINGS } from '../types/index';
-import { CfCliError, cfLogin, cfLogout, cfOrgs, cfTarget, cfTargetAndApps } from '../core/cfClient';
+import {
+  CfCliError,
+  cfLogin,
+  cfLogout,
+  cfOrgs,
+  cfTarget,
+  cfTargetAndApps,
+  cfTargetOrgAndSpaces,
+} from '../core/cfClient';
 import { refreshCfSyncSpace } from '../core/cfSpaceRefresh';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, buildFallbackTargets, getFolderNameCandidates } from '../core/appMapper';
 import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig } from '../core/launchConfigurator';
 import { resolveSharedCapDebugConfig } from '../core/capDebugConfig';
-import { getConfig, saveConfig, upsertOrgMappings } from '../storage/configStore';
+import { getConfig, mappingMatchesTarget, saveConfig, upsertOrgMappings } from '../storage/configStore';
 import {
   clearCredentialsFromSecretStorage,
   getCredentialSource,
@@ -187,12 +195,24 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         await this.handleSaveMappings(raw.payload.mappings);
         break;
 
+      case 'LOAD_SPACES':
+        await this.handleLoadSpaces(raw.payload.org);
+        break;
+
       case 'LOAD_APPS':
-        await this.handleLoadApps(raw.payload.org, raw.payload.forceRefresh === true);
+        await this.handleLoadApps(
+          raw.payload.org,
+          raw.payload.space ?? CF_DEFAULT_SPACE,
+          raw.payload.forceRefresh === true,
+        );
         break;
 
       case 'START_DEBUG':
-        await this.handleStartDebug(raw.payload.appNames, raw.payload.org);
+        await this.handleStartDebug(
+          raw.payload.appNames,
+          raw.payload.org,
+          raw.payload.space ?? CF_DEFAULT_SPACE,
+        );
         break;
 
       case 'STOP_DEBUG':
@@ -540,22 +560,45 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const existing = getConfig();
     if (!existing) return;
     logInfo(`Saving ${mappings.length.toString()} org mapping(s).`);
-    // Upsert: merge incoming mappings with existing ones keyed by cfOrg.
-    // This preserves folder selections for all other orgs so switching back
-    // to a previously-used org auto-restores its folder without re-picking.
+    // Upsert by org/space so switching between spaces preserves each folder.
     await saveConfig({
       ...existing,
       orgGroupMappings: upsertOrgMappings(existing.orgGroupMappings, mappings),
     });
   }
 
-  private async handleLoadApps(org: string, forceRefresh = false): Promise<void> {
+  private async handleLoadSpaces(org: string): Promise<void> {
+    const config = getConfig();
+    if (!config) {
+      this.postMessage({
+        type: 'SPACES_ERROR',
+        payload: { org, message: 'Configuration is missing. Select a region again.' },
+      });
+      return;
+    }
+
+    logInfo(`Loading spaces for org: ${org} …`);
+    try {
+      const spaces = await this.loadLiveSpaces(config.apiEndpoint, org);
+      logInfo(`Spaces loaded for ${org}: ${spaces.join(', ')}`);
+      this.postMessage({ type: 'SPACES_LOADED', payload: { org, spaces } });
+    } catch (err: unknown) {
+      const msg = extractErrorMessage(err);
+      logError(`Failed to load spaces for ${org}: ${msg}`);
+      const revoked = await this.handleAuthFailure(err);
+      if (!revoked) {
+        this.postMessage({ type: 'SPACES_ERROR', payload: { org, message: msg } });
+      }
+    }
+  }
+
+  private async handleLoadApps(org: string, space: string, forceRefresh = false): Promise<void> {
     const config = getConfig();
     if (!config) return;
 
-    const mapping = config.orgGroupMappings.find((m) => m.cfOrg === org);
+    const mapping = config.orgGroupMappings.find((m) => mappingMatchesTarget(m, org, space));
     if (!mapping) {
-      const msg = `No local folder mapped for org: ${org}`;
+      const msg = `No local folder mapped for org/space: ${org}/${space}`;
       logWarn(msg);
       this.postMessage({ type: 'APPS_ERROR', payload: { message: msg } });
       return;
@@ -564,37 +607,37 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     // Serve from background cache when enabled and fresh (within configured interval).
     const cacheSettings = getCacheSettings();
     if (!forceRefresh && cacheSettings.enabled) {
-      const cached = getCachedApps(config.apiEndpoint, org);
+      const cached = getCachedApps(config.apiEndpoint, org, space);
       if (cached) {
         const ageMs = Date.now() - cached.cachedAt;
         const ttlMs = cacheSettings.intervalHours * 60 * 60 * 1000;
         if (ageMs < ttlMs) {
-          logInfo(`Apps served from cache for org: ${org} (${Math.floor(ageMs / 60_000).toString()}m old).`);
+          logInfo(`Apps served from cache for target: ${org}/${space} (${Math.floor(ageMs / 60_000).toString()}m old).`);
           this.postMessage({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
           // Warm up the CF session in the background so that handleStartDebug
           // never hits an expired token when the app list came from cache.
           // Failures are silently retried with a full re-login.
-          void this.ensureCfSession(config.apiEndpoint, org);
+          void this.ensureCfSession(config.apiEndpoint, org, space);
           return;
         }
       }
     }
 
     if (forceRefresh) {
-      const credentialsRevoked = await this.refreshCfSyncSpaceCache(config.apiEndpoint, org);
+      const credentialsRevoked = await this.refreshCfSyncSpaceCache(config.apiEndpoint, org, space);
       if (credentialsRevoked) return;
     }
 
-    logInfo(`Loading apps for org: ${org} …`);
+    logInfo(`Loading apps for target: ${org}/${space} …`);
     try {
-      const apps = await this.loadLiveApps(config.apiEndpoint, org);
-      await saveCachedApps(config.apiEndpoint, org, apps);
+      const apps = await this.loadLiveApps(config.apiEndpoint, org, space);
+      await saveCachedApps(config.apiEndpoint, org, apps, space);
       const started = apps.filter((a) => a.state === 'started').length;
       logInfo(`Apps loaded: ${apps.length.toString()} total, ${started.toString()} started.`);
       this.postMessage({ type: 'APPS_LOADED', payload: { apps } });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
-      logError(`Failed to load apps for ${org}: ${msg}`);
+      logError(`Failed to load apps for ${org}/${space}: ${msg}`);
       const revoked = await this.handleAuthFailure(err);
       if (!revoked) {
         this.postMessage({ type: 'APPS_ERROR', payload: { message: msg } });
@@ -602,12 +645,12 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async refreshCfSyncSpaceCache(apiEndpoint: string, org: string): Promise<boolean> {
+  private async refreshCfSyncSpaceCache(apiEndpoint: string, org: string, space: string): Promise<boolean> {
     const { email, password } = await getCredentials();
-    const result = await refreshCfSyncSpace({ apiEndpoint, orgName: org, email, password });
+    const result = await refreshCfSyncSpace({ apiEndpoint, orgName: org, spaceName: space, email, password });
 
     if (result.status === 'refreshed') {
-      logInfo(`[Reload] cf-sync refreshed ${result.regionKey}/${org}/${CF_DEFAULT_SPACE} (${result.appCount.toString()} app(s)).`);
+      logInfo(`[Reload] cf-sync refreshed ${result.regionKey}/${org}/${space} (${result.appCount.toString()} app(s)).`);
       return false;
     }
 
@@ -622,24 +665,35 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     return false;
   }
 
-  private async loadLiveApps(apiEndpoint: string, org: string): Promise<CfApp[]> {
+  private async loadLiveSpaces(apiEndpoint: string, org: string): Promise<string[]> {
     try {
-      return await cfTargetAndApps(org);
+      return await cfTargetOrgAndSpaces(org);
     } catch (err: unknown) {
       if (!isAuthError(err)) throw err;
-      logInfo(`cfTargetAndApps auth failed — attempting re-login before loading apps for ${org}.`);
+      logInfo(`cfTargetOrgAndSpaces auth failed — attempting re-login before loading spaces for ${org}.`);
       await this.reLogin(apiEndpoint);
-      return await cfTargetAndApps(org);
+      return await cfTargetOrgAndSpaces(org);
     }
   }
 
-  private async handleStartDebug(appNames: string[], org: string): Promise<void> {
+  private async loadLiveApps(apiEndpoint: string, org: string, space: string): Promise<CfApp[]> {
+    try {
+      return await cfTargetAndApps(org, space);
+    } catch (err: unknown) {
+      if (!isAuthError(err)) throw err;
+      logInfo(`cfTargetAndApps auth failed — attempting re-login before loading apps for ${org}/${space}.`);
+      await this.reLogin(apiEndpoint);
+      return await cfTargetAndApps(org, space);
+    }
+  }
+
+  private async handleStartDebug(appNames: string[], org: string, space: string): Promise<void> {
     const config = getConfig();
     if (!config) return;
 
-    const mapping = config.orgGroupMappings.find((m) => m.cfOrg === org);
+    const mapping = config.orgGroupMappings.find((m) => mappingMatchesTarget(m, org, space));
     if (!mapping) {
-      const msg = `No mapping found for org: ${org}`;
+      const msg = `No mapping found for org/space: ${org}/${space}`;
       logError(msg);
       this.postMessage({ type: 'DEBUG_ERROR', payload: { message: msg } });
       return;
@@ -650,21 +704,21 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     // Always target the org before opening the cf ssh tunnel. handleLoadApps may have
     // served apps from cache without calling cfTarget, leaving ~/.cf untargeted.
     // If the token has expired in the meantime, re-login automatically.
-    logInfo(`[StartDebug] Targeting CF org: ${org}…`);
+    logInfo(`[StartDebug] Targeting CF org/space: ${org}/${space}…`);
     try {
-      await cfTarget(org);
-      logInfo(`[StartDebug] CF org targeted successfully.`);
+      await cfTarget(org, space);
+      logInfo(`[StartDebug] CF org/space targeted successfully.`);
     } catch {
-      logInfo(`cfTarget failed — attempting re-login before starting debug for ${org}.`);
+      logInfo(`cfTarget failed — attempting re-login before starting debug for ${org}/${space}.`);
       try {
         logInfo(`[StartDebug] Re-authenticating to ${config.apiEndpoint}…`);
         await this.reLogin(config.apiEndpoint);
-        logInfo(`[StartDebug] Re-authentication successful. Targeting org again…`);
-        await cfTarget(org);
-        logInfo(`[StartDebug] CF org targeted after re-login.`);
+        logInfo(`[StartDebug] Re-authentication successful. Targeting org/space again…`);
+        await cfTarget(org, space);
+        logInfo(`[StartDebug] CF org/space targeted after re-login.`);
       } catch (retryErr: unknown) {
         const msg = extractErrorMessage(retryErr);
-        logError(`Failed to target org ${org} after re-login: ${msg}`);
+        logError(`Failed to target org/space ${org}/${space} after re-login: ${msg}`);
         // Auth failure → clear stale keychain creds and redirect to credential setup.
         const revoked = await this.handleAuthFailure(retryErr);
         if (!revoked) {
@@ -1103,16 +1157,16 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
    * Called after serving apps from cache so that handleStartDebug never
    * encounters an expired token as the very first CF CLI invocation.
    */
-  private async ensureCfSession(apiEndpoint: string, org: string): Promise<void> {
+  private async ensureCfSession(apiEndpoint: string, org: string, space: string): Promise<void> {
     try {
-      await cfTarget(org);
-      logInfo(`[Session] CF session refreshed — org ${org} targeted.`);
+      await cfTarget(org, space);
+      logInfo(`[Session] CF session refreshed — target ${org}/${space} selected.`);
     } catch {
-      logInfo(`[Session] cfTarget failed — attempting silent re-login for org ${org}.`);
+      logInfo(`[Session] cfTarget failed — attempting silent re-login for ${org}/${space}.`);
       try {
         await this.reLogin(apiEndpoint);
-        await cfTarget(org);
-        logInfo(`[Session] Silent re-login successful — org ${org} targeted.`);
+        await cfTarget(org, space);
+        logInfo(`[Session] Silent re-login successful — target ${org}/${space} selected.`);
       } catch (err: unknown) {
         logWarn(`[Session] Silent re-login failed: ${err instanceof Error ? err.message : String(err)}`);
         // Proactively clear stale keychain credentials so the user is redirected to

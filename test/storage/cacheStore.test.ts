@@ -88,6 +88,19 @@ describe('cacheStore', () => {
     expect(getCachedApps(endpoint, 'org-b')?.apps).toEqual(appsB);
   });
 
+  it('saveCachedApps keeps spaces under the same org isolated', async () => {
+    const endpoint = 'https://api.cf.eu10.hana.ondemand.com';
+    const appSpaceApps: CfApp[] = [{ name: 'svc-app', state: 'started', urls: [] }];
+    const devSpaceApps: CfApp[] = [{ name: 'svc-dev', state: 'started', urls: [] }];
+
+    await saveCachedApps(endpoint, 'org-a', appSpaceApps, 'app');
+    await saveCachedApps(endpoint, 'org-a', devSpaceApps, 'dev');
+
+    expect(getCachedApps(endpoint, 'org-a', 'app')?.apps).toEqual(appSpaceApps);
+    expect(getCachedApps(endpoint, 'org-a', 'dev')?.apps).toEqual(devSpaceApps);
+    expect(getCachedApps(endpoint, 'org-a')).toBeUndefined();
+  });
+
   it('saveCachedApps overwrites previously cached apps for the same org', async () => {
     const endpoint = 'https://api.cf.eu10.hana.ondemand.com';
     const original: CfApp[] = [{ name: 'svc-old', state: 'started', urls: [] }];

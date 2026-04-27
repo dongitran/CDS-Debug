@@ -12,6 +12,9 @@ describe('webview markup contracts', () => {
     expect(rendererScript).toContain('Package</button>');
     expect(rendererScript).not.toContain('Open App');
     expect(rendererScript).toContain('enableBreakpointSnapshotHandling');
+    expect(rendererScript).toContain('Select CF Space');
+    expect(rendererScript).toContain('name="cf-space"');
+    expect(rendererScript).toContain('Space</span>');
   });
 
   it('keeps the package browser screen minimal', () => {

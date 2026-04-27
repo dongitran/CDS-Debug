@@ -83,8 +83,26 @@ export async function cfLogout(cfHome?: string): Promise<void> {
   await runCf(['logout'], cfHome);
 }
 
+export async function cfTargetOrg(org: string, cfHome?: string): Promise<void> {
+  await runCf(['target', '-o', org], cfHome);
+}
+
 export async function cfTarget(org: string, space = CF_DEFAULT_SPACE, cfHome?: string): Promise<void> {
   await runCf(['target', '-o', org, '-s', space], cfHome);
+}
+
+export function parseSpaces(stdout: string): string[] {
+  return parseOrgs(stdout);
+}
+
+export async function cfSpaces(cfHome?: string): Promise<string[]> {
+  const stdout = await runCf(['spaces'], cfHome);
+  return parseSpaces(stdout);
+}
+
+export async function cfTargetOrgAndSpaces(org: string, cfHome?: string): Promise<string[]> {
+  await cfTargetOrg(org, cfHome);
+  return cfSpaces(cfHome);
 }
 
 export function parseApps(stdout: string): CfApp[] {
@@ -130,8 +148,12 @@ export async function cfApps(cfHome?: string): Promise<CfApp[]> {
   return parseApps(stdout);
 }
 
-export async function cfTargetAndApps(org: string, cfHome?: string): Promise<CfApp[]> {
-  await cfTarget(org, undefined, cfHome);
+export async function cfTargetAndApps(
+  org: string,
+  space = CF_DEFAULT_SPACE,
+  cfHome?: string,
+): Promise<CfApp[]> {
+  await cfTarget(org, space, cfHome);
   return cfApps(cfHome);
 }
 

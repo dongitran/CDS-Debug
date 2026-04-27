@@ -219,7 +219,7 @@ function toCachedApp(app: AppNode): CfApp {
 }
 
 // Converts a completed cf-sync CfStructure into VS Code globalState app cache entries.
-// Apps are deduped across spaces (same app can exist in multiple spaces).
+// Each space is cached independently because app names and states can differ by space.
 export async function populateCacheFromStructure(structure: CfStructure): Promise<void> {
   for (const region of structure.regions) {
     if (!region.accessible) continue;
@@ -227,16 +227,13 @@ export async function populateCacheFromStructure(structure: CfStructure): Promis
     await saveCachedOrgs(region.apiEndpoint, orgNames);
 
     for (const org of region.orgs) {
-      const seen = new Set<string>();
-      const apps: CfApp[] = [];
-      for (const space of org.spaces) {
-        for (const app of space.apps) {
-          if (seen.has(app.name)) continue;
-          seen.add(app.name);
-          apps.push(toCachedApp(app));
-        }
+      if (org.spaces.length === 0) {
+        await saveCachedApps(region.apiEndpoint, org.name, []);
+        continue;
       }
-      await saveCachedApps(region.apiEndpoint, org.name, apps);
+      for (const space of org.spaces) {
+        await saveCachedApps(region.apiEndpoint, org.name, space.apps.map(toCachedApp), space.name);
+      }
     }
   }
 }

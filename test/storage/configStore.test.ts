@@ -151,6 +151,25 @@ describe('upsertOrgMappings', () => {
     expect(result).toEqual([{ cfOrg: 'org-a', groupFolderPath: '/projects/a-new' }]);
   });
 
+  it('preserves mappings for different spaces in the same org', () => {
+    const existing: OrgGroupMapping[] = [{ cfOrg: 'org-a', cfSpace: 'app', groupFolderPath: '/projects/app' }];
+    const incoming: OrgGroupMapping[] = [{ cfOrg: 'org-a', cfSpace: 'dev', groupFolderPath: '/projects/dev' }];
+    const result = upsertOrgMappings(existing, incoming);
+
+    expect(result).toEqual([
+      { cfOrg: 'org-a', cfSpace: 'app', groupFolderPath: '/projects/app' },
+      { cfOrg: 'org-a', cfSpace: 'dev', groupFolderPath: '/projects/dev' },
+    ]);
+  });
+
+  it('treats legacy org-only mappings as the default app space', () => {
+    const existing: OrgGroupMapping[] = [{ cfOrg: 'org-a', groupFolderPath: '/projects/legacy' }];
+    const incoming: OrgGroupMapping[] = [{ cfOrg: 'org-a', cfSpace: 'app', groupFolderPath: '/projects/app' }];
+    const result = upsertOrgMappings(existing, incoming);
+
+    expect(result).toEqual([{ cfOrg: 'org-a', cfSpace: 'app', groupFolderPath: '/projects/app' }]);
+  });
+
   it('handles multi-org round-trip: org-A → org-B → org-A preserves both folders', () => {
     // Simulate: user picks org-A + folder-A, then org-B + folder-B, then org-A + folder-A again
     const afterFirst = upsertOrgMappings([], [{ cfOrg: 'org-a', groupFolderPath: '/folder-a' }]);

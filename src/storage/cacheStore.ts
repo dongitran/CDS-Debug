@@ -39,16 +39,26 @@ function readCacheMap(): CacheMap {
 export function getCachedApps(
   apiEndpoint: string,
   org: string,
+  space?: string,
 ): { apps: CfApp[]; cachedAt: number } | undefined {
-  return readCacheMap()[apiEndpoint]?.appsByOrg[org];
+  return readCacheMap()[apiEndpoint]?.appsByOrg[cacheTargetKey(org, space)];
 }
 
-export async function saveCachedApps(apiEndpoint: string, org: string, apps: CfApp[]): Promise<void> {
+export async function saveCachedApps(
+  apiEndpoint: string,
+  org: string,
+  apps: CfApp[],
+  space?: string,
+): Promise<void> {
   const map = readCacheMap();
   const entry = map[apiEndpoint] ?? { apiEndpoint, orgs: [], appsByOrg: {}, lastSyncedAt: 0 };
-  entry.appsByOrg[org] = { apps, cachedAt: Date.now() };
+  entry.appsByOrg[cacheTargetKey(org, space)] = { apps, cachedAt: Date.now() };
   map[apiEndpoint] = entry;
   await ctx().globalState.update(CACHE_KEY, map);
+}
+
+function cacheTargetKey(org: string, space: string | undefined): string {
+  return space === undefined ? org : JSON.stringify([org, space]);
 }
 
 export async function saveCachedOrgs(apiEndpoint: string, orgs: string[]): Promise<void> {

@@ -34,7 +34,8 @@ type CfScenario =
   | 'slow-apps'
   | 'slow-target'
   | 'slow-target-after-apps'
-  | 'reload-changes';
+  | 'reload-changes'
+  | 'multi-spaces';
 
 interface SessionOptions {
   credentialMode: CredentialMode;
@@ -141,6 +142,20 @@ name
 mock-org-alpha
 mock-org-beta
 OUT
+    ;;
+  spaces)
+    if [[ "$SCENARIO" == "multi-spaces" ]]; then
+      cat <<'OUT'
+name
+app
+dev
+OUT
+    else
+      cat <<'OUT'
+name
+app
+OUT
+    fi
     ;;
   target)
     if [[ "$SCENARIO" == "slow-target" ]]; then
@@ -422,6 +437,7 @@ async function waitForExtensionWebviewFrame(workbenchPage: Page): Promise<Frame>
     'Login to Cloud Foundry',
     'Setup Credentials',
     'Select CF Org',
+    'Select CF Space',
     'Select Local Folder',
     'Debug Launcher',
     'Settings',
@@ -1628,6 +1644,40 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
   });
 
+  test('User can select a CF space when selected org has multiple spaces', async () => {
+    await withVsCodeSession({ credentialMode: 'env', cfScenario: 'multi-spaces' }, async (workbenchPage) => {
+      const webview = await openCdsDebugWebview(workbenchPage);
+      await goToOrgSelection(webview);
+
+      await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
+      await webview.locator('#btn-next-org').click();
+
+      await expect(webview.getByText('Select CF Space')).toBeVisible();
+      await expect(webview.locator('.step-badge', { hasText: '2/3' })).toBeVisible();
+      await expect(webview.locator('.info-box', { hasText: 'mock-org-alpha' })).toBeVisible();
+      await expect(webview.locator('.section-label', { hasText: 'CF Space' })).toBeVisible();
+      await expect(webview.locator('input[name="cf-space"][value="app"]')).toBeAttached();
+      await expect(webview.locator('input[name="cf-space"][value="dev"]')).toBeAttached();
+      await expectButtonDisabled(webview.locator('#btn-next-space'));
+      await captureStepEvidence(workbenchPage, 'multi-space-select-space');
+
+      await webview.locator('input[name="cf-space"][value="dev"]').check({ force: true });
+      await expect(webview.locator('.space-item.selected', { hasText: 'dev' })).toBeVisible();
+      await expectButtonEnabled(webview.locator('#btn-next-space'));
+      await webview.locator('#btn-next-space').click();
+
+      await expect(webview.getByText('Select Local Folder')).toBeVisible();
+      await expect(webview.locator('.info-box', { hasText: 'mock-org-alpha' })).toBeVisible();
+      await expect(webview.locator('.info-box', { hasText: 'dev' })).toBeVisible();
+      await captureStepEvidence(workbenchPage, 'multi-space-folder-selected');
+
+      await webview.locator('#btn-back-select-org').click();
+      await expect(webview.getByText('Select CF Space')).toBeVisible();
+      await webview.locator('#btn-back-space-org').click();
+      await expect(webview.getByText('Select CF Org')).toBeVisible();
+    });
+  });
+
   test('User can complete mapping flow and reach ready screen', async () => {
     await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
@@ -1841,7 +1891,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       });
     });
 
-    test('CF info box shows region and org values', async () => {
+    test('CF info box shows region org and space values', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
@@ -1855,6 +1905,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(regionValue).toHaveAttribute('title', 'https://api.cf.eu10.hana.ondemand.com');
         await expect(cfInfoBox.locator('.cf-info-label', { hasText: 'Org' })).toBeVisible();
         await expect(cfInfoBox.locator('.cf-info-value', { hasText: 'mock-org-alpha' })).toBeVisible();
+        await expect(cfInfoBox.locator('.cf-info-label', { hasText: 'Space' })).toBeVisible();
+        await expect(cfInfoBox.locator('.cf-info-value', { hasText: 'app' })).toBeVisible();
         await expect(webview.locator('.error-box')).toHaveCount(0);
       });
     });
@@ -3977,7 +4029,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
     test('CONFIG_LOADED with multiple org mappings pre-populates folder cache for all orgs', async () => {
       // Simulates VS Code restart where two orgs were previously mapped.
-      // CONFIG_LOADED populates state.foldersByOrg for both; navigating to either org's
+      // CONFIG_LOADED populates the target folder cache for both; navigating to either org's
       // SELECT_FOLDER screen must show its persisted folder without any Browse interaction.
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
@@ -4026,6 +4078,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
         await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
         await webview.locator('#btn-next-org').click();
+        await expect(webview.getByText(/Loading spaces for/)).toBeVisible();
+        await injectMessage(webview, { type: 'SPACES_LOADED', payload: { org: 'mock-org-alpha', spaces: ['app'] } });
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
         await expect(webview.getByText('/cached/alpha')).toBeVisible();
         await expectButtonEnabled(webview.locator('#btn-save-mapping'));
@@ -4035,6 +4089,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.getByText('Select CF Org')).toBeVisible();
         await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
         await webview.locator('#btn-next-org').click();
+        await expect(webview.getByText(/Loading spaces for/)).toBeVisible();
+        await injectMessage(webview, { type: 'SPACES_LOADED', payload: { org: 'mock-org-beta', spaces: ['app'] } });
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
         await expect(webview.getByText('/cached/beta')).toBeVisible();
         await expectButtonEnabled(webview.locator('#btn-save-mapping'));

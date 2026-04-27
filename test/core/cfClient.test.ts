@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseOrgs, parseApps } from '../../src/core/cfClient';
+import { parseOrgs, parseSpaces, parseApps } from '../../src/core/cfClient';
 
 describe('parseOrgs', () => {
   it('parses standard cf orgs output', () => {
@@ -32,6 +32,29 @@ describe('parseOrgs', () => {
   it('trims whitespace from org names', () => {
     const stdout = 'name\n  org-with-spaces  \n';
     expect(parseOrgs(stdout)).toEqual(['org-with-spaces']);
+  });
+});
+
+describe('parseSpaces', () => {
+  it('parses standard cf spaces output', () => {
+    const stdout = [
+      'Getting spaces in org demo-org as user@example.com...',
+      '',
+      'name',
+      'app',
+      'dev',
+      '',
+    ].join('\n');
+
+    expect(parseSpaces(stdout)).toEqual(['app', 'dev']);
+  });
+
+  it('returns empty array when no name header found', () => {
+    expect(parseSpaces('unexpected output')).toEqual([]);
+  });
+
+  it('trims whitespace and filters blank space names', () => {
+    expect(parseSpaces('name\n  app  \n\n  dev\n')).toEqual(['app', 'dev']);
   });
 });
 

@@ -20,4 +20,5 @@ coverage/**
 e2e/**
 .playwright-mcp/**
 designs/**
+saptools-*.png
 *.vsix

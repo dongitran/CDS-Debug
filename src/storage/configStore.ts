@@ -1,5 +1,6 @@
 import type * as vscode from 'vscode';
 import type { ExtensionConfig, OrgGroupMapping } from '../types/index';
+import { CF_DEFAULT_SPACE } from '../types/index';
 
 const CONFIG_KEY = 'cds-debug.config';
 
@@ -49,19 +50,31 @@ export async function clearConfig(): Promise<void> {
   }
 }
 
+export function mappingSpace(mapping: Pick<OrgGroupMapping, 'cfSpace'>): string {
+  return mapping.cfSpace ?? CF_DEFAULT_SPACE;
+}
+
+export function mappingMatchesTarget(mapping: OrgGroupMapping, org: string, space: string): boolean {
+  return mapping.cfOrg === org && mappingSpace(mapping) === space;
+}
+
+function mappingKey(mapping: OrgGroupMapping): string {
+  return JSON.stringify([mapping.cfOrg, mappingSpace(mapping)]);
+}
+
 /**
- * Merges incoming org-folder mappings into an existing array, using `cfOrg` as the key.
- * Existing mappings for orgs NOT in `incoming` are preserved.
- * Existing mappings for orgs IN `incoming` are replaced with the incoming value.
+ * Merges incoming org-folder mappings into an existing array, using `cfOrg + cfSpace` as the key.
+ * Existing mappings for targets NOT in `incoming` are preserved.
+ * Existing mappings for targets IN `incoming` are replaced with the incoming value.
  * Does not mutate either input array.
  */
 export function upsertOrgMappings(
   existing: OrgGroupMapping[],
   incoming: OrgGroupMapping[],
 ): OrgGroupMapping[] {
-  const orgMap = new Map(existing.map((m) => [m.cfOrg, m]));
+  const orgMap = new Map(existing.map((m) => [mappingKey(m), m]));
   for (const mapping of incoming) {
-    orgMap.set(mapping.cfOrg, mapping);
+    orgMap.set(mappingKey(mapping), mapping);
   }
   return Array.from(orgMap.values());
 }

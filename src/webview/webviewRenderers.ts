@@ -96,6 +96,45 @@ export function getRendererScriptContent(): string {
       \`;
     }
 
+    function renderLoadingSpaces() {
+      return \`
+        <div style="text-align:center;padding:24px 0">
+          <span class="spinner"></span>
+          Loading spaces for <strong>\${escape(state.selectedOrg)}</strong>&hellip;
+        </div>
+        <div style="height:16px"></div>
+        <button class="btn btn-secondary" id="btn-back-space-org">&#8592; Back</button>
+      \`;
+    }
+
+    function renderSelectSpace() {
+      const spaces = state.selectedOrg ? (state.spacesByOrg[state.selectedOrg] || []) : [];
+      const items = spaces.map(space => \`
+        <label class="space-item \${space === state.selectedSpace ? 'selected' : ''}">
+          <input type="radio" name="cf-space" value="\${escape(space)}"
+            \${space === state.selectedSpace ? 'checked' : ''} />
+          <span class="space-item-name" title="\${escape(space)}">\${escape(space)}</span>
+        </label>
+      \`).join('');
+
+      return \`
+        <div class="step-header">
+          <span class="step-badge">2/3</span>
+          <span class="step-title">Select CF Space</span>
+        </div>
+        <div class="info-box">Org: <code>\${escape(state.selectedOrg ?? '')}</code></div>
+        \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
+        <div class="section-label">CF Space</div>
+        <div class="space-list">
+          \${items || \`<div class="org-list-empty">No spaces found.</div>\`}
+        </div>
+        <div style="height:10px"></div>
+        <button class="btn" id="btn-next-space" \${!state.selectedSpace ? 'disabled' : ''}>Next &rarr;</button>
+        <div style="height:6px"></div>
+        <button class="btn btn-secondary" id="btn-back-space-org">Back</button>
+      \`;
+    }
+
     function renderSelectFolder() {
       const folderDisplay = state.selectedFolder
         ? \`<div class="info-box" style="word-break:break-all"><code>\${escape(state.selectedFolder)}</code></div>\`
@@ -106,7 +145,10 @@ export function getRendererScriptContent(): string {
           <span class="step-badge">3/3</span>
           <span class="step-title">Select Local Folder</span>
         </div>
-        <div class="info-box">Org: <code>\${escape(state.selectedOrg ?? '')}</code></div>
+        <div class="info-box">
+          Org: <code>\${escape(state.selectedOrg ?? '')}</code><br>
+          Space: <code>\${escape(state.selectedSpace ?? '')}</code>
+        </div>
         \${state.error ? \`<div class="error-box">\${escape(state.error)}</div>\` : ''}
         <div class="section-label">Local Group Folder</div>
         \${folderDisplay}
@@ -119,10 +161,13 @@ export function getRendererScriptContent(): string {
     }
 
     function renderLoadingApps() {
+      const targetText = state.selectedSpace
+        ? state.selectedOrg + ' / ' + state.selectedSpace
+        : state.selectedOrg;
       return \`
         <div style="text-align:center;padding:24px 0">
           <span class="spinner"></span>
-          Loading apps for <strong>\${escape(state.selectedOrg)}</strong>&hellip;
+          Loading apps for <strong>\${escape(targetText)}</strong>&hellip;
         </div>
         <div style="height:16px"></div>
         <button class="btn btn-secondary" id="btn-cancel-load-apps">&#8592; Cancel</button>
@@ -572,6 +617,10 @@ export function getRendererScriptContent(): string {
             <div class="cf-info-row">
               <span class="cf-info-label">Org</span>
               <span class="cf-info-value" title="\${escape(state.selectedOrg ?? '')}">\${escape(state.selectedOrg ?? '')}</span>
+            </div>
+            <div class="cf-info-row">
+              <span class="cf-info-label">Space</span>
+              <span class="cf-info-value" title="\${escape(state.selectedSpace ?? '')}">\${escape(state.selectedSpace ?? '')}</span>
             </div>
           </div>
           <div style="height:8px;flex-shrink:0"></div>

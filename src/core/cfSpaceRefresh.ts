@@ -19,6 +19,7 @@ export function resolveRegionKeyForEndpoint(apiEndpoint: string): RegionKey | un
 export async function refreshCfSyncSpace(input: {
   apiEndpoint: string;
   orgName: string;
+  spaceName?: string;
   email?: string;
   password?: string;
 }): Promise<CfSyncSpaceRefreshResult> {
@@ -30,7 +31,7 @@ export async function refreshCfSyncSpace(input: {
     const result = await syncSpace({
       regionKey,
       orgName: input.orgName,
-      spaceName: CF_DEFAULT_SPACE,
+      spaceName: input.spaceName ?? CF_DEFAULT_SPACE,
       email: input.email,
       password: input.password,
     });

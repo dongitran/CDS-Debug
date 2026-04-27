@@ -12,7 +12,18 @@ vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
 
-import { cfApps, cfLogin, cfOrgs, cfTarget, cfTargetAndApps, cfSshEnabled, cfEnableSsh, cfRestartApp } from '../../src/core/cfClient';
+import {
+  cfApps,
+  cfLogin,
+  cfOrgs,
+  cfSpaces,
+  cfTarget,
+  cfTargetAndApps,
+  cfTargetOrgAndSpaces,
+  cfSshEnabled,
+  cfEnableSsh,
+  cfRestartApp,
+} from '../../src/core/cfClient';
 import type { CfCliError } from '../../src/core/cfClient';
 
 describe('cfClient command wrappers', () => {
@@ -52,6 +63,19 @@ describe('cfClient command wrappers', () => {
     );
   });
 
+  it('cfSpaces parses space names from cf output', async () => {
+    execFileAsyncMock.mockResolvedValue({
+      stdout: ['name', 'app', 'dev'].join('\n'),
+    });
+
+    await expect(cfSpaces()).resolves.toEqual(['app', 'dev']);
+    expect(execFileAsyncMock).toHaveBeenCalledWith(
+      'cf',
+      ['spaces'],
+      expect.objectContaining({ maxBuffer: 10 * 1024 * 1024 }),
+    );
+  });
+
   it('cfTarget uses default and custom spaces', async () => {
     execFileAsyncMock.mockResolvedValue({ stdout: '' });
 
@@ -68,6 +92,27 @@ describe('cfClient command wrappers', () => {
       2,
       'cf',
       ['target', '-o', 'org-main', '-s', 'dev'],
+      expect.any(Object),
+    );
+  });
+
+  it('cfTargetOrgAndSpaces targets org before loading spaces', async () => {
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockResolvedValueOnce({ stdout: ['name', 'app', 'dev'].join('\n') });
+
+    await expect(cfTargetOrgAndSpaces('org-main')).resolves.toEqual(['app', 'dev']);
+
+    expect(execFileAsyncMock).toHaveBeenNthCalledWith(
+      1,
+      'cf',
+      ['target', '-o', 'org-main'],
+      expect.any(Object),
+    );
+    expect(execFileAsyncMock).toHaveBeenNthCalledWith(
+      2,
+      'cf',
+      ['spaces'],
       expect.any(Object),
     );
   });
@@ -111,6 +156,38 @@ describe('cfClient command wrappers', () => {
       1,
       'cf',
       ['target', '-o', 'org-main', '-s', 'app'],
+      expect.any(Object),
+    );
+    expect(execFileAsyncMock).toHaveBeenNthCalledWith(
+      2,
+      'cf',
+      ['apps'],
+      expect.any(Object),
+    );
+  });
+
+  it('cfTargetAndApps targets the selected space before loading apps', async () => {
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockResolvedValueOnce({
+        stdout: [
+          'name requested state processes routes',
+          'svc-dev  started  web:1/1  svc-dev.cfapps.br10.hana.ondemand.com',
+        ].join('\n'),
+      });
+
+    await expect(cfTargetAndApps('org-main', 'dev')).resolves.toEqual([
+      {
+        name: 'svc-dev',
+        state: 'started',
+        urls: ['svc-dev.cfapps.br10.hana.ondemand.com'],
+      },
+    ]);
+
+    expect(execFileAsyncMock).toHaveBeenNthCalledWith(
+      1,
+      'cf',
+      ['target', '-o', 'org-main', '-s', 'dev'],
       expect.any(Object),
     );
     expect(execFileAsyncMock).toHaveBeenNthCalledWith(

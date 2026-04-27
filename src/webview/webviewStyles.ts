@@ -339,7 +339,8 @@ export function getStyles(): string {
       color: var(--vscode-list-activeSelectionForeground);
     }
 
-    .org-list {
+    .org-list,
+    .space-list {
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -347,7 +348,8 @@ export function getStyles(): string {
       overflow-y: auto;
       padding-right: 2px;
     }
-    .org-item {
+    .org-item,
+    .space-item {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -357,20 +359,24 @@ export function getStyles(): string {
       cursor: pointer;
       transition: border-color 0.1s, background 0.1s;
     }
-    .org-item:hover { background: var(--vscode-list-hoverBackground); }
-    .org-item.selected {
+    .org-item:hover,
+    .space-item:hover { background: var(--vscode-list-hoverBackground); }
+    .org-item.selected,
+    .space-item.selected {
       border-color: var(--vscode-focusBorder);
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
     }
-    .org-item input[type=radio] {
+    .org-item input[type=radio],
+    .space-item input[type=radio] {
       position: absolute;
       opacity: 0;
       width: 1px;
       height: 1px;
       pointer-events: none;
     }
-    .org-item-name {
+    .org-item-name,
+    .space-item-name {
       font-family: var(--vscode-editor-font-family);
       font-size: 12px;
       overflow: hidden;
