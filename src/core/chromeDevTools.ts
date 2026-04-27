@@ -152,11 +152,6 @@ function windowsChromePath(basePath: string): string {
   return `${basePath.replace(/[\\/]$/, '')}\\Google\\Chrome\\Application\\chrome.exe`;
 }
 
-function getCmdStartChromeCommand(command: string, url: string): ChromeLaunchCommand | null {
-  if (!isSafeDevToolsFrontendUrl(url)) return null;
-  return { command, args: ['/d', '/s', '/c', `start "" chrome "${url}"`] };
-}
-
 function getWindowsChromeCommands(url: string, env: NodeJS.ProcessEnv): ChromeLaunchCommand[] {
   const commands = ['chrome.exe'];
   const localAppData = env.LOCALAPPDATA;
@@ -167,9 +162,7 @@ function getWindowsChromeCommands(url: string, env: NodeJS.ProcessEnv): ChromeLa
   if (hasEnvValue(programFiles)) commands.push(windowsChromePath(programFiles));
   if (hasEnvValue(programFilesX86)) commands.push(windowsChromePath(programFilesX86));
 
-  const launchCommands = commands.map((command) => toChromeCommand(command, url));
-  const cmdStart = getCmdStartChromeCommand('cmd.exe', url);
-  return cmdStart === null ? launchCommands : [...launchCommands, cmdStart];
+  return commands.map((command) => toChromeCommand(command, url));
 }
 
 function getMacChromeCommands(url: string): ChromeLaunchCommand[] {
@@ -181,16 +174,10 @@ function isWslEnvironment(env: NodeJS.ProcessEnv): boolean {
 }
 
 function getWslWindowsChromeCommands(url: string): ChromeLaunchCommand[] {
-  const commands = [
+  return [
     toChromeCommand('/mnt/c/Program Files/Google/Chrome/Application/chrome.exe', url),
     toChromeCommand('/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe', url),
   ];
-
-  const directCmdStart = getCmdStartChromeCommand('/mnt/c/Windows/System32/cmd.exe', url);
-  const pathCmdStart = getCmdStartChromeCommand('cmd.exe', url);
-  if (directCmdStart !== null && pathCmdStart !== null) return [...commands, directCmdStart, pathCmdStart];
-
-  return commands;
 }
 
 function getLinuxChromeCommands(url: string, env: NodeJS.ProcessEnv): ChromeLaunchCommand[] {

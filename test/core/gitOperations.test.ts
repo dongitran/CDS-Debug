@@ -23,7 +23,7 @@ import {
 const mockExec = vi.mocked(exec) as ReturnType<typeof vi.fn>;
 
 function resolveWith(stdout: string) {
-  mockExec.mockResolvedValueOnce({ stdout, stderr: '' } as never);
+  mockExec.mockResolvedValueOnce({ stdout, stderr: '' });
 }
 
 function rejectWith(message: string) {

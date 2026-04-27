@@ -3428,6 +3428,32 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       });
     });
 
+    test('User can enable auto-open browser on attach from Settings and return to the launcher', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await webview.locator('#btn-gear').click();
+        await expect(webview.getByText('Settings')).toBeVisible();
+        const openBrowserToggle = webview.locator('#chk-open-browser');
+        await expect(openBrowserToggle).not.toBeChecked();
+
+        await openBrowserToggle.check({ force: true });
+        await expect(openBrowserToggle).toBeChecked();
+        await expect(webview.locator('label.pref-row:has(#chk-open-browser) .toggle-switch')).toHaveClass(/on/);
+        await expect(webview.locator('label.pref-row:has(#chk-open-browser) .pref-state-badge.pref-state-on')).toContainText('enabled');
+        await expect.poll(async () => {
+          await postExtensionMessage(webview, { type: 'GET_DEBUG_PREFS' });
+          return webview.locator('#chk-open-browser').isChecked();
+        }).toBe(true);
+
+        await webview.locator('#btn-back-settings').click();
+        await expectReadyScreen(webview);
+        await expect(webview.locator('.active-card')).toHaveCount(0);
+        await expect(webview.locator('#btn-start-debug')).toBeDisabled();
+      });
+    });
+
     test('Breakpoint snapshot handling toggle can be enabled and persists after reopening settings', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);

@@ -512,7 +512,7 @@ function toOpenUri(
   options?: { localRoot?: string },
 ): vscode.Uri {
   if (typeof source.sourceReference === 'number' && source.sourceReference > 0) {
-    return vscode.debug.asDebugSourceUri(source as vscode.DebugProtocolSource, session);
+    return vscode.debug.asDebugSourceUri(source, session);
   }
   const resolvedFilePath = resolveOpenFilePath(source, options?.localRoot);
   if (resolvedFilePath) {

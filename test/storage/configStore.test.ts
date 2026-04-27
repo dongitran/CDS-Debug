@@ -116,13 +116,13 @@ describe('configStore', () => {
   });
 
   it('throws when getConfig is called before initConfigStore', () => {
-    // Simulate uninitialized state by passing undefined (cast through unknown)
-    initConfigStore(undefined as unknown as Parameters<typeof initConfigStore>[0]);
+    // Simulate uninitialized state by passing undefined.
+    initConfigStore(undefined);
     expect(() => getConfig()).toThrow('ConfigStore not initialized');
   });
 
   it('throws when saveConfig is called before initConfigStore', async () => {
-    initConfigStore(undefined as unknown as Parameters<typeof initConfigStore>[0]);
+    initConfigStore(undefined);
     const config: ExtensionConfig = { apiEndpoint: '', orgs: [], orgGroupMappings: [] };
     await expect(saveConfig(config)).rejects.toThrow('ConfigStore not initialized');
   });
