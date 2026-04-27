@@ -18,7 +18,7 @@ import {
   cfSpaces,
   cfTargetOrg,
   cfTargetSpace,
-  cfApps,
+  cfAppDetails,
   getAllRegions,
   cfStructurePath,
 } from '@saptools/cf-sync';
@@ -39,7 +39,7 @@ import {
   saveSyncProgress,
   getCacheSettings,
 } from '../storage/cacheStore';
-import type { CfApp, SyncProgress } from '../types/index';
+import type { CfApp, CfAppState, SyncProgress } from '../types/index';
 import { logInfo, logWarn, logError } from './logger';
 
 export const cacheSyncEvents = new EventEmitter();
@@ -138,8 +138,7 @@ async function collectSpace(
 ): Promise<SpaceNode> {
   try {
     await cfTargetSpace(orgName, spaceName, ctx);
-    const appNames = await cfApps(ctx);
-    const apps: AppNode[] = [...appNames].map((name) => ({ name }));
+    const apps = await cfAppDetails(ctx);
     return buildSpaceNode(spaceName, apps);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -206,9 +205,21 @@ async function collectRegion(
   });
 }
 
+function toCachedAppState(app: AppNode): CfAppState {
+  if (app.requestedState !== 'started') return 'stopped';
+  return (app.runningInstances ?? 0) > 0 ? 'started' : 'empty';
+}
+
+function toCachedApp(app: AppNode): CfApp {
+  return {
+    name: app.name,
+    state: toCachedAppState(app),
+    urls: [...(app.routes ?? [])],
+  };
+}
+
 // Converts a completed cf-sync CfStructure into VS Code globalState app cache entries.
-// Apps are deduped across spaces (same app can exist in multiple spaces); state defaults
-// to 'stopped' since cf-sync only tracks names, not runtime state.
+// Apps are deduped across spaces (same app can exist in multiple spaces).
 export async function populateCacheFromStructure(structure: CfStructure): Promise<void> {
   for (const region of structure.regions) {
     if (!region.accessible) continue;
@@ -222,7 +233,7 @@ export async function populateCacheFromStructure(structure: CfStructure): Promis
         for (const app of space.apps) {
           if (seen.has(app.name)) continue;
           seen.add(app.name);
-          apps.push({ name: app.name, state: 'stopped', urls: [] });
+          apps.push(toCachedApp(app));
         }
       }
       await saveCachedApps(region.apiEndpoint, org.name, apps);

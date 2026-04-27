@@ -48,7 +48,7 @@ vi.mock('@saptools/cf-sync', () => ({
   cfSpaces: vi.fn().mockResolvedValue([]),
   cfTargetOrg: vi.fn().mockResolvedValue(undefined),
   cfTargetSpace: vi.fn().mockResolvedValue(undefined),
-  cfApps: vi.fn().mockResolvedValue([]),
+  cfAppDetails: vi.fn().mockResolvedValue([]),
 }));
 
 import { populateCacheFromStructure, getCurrentSyncProgress } from '../../src/core/cacheSync';
@@ -240,7 +240,7 @@ describe('populateCacheFromStructure', () => {
     expect(okCall?.[2]).toHaveLength(1);
   });
 
-  it('maps all apps with state=stopped and empty urls', async () => {
+  it('maps detailed cf-sync app metadata into debuggable app states and urls', async () => {
     const structure = makeStructure({
       regions: [
         {
@@ -251,7 +251,34 @@ describe('populateCacheFromStructure', () => {
           orgs: [
             {
               name: 'demo-org',
-              spaces: [{ name: 'demo-space', apps: [{ name: 'demo-app-1' }, { name: 'demo-app-2' }] }],
+              spaces: [
+                {
+                  name: 'demo-space',
+                  apps: [
+                    {
+                      name: 'sample-service-started',
+                      requestedState: 'started',
+                      runningInstances: 1,
+                      totalInstances: 1,
+                      routes: ['sample-service-started.cfapps.example.com'],
+                    },
+                    {
+                      name: 'sample-service-empty',
+                      requestedState: 'started',
+                      runningInstances: 0,
+                      totalInstances: 1,
+                      routes: [],
+                    },
+                    {
+                      name: 'sample-service-stopped',
+                      requestedState: 'stopped',
+                      runningInstances: 0,
+                      totalInstances: 1,
+                      routes: ['sample-service-stopped.cfapps.example.com'],
+                    },
+                  ],
+                },
+              ],
             },
           ],
         },
@@ -260,11 +287,44 @@ describe('populateCacheFromStructure', () => {
 
     await populateCacheFromStructure(structure);
 
-    const [, , apps] = vi.mocked(saveCachedApps).mock.calls[0] ?? [];
-    for (const app of apps ?? []) {
-      expect(app.state).toBe('stopped');
-      expect(app.urls).toEqual([]);
-    }
+    expect(saveCachedApps).toHaveBeenCalledWith(EU10_ENDPOINT, 'demo-org', [
+      {
+        name: 'sample-service-started',
+        state: 'started',
+        urls: ['sample-service-started.cfapps.example.com'],
+      },
+      { name: 'sample-service-empty', state: 'empty', urls: [] },
+      {
+        name: 'sample-service-stopped',
+        state: 'stopped',
+        urls: ['sample-service-stopped.cfapps.example.com'],
+      },
+    ]);
+  });
+
+  it('keeps older name-only cf-sync snapshots as stopped for backward compatibility', async () => {
+    const structure = makeStructure({
+      regions: [
+        {
+          key: 'eu10',
+          label: 'Europe (Frankfurt) - AWS (eu10)',
+          apiEndpoint: EU10_ENDPOINT,
+          accessible: true,
+          orgs: [
+            {
+              name: 'demo-org',
+              spaces: [{ name: 'demo-space', apps: [{ name: 'legacy-app' }] }],
+            },
+          ],
+        },
+      ],
+    });
+
+    await populateCacheFromStructure(structure);
+
+    expect(saveCachedApps).toHaveBeenCalledWith(EU10_ENDPOINT, 'demo-org', [
+      { name: 'legacy-app', state: 'stopped', urls: [] },
+    ]);
   });
 });
 
