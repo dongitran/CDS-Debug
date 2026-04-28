@@ -15,6 +15,7 @@ export function getPackageBrowserStyles(): string {
       border: 1px solid var(--vscode-panel-border);
       border-radius: 6px;
       background: var(--vscode-editorGroupHeader-tabsBackground);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
 
     .packages-loading,
@@ -30,6 +31,7 @@ export function getPackageBrowserStyles(): string {
       color: var(--vscode-descriptionForeground);
       text-align: center;
       font-size: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
 
     .packages-loading {

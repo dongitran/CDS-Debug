@@ -177,7 +177,8 @@ export function getStyles(): string {
       cursor: pointer;
       font: inherit;
       font-size: 12px;
-      transition: color 0.15s, background 0.15s, font-weight 0.15s;
+      font-weight: 400;
+      transition: color 0.15s, background 0.15s;
     }
     .selector-tab:hover {
       color: var(--vscode-foreground);
@@ -353,6 +354,7 @@ export function getStyles(): string {
     .org-search-row.selected {
       color: var(--vscode-list-activeSelectionForeground);
       background: var(--vscode-list-activeSelectionBackground);
+      box-shadow: inset 3px 0 0 var(--vscode-focusBorder);
     }
     .org-search-row.selected .org-search-meta {
       color: inherit;
@@ -474,6 +476,7 @@ export function getStyles(): string {
       border-radius: 4px;
       font-size: 12px;
       margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
 
     .warning-box {
@@ -484,6 +487,7 @@ export function getStyles(): string {
       font-size: 12px;
       line-height: 1.5;
       margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     .warning-box code {
       font-family: var(--vscode-editor-font-family);
@@ -645,12 +649,14 @@ export function getStyles(): string {
       animation: slideIn 0.25s ease;
       transition: border-left-color 0.2s, box-shadow 0.2s;
     }
-    /* Status-specific left border accent */
+    /* Status-specific left border accent + subtle background tint */
     .active-card[data-status="attached"] {
       border-left-color: var(--vscode-testing-iconPassed);
+      background: color-mix(in srgb, var(--vscode-testing-iconPassed) 5%, var(--vscode-editorGroupHeader-tabsBackground));
     }
     .active-card[data-status="error"] {
       border-left-color: var(--vscode-testing-iconFailed);
+      background: color-mix(in srgb, var(--vscode-testing-iconFailed) 5%, var(--vscode-editorGroupHeader-tabsBackground));
     }
     .active-card[data-status="tunneling"],
     .active-card[data-status="pending"],
@@ -928,6 +934,7 @@ export function getStyles(): string {
       border-radius: 6px;
       overflow: hidden;
       background: var(--vscode-editorGroupHeader-tabsBackground);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
     }
     .bp-list {
       display: flex;
@@ -1051,9 +1058,12 @@ export function getStyles(): string {
       display: flex;
       align-items: flex-start;
       gap: 12px;
-      padding: 8px 0;
+      padding: 8px 4px;
       cursor: pointer;
+      border-radius: 4px;
+      transition: background 0.12s;
     }
+    .pref-row:hover { background: var(--vscode-list-hoverBackground); }
     .pref-row-content { flex: 1; min-width: 0; }
     .pref-row-title {
       display: block;
@@ -1183,6 +1193,7 @@ export function getStyles(): string {
       border: 1px solid var(--vscode-panel-border);
       border-radius: 6px;
       padding: 8px 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
       animation: slideIn 0.25s ease;
       transition: border-color 0.2s;
     }
