@@ -14,7 +14,9 @@
   "words": [
     "sap",
     "btp",
+    "cf",
     "cds",
+    "dgimsuvy",
     "srv",
     "org",
     "orgs",
@@ -24,6 +26,7 @@
     "esbuild",
     "tseslint",
     "vscode",
+    "vcap",
     "webview",
     "webviews",
     "tsconfig",
@@ -42,6 +45,7 @@
     "dirent",
     "fsync",
     "mkdir",
+    "maxdepth",
     "rmdir",
     "cfclient",
     "promisify",
@@ -133,6 +137,7 @@
     "pkill",
     "localappdata",
     "saptools",
-    "sapcloud"
+    "sapcloud",
+    "usr"
   ]
 }

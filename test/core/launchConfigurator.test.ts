@@ -182,6 +182,32 @@ describe('generateLaunchConfigurations', () => {
     expect(configs[0]?.remoteRoot).toBe('/home/vcap/fallback');
   });
 
+  it('uses a resolved remoteRoot when the selected config is regex-based', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations(
+      [firstTarget],
+      { remoteRoot: 'regex:^/(usr/)?sample-service-a$' },
+      { resolvedRemoteRoots: new Map([[firstTarget.appName, '/usr/sample-service-a']]) },
+    );
+
+    expect(configs[0]?.remoteRoot).toBe('/usr/sample-service-a');
+  });
+
+  it('does not write unresolved regex remoteRoot values into launch.json', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget], {
+      remoteRoot: 'regex:^/(usr/)?sample-service-a$',
+    });
+
+    expect('remoteRoot' in (configs[0] ?? {})).toBe(false);
+  });
+
   it('app-level remoteRoot takes priority over workspace fallback', async () => {
     vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ remoteRoot: '/home/vcap/app-level' })); // cspell:ignore vcap
 
@@ -189,6 +215,20 @@ describe('generateLaunchConfigurations', () => {
     if (!firstTarget) throw new Error('TARGETS[0] must exist');
     const configs = await generateLaunchConfigurations([firstTarget], { remoteRoot: '/home/vcap/workspace-level' });
     expect(configs[0]?.remoteRoot).toBe('/home/vcap/app-level');
+  });
+
+  it('does not let a resolved regex override an app-level literal remoteRoot', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ remoteRoot: '/sample/app-literal' }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations(
+      [firstTarget],
+      { remoteRoot: 'regex:^/(usr/)?sample-service-a$' },
+      { resolvedRemoteRoots: new Map([[firstTarget.appName, '/usr/sample-service-a']]) },
+    );
+
+    expect(configs[0]?.remoteRoot).toBe('/sample/app-literal');
   });
 });
 

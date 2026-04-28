@@ -209,6 +209,38 @@ mock-service-b   stopped   0/1   mock-service-b.cfapps.example.com
 mock-service-c   started   2/2   mock-service-c.cfapps.example.com
 OUT
     ;;
+  ssh)
+    app_name="\${2:-}"
+    ssh_mode="\${3:-}"
+    ssh_command="\${4:-}"
+    if [[ "$ssh_mode" == "-c" && "$ssh_command" == *package.json* ]]; then
+      case "$app_name" in
+        mock-service-a)
+          cat <<'OUT'
+/opt/sample-service-b/package.json
+/usr/sample-service-a/package.json
+/usr/sample-service-a/nested/package.json
+OUT
+          ;;
+        mock-service-c)
+          cat <<'OUT'
+/usr/sample-service-c/package.json
+OUT
+          ;;
+      esac
+      exit 0
+    fi
+    if [[ "$ssh_mode" == "-c" ]]; then
+      echo "OK"
+      exit 0
+    fi
+    if [[ "$ssh_mode" == "-L" ]]; then
+      sleep 1
+      exit 0
+    fi
+    echo "mock cf: unsupported ssh invocation for $app_name" >&2
+    exit 1
+    ;;
   ssh-enabled)
     echo "ssh support is enabled for app \${2:-}"
     ;;
@@ -1279,6 +1311,37 @@ test.describe('CAP Debug Config Precedence E2E', () => {
               remoteRoot: '/sample/workspace-root',
             },
           ]);
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+
+  test('User can resolve regex remoteRoot to the matching CF service folder', async () => {
+    const workspaceDir = await createWorkspaceForCapConfigTest({});
+
+    try {
+      await withVsCodeSession(
+        {
+          credentialMode: 'env',
+          cfScenario: 'success',
+          userSettings: {
+            'cdsDebug.sharedCapDebugConfig': {
+              remoteRoot: 'regex:^/(usr/)?sample-service-a$',
+            },
+          },
+        },
+        async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await startDebugForApp(webview, 'mock-service-a');
+
+          await expect.poll(
+            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            { timeout: 15_000 },
+          ).toBe('/usr/sample-service-a');
         },
         workspaceDir,
       );

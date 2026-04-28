@@ -23,6 +23,7 @@ import {
   cfSshEnabled,
   cfEnableSsh,
   cfRestartApp,
+  cfFindRemotePackageJsonPaths,
 } from '../../src/core/cfClient';
 import type { CfCliError } from '../../src/core/cfClient';
 
@@ -195,6 +196,40 @@ describe('cfClient command wrappers', () => {
       'cf',
       ['apps'],
       expect.any(Object),
+    );
+  });
+
+  it('cfFindRemotePackageJsonPaths lists package.json candidates through cf ssh', async () => {
+    execFileAsyncMock.mockResolvedValue({
+      stdout: [
+        '/usr/sample-service-a/package.json',
+        '/sample-service-a/package.json',
+      ].join('\n'),
+    });
+
+    await expect(cfFindRemotePackageJsonPaths('mock-service-a')).resolves.toEqual([
+      '/usr/sample-service-a/package.json',
+      '/sample-service-a/package.json',
+    ]);
+
+    expect(execFileAsyncMock).toHaveBeenCalledWith(
+      'cf',
+      ['ssh', 'mock-service-a', '-c', expect.stringContaining('find / -maxdepth')],
+      expect.objectContaining({ maxBuffer: 10 * 1024 * 1024 }),
+    );
+  });
+
+  it('cfFindRemotePackageJsonPaths preserves isolated CF_HOME when provided', async () => {
+    execFileAsyncMock.mockResolvedValue({ stdout: '/usr/sample-service-a/package.json\n' });
+
+    await cfFindRemotePackageJsonPaths('mock-service-a', '/tmp/sample-cf-home');
+
+    expect(execFileAsyncMock).toHaveBeenCalledWith(
+      'cf',
+      ['ssh', 'mock-service-a', '-c', expect.any(String)],
+      expect.objectContaining({
+        env: expect.objectContaining({ CF_HOME: '/tmp/sample-cf-home' }),
+      }),
     );
   });
 

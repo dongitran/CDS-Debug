@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.32-pre.17",
+  "version": "0.3.32-pre.18",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -77,7 +77,7 @@
           "properties": {
             "remoteRoot": {
               "type": "string",
-              "markdownDescription": "Remote source root used for generated attach configurations."
+              "markdownDescription": "Remote source root used for generated attach configurations. Use a fixed path such as `/home/vcap/app`, or an explicit regex with `regex:<pattern>` or `/pattern/flags`; regex values are resolved per CF app through `cf ssh` before debugging starts."
             },
             "branch": {
               "type": "string",

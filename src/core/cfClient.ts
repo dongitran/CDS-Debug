@@ -11,6 +11,13 @@ const MAX_BUFFER = 10 * 1024 * 1024;
 // never gets an error, so the extension appears frozen (e.g. "Preparing…" stuck).
 // 30 s is generous for interactive commands; cfRestartApp uses its own 120 s limit.
 const CF_CLI_TIMEOUT_MS = 30_000;
+const REMOTE_PACKAGE_JSON_FIND_COMMAND = [
+  'find / -maxdepth 7',
+  "\\( -path '*/node_modules' -o -path /proc -o -path /sys -o -path /dev \\) -prune -o",
+  '-type f',
+  '-name package.json',
+  '-print 2>/dev/null',
+].join(' ');
 
 export class CfCliError extends Error {
   public readonly stderr: string;
@@ -155,6 +162,14 @@ export async function cfTargetAndApps(
 ): Promise<CfApp[]> {
   await cfTarget(org, space, cfHome);
   return cfApps(cfHome);
+}
+
+export async function cfFindRemotePackageJsonPaths(appName: string, cfHome?: string): Promise<string[]> {
+  const stdout = await runCf(['ssh', appName, '-c', REMOTE_PACKAGE_JSON_FIND_COMMAND], cfHome);
+  return stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 export async function cfSshEnabled(appName: string, cfHome?: string): Promise<boolean> {

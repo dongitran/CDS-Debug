@@ -11,6 +11,14 @@ This folder contains a standalone E2E harness for the `cds-debug` VS Code extens
 ## Coverage
 Current suite validates end-to-end user behavior with comprehensive per-screen element verification.
 
+### Launch JSON and CAP Debug Config (6 tests)
+1. User can reopen VS Code and stale CDS launch configs are cleaned while manual configs are kept.
+2. User setting overrides workspace cap config when generating launch.json.
+3. Workspace cap config is used when no user setting is configured.
+4. User can resolve regex remoteRoot to the matching CF service folder.
+5. Per-service cap config overrides both user setting and workspace fallback.
+6. Malformed user setting falls back to workspace cap config.
+
 ### Onboarding and Launcher (19 tests)
 1. User can login and see mocked CF org list — verifies all REGION elements (step-badge 1/3, searchable scrollable 41-region list, representative region radio inputs, endpoint `.radio-desc`) and SELECT_ORG elements (step-badge 2/3, info-box, section label, disabled Next button, back button, `.org-item` labels with radio inputs).
 2. User can keep org search hidden until synced topology is ready.
@@ -88,6 +96,7 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
   - `env` mode injects `SAP_EMAIL` and `SAP_PASSWORD`.
   - `none` mode clears both variables.
 - Cloud Foundry CLI is mocked by creating a temporary `cf` binary and prepending it to `PATH`.
+- `cf ssh -c` is mocked for remote `package.json` discovery, so regex `remoteRoot` E2E tests never call a real CF app.
 - Scenarios include:
   - `success`
   - `auth-fail`

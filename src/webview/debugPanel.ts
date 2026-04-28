@@ -32,6 +32,11 @@ import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, buildFallbackTargets, getFolderNameCandidates } from '../core/appMapper';
 import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig } from '../core/launchConfigurator';
 import { resolveSharedCapDebugConfig } from '../core/capDebugConfig';
+import {
+  parseRemoteRootSetting,
+  resolveRemoteRootForApp,
+  type RemoteRootResolution,
+} from '../core/remoteRootResolver';
 import { getConfig, mappingMatchesTarget, saveConfig, upsertOrgMappings } from '../storage/configStore';
 import {
   clearCredentialsFromSecretStorage,
@@ -109,6 +114,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private readonly packageEntriesByApp = new Map<string, LoadedPackageEntry[]>();
   private readonly packageSearchIndexByApp = new Map<string, PackageSearchIndex>();
+  private readonly resolvedRemoteRoots = new Map<string, string>();
+  private remoteRootWarmupGeneration = 0;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     debugProcessEvents.on('statusChanged', (payload: { appName: string, status: string, message?: string }) => {
@@ -624,6 +631,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     // Serve from background cache when enabled and fresh (within configured interval).
     const cacheSettings = getCacheSettings();
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? mapping.groupFolderPath;
     if (!forceRefresh && cacheSettings.enabled) {
       const cached = getCachedApps(config.apiEndpoint, org, space);
       if (cached) {
@@ -635,7 +643,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
           // Warm up the CF session in the background so that handleStartDebug
           // never hits an expired token when the app list came from cache.
           // Failures are silently retried with a full re-login.
-          void this.ensureCfSession(config.apiEndpoint, org, space);
+          this.startRemoteRootWarmupAfterSession(config.apiEndpoint, org, space, mapping.groupFolderPath, workspaceRoot, cached.apps);
           return;
         }
       }
@@ -653,6 +661,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const started = apps.filter((a) => a.state === 'started').length;
       logInfo(`Apps loaded: ${apps.length.toString()} total, ${started.toString()} started.`);
       this.postMessage({ type: 'APPS_LOADED', payload: { apps } });
+      this.startRemoteRootWarmup(config.apiEndpoint, org, space, mapping.groupFolderPath, workspaceRoot, apps);
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Failed to load apps for ${org}/${space}: ${msg}`);
@@ -705,6 +714,193 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async resolveLocalFolderPath(groupPath: string, appName: string): Promise<string | null> {
+    for (const candidate of getFolderNameCandidates(appName)) {
+      const folderPath = await findRepoFolder(groupPath, candidate);
+      if (folderPath !== null) return folderPath;
+    }
+    return null;
+  }
+
+  private startRemoteRootWarmup(
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    workspaceRoot: string,
+    apps: readonly CfApp[],
+  ): void {
+    const generation = this.nextRemoteRootWarmupGeneration();
+    this.runRemoteRootWarmupInBackground(generation, apiEndpoint, org, space, groupPath, workspaceRoot, apps);
+  }
+
+  private startRemoteRootWarmupAfterSession(
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    workspaceRoot: string,
+    apps: readonly CfApp[],
+  ): void {
+    const generation = this.nextRemoteRootWarmupGeneration();
+    void this.ensureCfSession(apiEndpoint, org, space)
+      .then(() => {
+        if (generation !== this.remoteRootWarmupGeneration) return;
+        this.runRemoteRootWarmupInBackground(generation, apiEndpoint, org, space, groupPath, workspaceRoot, apps);
+      });
+  }
+
+  private nextRemoteRootWarmupGeneration(): number {
+    const generation = this.remoteRootWarmupGeneration + 1;
+    this.remoteRootWarmupGeneration = generation;
+    return generation;
+  }
+
+  private runRemoteRootWarmupInBackground(
+    generation: number,
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    workspaceRoot: string,
+    apps: readonly CfApp[],
+  ): void {
+    void this.runRemoteRootWarmup(generation, apiEndpoint, org, space, groupPath, workspaceRoot, apps)
+      .catch((err: unknown) => {
+        logWarn(`[RemoteRoot] Warmup failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+  }
+
+  private async runRemoteRootWarmup(
+    generation: number,
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    workspaceRoot: string,
+    apps: readonly CfApp[],
+  ): Promise<void> {
+    const fallbackConfig = await resolveSharedCapDebugConfig(workspaceRoot);
+    for (const app of apps) {
+      if (generation !== this.remoteRootWarmupGeneration) return;
+      if (app.state !== 'started') continue;
+      await this.warmRemoteRootForApp(generation, apiEndpoint, org, space, groupPath, app.name, fallbackConfig);
+    }
+  }
+
+  private async warmRemoteRootForApp(
+    generation: number,
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    appName: string,
+    fallbackConfig: CapDebugConfig | null,
+  ): Promise<void> {
+    const folderPath = await this.resolveLocalFolderPath(groupPath, appName);
+    const target = { appName, folderPath: folderPath ?? groupPath, port: 0, noLocalFolder: folderPath === null };
+    const configuredRemoteRoot = await this.getConfiguredRemoteRoot(target, fallbackConfig);
+    if (configuredRemoteRoot === undefined) return;
+    const setting = parseRemoteRootSetting(configuredRemoteRoot);
+    if (setting.kind === 'invalid-regex') {
+      logWarn(`[RemoteRoot] ${appName}: invalid regex (${setting.error})`);
+      return;
+    }
+    if (setting.kind !== 'regex') return;
+
+    try {
+      const result = await resolveRemoteRootForApp(appName, configuredRemoteRoot);
+      if (generation !== this.remoteRootWarmupGeneration) return;
+      this.storeResolvedRemoteRoot(apiEndpoint, org, space, appName, configuredRemoteRoot, result);
+    } catch (err: unknown) {
+      logWarn(`[RemoteRoot] ${appName}: warmup failed (${extractErrorMessage(err)})`);
+    }
+  }
+
+  private async getConfiguredRemoteRoot(
+    target: DebugTarget,
+    fallbackConfig: CapDebugConfig | null,
+  ): Promise<string | undefined> {
+    const appConfig = target.noLocalFolder === true ? null : await readCapDebugConfig(target.folderPath);
+    return appConfig?.remoteRoot ?? fallbackConfig?.remoteRoot;
+  }
+
+  private async resolveRemoteRootsForTargets(
+    targets: readonly DebugTarget[],
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    fallbackConfig: CapDebugConfig | null,
+  ): Promise<Map<string, string>> {
+    const resolved = new Map<string, string>();
+    for (const target of targets) {
+      const configuredRemoteRoot = await this.getConfiguredRemoteRoot(target, fallbackConfig);
+      await this.resolveRemoteRootForTarget(target, apiEndpoint, org, space, configuredRemoteRoot, resolved);
+    }
+    return resolved;
+  }
+
+  private async resolveRemoteRootForTarget(
+    target: DebugTarget,
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    configuredRemoteRoot: string | undefined,
+    resolved: Map<string, string>,
+  ): Promise<void> {
+    if (configuredRemoteRoot === undefined) return;
+    const setting = parseRemoteRootSetting(configuredRemoteRoot);
+    if (setting.kind === 'invalid-regex') {
+      logWarn(`[RemoteRoot] ${target.appName}: invalid regex (${setting.error})`);
+      return;
+    }
+    if (setting.kind !== 'regex') return;
+
+    const cacheKey = this.remoteRootCacheKey(apiEndpoint, org, space, target.appName, configuredRemoteRoot);
+    const cached = this.resolvedRemoteRoots.get(cacheKey);
+    if (cached !== undefined) {
+      resolved.set(target.appName, cached);
+      return;
+    }
+
+    try {
+      const result = await resolveRemoteRootForApp(target.appName, configuredRemoteRoot);
+      this.storeResolvedRemoteRoot(apiEndpoint, org, space, target.appName, configuredRemoteRoot, result);
+      if (result.status === 'resolved') resolved.set(target.appName, result.remoteRoot);
+    } catch (err: unknown) {
+      logWarn(`[RemoteRoot] ${target.appName}: on-demand lookup failed (${extractErrorMessage(err)})`);
+    }
+  }
+
+  private storeResolvedRemoteRoot(
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    appName: string,
+    configuredRemoteRoot: string,
+    result: RemoteRootResolution,
+  ): void {
+    if (result.status === 'resolved') {
+      const cacheKey = this.remoteRootCacheKey(apiEndpoint, org, space, appName, configuredRemoteRoot);
+      this.resolvedRemoteRoots.set(cacheKey, result.remoteRoot);
+      logInfo(`[RemoteRoot] ${appName} resolved to ${result.remoteRoot}`);
+      return;
+    }
+    if (result.status !== 'literal' && result.status !== 'none') {
+      logWarn(`[RemoteRoot] ${appName}: ${describeRemoteRootResolution(result)}`);
+    }
+  }
+
+  private remoteRootCacheKey(
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    appName: string,
+    configuredRemoteRoot: string,
+  ): string {
+    return JSON.stringify([apiEndpoint, org, space, appName, configuredRemoteRoot]);
+  }
+
   private async handleStartDebug(appNames: string[], org: string, space: string): Promise<void> {
     const config = getConfig();
     if (!config) return;
@@ -751,11 +947,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     logInfo(`[StartDebug] Resolving local folders under: ${groupPath}`);
     const resolvedPaths: string[] = [];
     for (const appName of appNames) {
-      let folderPath: string | null = null;
-      for (const candidate of getFolderNameCandidates(appName)) {
-        folderPath = await findRepoFolder(groupPath, candidate);
-        if (folderPath !== null) break;
-      }
+      const folderPath = await this.resolveLocalFolderPath(groupPath, appName);
 
       if (folderPath !== null) {
         resolvedPaths.push(folderPath);
@@ -791,7 +983,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       // Source maps won't resolve, but the SSH tunnel and debug console will work.
       logWarn(`No local folder found for any selected app. Starting debug in console-only mode (no source maps).`);
       const fallbackTargets = buildFallbackTargets(unmapped, workspaceRoot, existingPorts, usedPorts);
-      await this.launchDebugSessions(fallbackTargets, workspaceRoot, [], sharedCapConfig);
+      const resolvedRemoteRoots = await this.resolveRemoteRootsForTargets(
+        fallbackTargets,
+        config.apiEndpoint,
+        org,
+        space,
+        sharedCapConfig,
+      );
+      await this.launchDebugSessions(fallbackTargets, workspaceRoot, [], sharedCapConfig, resolvedRemoteRoots);
       return;
     }
 
@@ -829,7 +1028,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped, sharedCapConfig);
+    const resolvedRemoteRoots = await this.resolveRemoteRootsForTargets(
+      finalTargets,
+      config.apiEndpoint,
+      org,
+      space,
+      sharedCapConfig,
+    );
+    await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped, sharedCapConfig, resolvedRemoteRoots);
   }
 
   /**
@@ -1030,9 +1236,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     workspaceRoot: string,
     unmapped: string[],
     fallbackConfig: CapDebugConfig | null,
+    resolvedRemoteRoots: ReadonlyMap<string, string>,
   ): Promise<void> {
     logInfo(`[StartDebug] Merging launch.json for ${targets.length.toString()} target(s)…`);
-    await mergeLaunchJson(workspaceRoot, targets, fallbackConfig);
+    await mergeLaunchJson(workspaceRoot, targets, fallbackConfig, { resolvedRemoteRoots });
     logInfo(`Updated .vscode/launch.json with ${targets.length.toString()} config(s).`);
 
     const ports: Record<string, number> = {};
@@ -1239,6 +1446,21 @@ function toSafeHttpUri(rawUrl: string): vscode.Uri | null {
     return vscode.Uri.parse(parsed.toString());
   } catch {
     return null;
+  }
+}
+
+function describeRemoteRootResolution(result: RemoteRootResolution): string {
+  switch (result.status) {
+    case 'invalid-regex':
+      return `invalid regex (${result.error})`;
+    case 'unmatched':
+      return `no remote folder matched ${result.pattern}`;
+    case 'none':
+      return 'remoteRoot is not configured';
+    case 'literal':
+      return `literal remoteRoot ${result.remoteRoot}`;
+    case 'resolved':
+      return `resolved remoteRoot ${result.remoteRoot}`;
   }
 }
 

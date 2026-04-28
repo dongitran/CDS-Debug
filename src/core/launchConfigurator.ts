@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import type { CapDebugConfig, DebugTarget, LaunchConfiguration, LaunchJson } from '../types/index';
 import { readCapDebugConfig } from './capDebugConfig';
+import { parseRemoteRootSetting } from './remoteRootResolver';
 
 export { readCapDebugConfig } from './capDebugConfig';
 
@@ -9,6 +10,10 @@ const LAUNCH_JSON_VERSION = '0.2.0';
 const GENERATED_SRV_PATH = 'gen/srv';
 const SKIP_FILES = ['<node_internals>/**'];
 export const DEBUG_CONFIG_PREFIX = 'Debug: ';
+
+export interface LaunchGenerationOptions {
+  resolvedRemoteRoots?: ReadonlyMap<string, string>;
+}
 
 let launchJsonLock = Promise.resolve();
 
@@ -58,12 +63,14 @@ export function buildLaunchConfiguration(
 export async function generateLaunchConfigurations(
   targets: DebugTarget[],
   fallbackConfig: CapDebugConfig | null = null,
+  options: LaunchGenerationOptions = {},
 ): Promise<LaunchConfiguration[]> {
   const configs: LaunchConfiguration[] = [];
   for (const target of targets) {
     const appConfig = await readCapDebugConfig(target.folderPath);
     // Per-app config takes priority; workspace-level .vscode/cap-debug-config.json is the fallback
-    const remoteRoot = appConfig?.remoteRoot ?? fallbackConfig?.remoteRoot;
+    const configuredRemoteRoot = appConfig?.remoteRoot ?? fallbackConfig?.remoteRoot;
+    const remoteRoot = resolveLaunchRemoteRoot(configuredRemoteRoot, options.resolvedRemoteRoots?.get(target.appName));
     configs.push(buildLaunchConfiguration(target, remoteRoot));
   }
   return configs;
@@ -85,10 +92,11 @@ export async function mergeLaunchJson(
   workspacePath: string,
   targets: DebugTarget[],
   fallbackConfig: CapDebugConfig | null = null,
+  options: LaunchGenerationOptions = {},
 ): Promise<void> {
   return withLock(async () => {
     const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
-    const newConfigs = await generateLaunchConfigurations(targets, fallbackConfig);
+    const newConfigs = await generateLaunchConfigurations(targets, fallbackConfig, options);
     const newNames = new Set(newConfigs.map((c) => c.name));
 
     const existing = await getExistingLaunchConfigs(workspacePath);
@@ -102,6 +110,16 @@ export async function mergeLaunchJson(
     await mkdir(dirname(launchJsonPath), { recursive: true });
     await writeFile(launchJsonPath, JSON.stringify(merged, null, 2) + '\n', 'utf8');
   });
+}
+
+function resolveLaunchRemoteRoot(
+  configuredRemoteRoot: string | undefined,
+  resolvedRemoteRoot: string | undefined,
+): string | undefined {
+  const setting = parseRemoteRootSetting(configuredRemoteRoot);
+  if (setting.kind === 'literal') return setting.value;
+  if (setting.kind === 'regex') return resolvedRemoteRoot;
+  return undefined;
 }
 
 // Removes configurations with the given debug names (e.g. "Debug: my-app")

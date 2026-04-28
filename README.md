@@ -102,6 +102,16 @@ If you reuse the same CAP debug settings across many workspaces, add this to you
 }
 ```
 
+`remoteRoot` can also be resolved per app when services are deployed under different folders. Use an explicit regex with `regex:<pattern>` or `/pattern/flags`; CDS Debug runs a safe `cf ssh` lookup, checks remote `package.json` folder candidates locally against the regex, and writes the concrete matching folder to `launch.json`.
+
+```json
+{
+  "cdsDebug.sharedCapDebugConfig": {
+    "remoteRoot": "regex:^/(usr/)?sample-service-[a-z]+$"
+  }
+}
+```
+
 Precedence is:
 
 1. per-service `cap-debug-config.json`
