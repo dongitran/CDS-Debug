@@ -61,6 +61,7 @@ export function getPackageBrowserStyles(): string {
       cursor: pointer;
       text-align: left;
       font-size: 12px;
+      transition: background 0.1s, border-color 0.1s;
     }
 
     .packages-tree-row:hover {
@@ -79,6 +80,7 @@ export function getPackageBrowserStyles(): string {
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
       border-color: var(--vscode-focusBorder);
+      box-shadow: inset 3px 0 0 var(--vscode-focusBorder);
     }
 
     .packages-tree-package-row {
@@ -112,7 +114,7 @@ export function getPackageBrowserStyles(): string {
       border-bottom: 4px solid transparent;
       border-left: 5px solid var(--vscode-descriptionForeground);
       transform-origin: 2px 4px;
-      transition: transform 0.12s ease;
+      transition: transform 0.14s ease;
     }
 
     .packages-tree-disclosure.expanded::before {
@@ -287,10 +289,12 @@ export function getPackageBrowserStyles(): string {
       color: var(--vscode-button-secondaryForeground);
       font-size: 11px;
       line-height: 1;
+      transition: background 0.15s, box-shadow 0.15s;
     }
 
     .packages-refresh-btn:hover:not(:disabled) {
       background: var(--vscode-button-secondaryHoverBackground);
+      box-shadow: 0 2px 5px rgba(0,0,0,0.14);
     }
 
     .packages-refresh-btn:disabled {

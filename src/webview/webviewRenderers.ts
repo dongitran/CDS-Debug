@@ -401,7 +401,7 @@ export function getRendererScriptContent(): string {
       \` : '';
 
       return \`
-        <div class="active-card" data-app-name="\${escape(appName)}">
+        <div class="active-card" data-app-name="\${escape(appName)}" data-status="\${escape((session.status || '').toLowerCase())}">
           <div class="active-card-main">
             <div class="active-card-title" title="\${escape(appName)}">\${escape(appName)}\${portText}</div>
             <div class="active-card-status">\${getStatusInnerHtml(session)}</div>
@@ -471,6 +471,8 @@ export function getRendererScriptContent(): string {
           const newHtml = getStatusInnerHtml(session);
           if (statusEl.innerHTML !== newHtml) statusEl.innerHTML = newHtml;
         }
+        // Keep data-status in sync for CSS status-accent styling
+        card.dataset.status = (session.status || '').toLowerCase();
 
         const existingPackagesBtn = card.querySelector('[data-packages-app]');
         const stopBtn = card.querySelector('[data-stop-app]');

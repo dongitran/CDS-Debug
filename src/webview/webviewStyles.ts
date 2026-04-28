@@ -20,6 +20,7 @@ export function getStyles(): string {
       padding: 12px;
       display: flex;
       flex-direction: column;
+      -webkit-font-smoothing: antialiased;
     }
 
     #app {
@@ -56,6 +57,7 @@ export function getStyles(): string {
       margin: 14px 0 6px;
     }
 
+    /* ── Buttons ── */
     .btn {
       display: block;
       width: 100%;
@@ -68,16 +70,31 @@ export function getStyles(): string {
       font-size: var(--vscode-font-size);
       font-family: var(--vscode-font-family);
       text-align: center;
-      transition: background 0.2s;
+      font-weight: 500;
+      transition: background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.18);
     }
-    .btn:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
+      transform: translateY(-1px);
+      box-shadow: 0 3px 7px rgba(0,0,0,0.22);
+    }
+    .btn:active:not(:disabled) {
+      transform: translateY(0);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
     .btn-secondary {
       background: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
+      box-shadow: none;
     }
-    .btn-secondary:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground); }
+    .btn-secondary:hover:not(:disabled) {
+      background: var(--vscode-button-secondaryHoverBackground);
+      box-shadow: 0 2px 5px rgba(0,0,0,0.14);
+    }
 
+    /* ── Input ── */
     .input {
       width: 100%;
       background: var(--vscode-input-background);
@@ -88,10 +105,14 @@ export function getStyles(): string {
       font-size: var(--vscode-font-size);
       font-family: var(--vscode-font-family);
       outline: none;
-      transition: border-color 0.2s;
+      transition: border-color 0.18s, box-shadow 0.18s;
     }
-    .input:focus { border-color: var(--vscode-focusBorder); }
+    .input:focus {
+      border-color: var(--vscode-focusBorder);
+      box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+    }
 
+    /* ── Select ── */
     .select {
       width: 100%;
       background: var(--vscode-dropdown-background);
@@ -103,6 +124,7 @@ export function getStyles(): string {
       font-family: var(--vscode-font-family);
     }
 
+    /* ── Radio group ── */
     .radio-group { display: flex; flex-direction: column; gap: 6px; }
     .radio-item {
       display: flex;
@@ -112,11 +134,13 @@ export function getStyles(): string {
       padding: 6px 8px;
       border-radius: 4px;
       border: 1px solid var(--vscode-input-border, transparent);
+      transition: border-color 0.15s, background 0.15s;
     }
     .radio-item:hover { background: var(--vscode-list-hoverBackground); }
     .radio-item input[type=radio] { cursor: pointer; }
     .radio-desc { font-size: 11px; color: var(--vscode-descriptionForeground); }
 
+    /* ── Region layout ── */
     .region-layout {
       display: flex;
       flex-direction: column;
@@ -132,6 +156,8 @@ export function getStyles(): string {
     .region-layout > .btn {
       flex-shrink: 0;
     }
+
+    /* ── Region selector tabs ── */
     .region-selector-tabs {
       display: flex;
       gap: 4px;
@@ -151,6 +177,7 @@ export function getStyles(): string {
       cursor: pointer;
       font: inherit;
       font-size: 12px;
+      transition: color 0.15s, background 0.15s, font-weight 0.15s;
     }
     .selector-tab:hover {
       color: var(--vscode-foreground);
@@ -159,7 +186,10 @@ export function getStyles(): string {
     .selector-tab.active {
       color: var(--vscode-list-activeSelectionForeground);
       background: var(--vscode-list-activeSelectionBackground);
+      font-weight: 600;
     }
+
+    /* ── Search input ── */
     .search-input-wrap {
       position: relative;
       width: 100%;
@@ -184,6 +214,8 @@ export function getStyles(): string {
       height: 14px;
       fill: currentColor;
     }
+
+    /* ── Region list ── */
     .region-list {
       display: flex;
       flex-direction: column;
@@ -272,7 +304,7 @@ export function getStyles(): string {
       text-align: center;
     }
 
-    /* Cross-region org search shown in the Org tab when cf-sync has data. */
+    /* ── Cross-region org search ── */
     .org-search-block {
       display: flex;
       flex-direction: column;
@@ -344,8 +376,8 @@ export function getStyles(): string {
       flex-shrink: 0;
     }
 
-    /* flex:1 + min-height:0 lets it fill whatever space .ready-layout has left after
-       the active-sessions-panel, CF info box, search bar, and footer claim their rows */
+    /* ── App list ── */
+    /* flex:1 + min-height:0 lets it fill whatever space .ready-layout has left */
     .app-list { display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
     .app-row {
       display: flex;
@@ -354,7 +386,8 @@ export function getStyles(): string {
       padding: 5px 6px;
       border-radius: 4px;
       cursor: pointer;
-      transition: background 0.1s;
+      transition: background 0.12s;
+      position: relative;
     }
     .app-row:hover:not(.stopped):not(.in-debug) { background: var(--vscode-list-hoverBackground); }
     .app-row.stopped { opacity: 0.5; cursor: not-allowed; }
@@ -367,6 +400,8 @@ export function getStyles(): string {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+
+    /* ── Status badges ── */
     .badge {
       font-size: 10px;
       padding: 1px 6px;
@@ -375,7 +410,7 @@ export function getStyles(): string {
       flex-shrink: 0;
     }
     .badge-started {
-      background: transparent;
+      background: color-mix(in srgb, var(--vscode-testing-iconPassed) 14%, transparent);
       border: 1px solid var(--vscode-testing-iconPassed);
       color: var(--vscode-testing-iconPassed);
     }
@@ -384,15 +419,20 @@ export function getStyles(): string {
       border: 1px solid var(--vscode-descriptionForeground);
       color: var(--vscode-descriptionForeground);
     }
-    .badge-debug { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+    .badge-debug {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
 
     .divider { height: 1px; background: var(--vscode-panel-border); margin: 12px 0; }
 
+    /* ── CF info box ── */
     .cf-info-box {
       background: var(--vscode-textBlockQuote-background);
       border: 1px solid var(--vscode-panel-border);
-      border-radius: 4px;
+      border-radius: 6px;
       padding: 8px 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
     }
     .cf-info-row {
       display: flex;
@@ -417,6 +457,7 @@ export function getStyles(): string {
       white-space: nowrap;
     }
 
+    /* ── Info / error / warning boxes ── */
     .info-box {
       background: var(--vscode-textBlockQuote-background);
       border-left: 3px solid var(--vscode-textBlockQuote-border);
@@ -452,6 +493,7 @@ export function getStyles(): string {
       border-radius: 2px;
     }
 
+    /* ── Spinner ── */
     .spinner {
       display: inline-block;
       width: 14px;
@@ -459,12 +501,13 @@ export function getStyles(): string {
       border: 2px solid var(--vscode-descriptionForeground);
       border-top-color: var(--vscode-button-background);
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+      animation: spin 0.7s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
       vertical-align: middle;
       margin-right: 6px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ── Step header ── */
     .step-header {
       display: flex;
       align-items: center;
@@ -480,10 +523,14 @@ export function getStyles(): string {
       color: var(--vscode-badge-foreground);
       font-size: 10px;
       font-weight: 700;
-      padding: 1px 6px;
+      padding: 2px 7px;
       border-radius: 99px;
+      letter-spacing: 0.02em;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
     }
     .step-title { font-size: 13px; font-weight: 600; flex: 1 1 120px; min-width: 0; }
+
+    /* ── Header nav button ── */
     .header-nav-btn {
       border: 1px solid var(--vscode-input-border, transparent);
       background: var(--vscode-button-secondaryBackground);
@@ -498,10 +545,14 @@ export function getStyles(): string {
       overflow: hidden;
       white-space: nowrap;
       flex-shrink: 0;
+      transition: background 0.15s, border-color 0.15s;
     }
     .header-nav-btn:hover {
       background: var(--vscode-button-secondaryHoverBackground);
+      border-color: var(--vscode-focusBorder);
     }
+
+    /* ── Gear button ── */
     .gear-btn {
       background: transparent;
       border: none;
@@ -510,10 +561,11 @@ export function getStyles(): string {
       line-height: 1;
       padding: 0 2px;
       cursor: pointer;
-      transition: color 0.2s;
+      transition: color 0.18s;
     }
     .gear-btn:hover { color: var(--vscode-foreground); }
 
+    /* ── Sync status row ── */
     .sync-status-row {
       display: flex;
       align-items: center;
@@ -528,6 +580,7 @@ export function getStyles(): string {
       color: var(--vscode-list-activeSelectionForeground);
     }
 
+    /* ── Org / space lists ── */
     .org-list,
     .space-list {
       display: flex;
@@ -546,7 +599,7 @@ export function getStyles(): string {
       border-radius: 4px;
       border: 1px solid var(--vscode-input-border, transparent);
       cursor: pointer;
-      transition: border-color 0.1s, background 0.1s;
+      transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
     }
     .org-item:hover,
     .space-item:hover { background: var(--vscode-list-hoverBackground); }
@@ -555,6 +608,7 @@ export function getStyles(): string {
       border-color: var(--vscode-focusBorder);
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
+      box-shadow: inset 3px 0 0 var(--vscode-focusBorder);
     }
     .org-item input[type=radio],
     .space-item input[type=radio] {
@@ -578,18 +632,35 @@ export function getStyles(): string {
       padding: 8px 4px;
     }
 
+    /* ── Active session card ── */
     .active-card {
       display: flex;
       align-items: center;
       background: var(--vscode-editorGroupHeader-tabsBackground);
       border: 1px solid var(--vscode-panel-border);
+      border-left: 3px solid var(--vscode-focusBorder);
       border-radius: 6px;
       padding: 8px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      animation: slideIn 0.3s ease;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+      animation: slideIn 0.25s ease;
+      transition: border-left-color 0.2s, box-shadow 0.2s;
     }
+    /* Status-specific left border accent */
+    .active-card[data-status="attached"] {
+      border-left-color: var(--vscode-testing-iconPassed);
+    }
+    .active-card[data-status="error"] {
+      border-left-color: var(--vscode-testing-iconFailed);
+    }
+    .active-card[data-status="tunneling"],
+    .active-card[data-status="pending"],
+    .active-card[data-status="ssh_enabling"],
+    .active-card[data-status="ssh_restarting"] {
+      border-left-color: var(--vscode-focusBorder);
+    }
+
     @keyframes slideIn {
-      from { opacity: 0; transform: translateY(-4px); }
+      from { opacity: 0; transform: translateY(-5px); }
       to { opacity: 1; transform: translateY(0); }
     }
     .active-card-main { flex: 1; min-width: 0; }
@@ -615,6 +686,8 @@ export function getStyles(): string {
       overflow: hidden;
       text-overflow: ellipsis;
     }
+
+    /* ── Active card action buttons ── */
     .active-stop-btn {
       flex-shrink: 0;
       width: 26px;
@@ -629,11 +702,12 @@ export function getStyles(): string {
       border-radius: 4px;
       cursor: pointer;
       font-size: 10px;
-      transition: all 0.2s;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
     }
     .active-stop-btn:hover {
       background: var(--vscode-testing-iconFailed);
       color: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.22);
     }
     .active-packages-btn {
       flex-shrink: 0;
@@ -649,10 +723,11 @@ export function getStyles(): string {
       border-radius: 4px;
       cursor: pointer;
       font-size: 11px;
-      transition: background 0.2s;
+      transition: background 0.15s, box-shadow 0.15s;
     }
     .active-packages-btn:hover {
       background: var(--vscode-button-hoverBackground);
+      box-shadow: 0 2px 5px rgba(0,0,0,0.18);
     }
     .active-retry-btn {
       flex-shrink: 0;
@@ -668,11 +743,12 @@ export function getStyles(): string {
       border-radius: 4px;
       cursor: pointer;
       font-size: 13px;
-      transition: all 0.2s;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
     }
     .active-retry-btn:hover {
       background: var(--vscode-focusBorder);
       color: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.22);
     }
     .status-text-anim {
       display: inline-block;
@@ -680,6 +756,7 @@ export function getStyles(): string {
     }
     @keyframes fadeIn { from { opacity: 0.3; } to { opacity: 1; } }
 
+    /* ── Footer ── */
     /* Footer is a natural flex item at the end of .ready-layout — no sticky needed */
     .footer {
       flex-shrink: 0;
@@ -694,6 +771,7 @@ export function getStyles(): string {
       margin-bottom: 6px;
       text-align: center;
     }
+
     .sr-only {
       position: absolute;
       width: 1px;
@@ -730,6 +808,7 @@ export function getStyles(): string {
       flex-shrink: 0;
     }
 
+    /* ── Select-all row ── */
     .select-all-row {
       display: flex;
       align-items: center;
@@ -740,10 +819,12 @@ export function getStyles(): string {
       font-size: 11px;
       color: var(--vscode-descriptionForeground);
       border-radius: 4px;
+      transition: background 0.12s, color 0.12s;
     }
     .select-all-row:hover { background: var(--vscode-list-hoverBackground); color: var(--vscode-foreground); }
     .select-all-row input[type=checkbox] { cursor: pointer; }
 
+    /* ── Stop all button ── */
     .stop-all-btn {
       display: block;
       width: 100%;
@@ -757,13 +838,15 @@ export function getStyles(): string {
       font-size: 11px;
       font-family: var(--vscode-font-family);
       text-align: center;
-      transition: all 0.2s;
+      transition: background 0.15s, box-shadow 0.15s;
     }
     .stop-all-btn:hover {
       background: var(--vscode-testing-iconFailed);
       color: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
     }
 
+    /* ── Breakpoint snapshots panel ── */
     .bp-panel {
       margin-bottom: 10px;
     }
@@ -801,6 +884,7 @@ export function getStyles(): string {
       border-radius: 99px;
       background: var(--vscode-badge-background);
       color: var(--vscode-badge-foreground);
+      font-weight: 700;
     }
     .bp-clear-btn {
       margin-left: auto;
@@ -811,6 +895,7 @@ export function getStyles(): string {
       font-size: 10px;
       padding: 2px 6px;
       cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
     }
     .bp-clear-btn:hover:not(:disabled) {
       color: var(--vscode-foreground);
@@ -862,6 +947,7 @@ export function getStyles(): string {
       display: flex;
       flex-direction: column;
       gap: 2px;
+      transition: background 0.1s;
     }
     .bp-item:last-child {
       border-bottom: none;
@@ -872,6 +958,7 @@ export function getStyles(): string {
     .bp-item.selected {
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
+      box-shadow: inset 3px 0 0 var(--vscode-focusBorder);
     }
     .bp-item-top {
       display: flex;
@@ -900,10 +987,12 @@ export function getStyles(): string {
     .mode-auto {
       color: var(--vscode-testing-iconPassed);
       border-color: var(--vscode-testing-iconPassed);
+      background: color-mix(in srgb, var(--vscode-testing-iconPassed) 10%, transparent);
     }
     .mode-paused {
       color: var(--vscode-inputValidation-warningForeground, #cc9b00);
       border-color: var(--vscode-inputValidation-warningBorder, #cca700);
+      background: var(--vscode-inputValidation-warningBackground, rgba(204,153,0,0.1));
     }
     .bp-item-meta {
       font-size: 10px;
@@ -941,6 +1030,7 @@ export function getStyles(): string {
       white-space: pre;
     }
 
+    /* ── Progress bar ── */
     .progress-bar-wrap {
       height: 4px;
       background: var(--vscode-progressBar-background, var(--vscode-panel-border));
@@ -956,7 +1046,7 @@ export function getStyles(): string {
       transition: width 0.4s ease;
     }
 
-    /* Debug preferences toggle row */
+    /* ── Debug preferences toggle row ── */
     .pref-row {
       display: flex;
       align-items: flex-start;
@@ -999,7 +1089,7 @@ export function getStyles(): string {
       opacity: 0.7;
     }
     .pref-state-on {
-      background: transparent;
+      background: color-mix(in srgb, var(--vscode-testing-iconPassed) 12%, transparent);
       border: 1px solid var(--vscode-testing-iconPassed);
       color: var(--vscode-testing-iconPassed);
     }
@@ -1009,6 +1099,8 @@ export function getStyles(): string {
       color: var(--vscode-descriptionForeground);
       line-height: 1.4;
     }
+
+    /* ── Toggle switch ── */
     .toggle-switch {
       flex-shrink: 0;
       position: relative;
@@ -1030,7 +1122,7 @@ export function getStyles(): string {
       height: 18px;
       border-radius: 9px;
       background: var(--vscode-input-border, rgba(128,128,128,0.4));
-      transition: background 0.2s;
+      transition: background 0.22s ease;
       position: relative;
     }
     .toggle-switch.on .toggle-track {
@@ -1044,14 +1136,14 @@ export function getStyles(): string {
       height: 14px;
       border-radius: 50%;
       background: white;
-      transition: transform 0.2s;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.35);
     }
     .toggle-switch.on .toggle-thumb {
       transform: translateX(14px);
     }
 
-    /* Informational note box in settings — explains VSCode's own debug settings */
+    /* ── VSCode note box ── */
     .vscode-note-box {
       display: flex;
       gap: 8px;
@@ -1080,7 +1172,7 @@ export function getStyles(): string {
       color: var(--vscode-editorInfo-foreground, var(--vscode-focusBorder));
     }
 
-    /* Branch preparation screen */
+    /* ── Branch preparation screen ── */
     .prep-list {
       display: flex;
       flex-direction: column;
@@ -1092,6 +1184,7 @@ export function getStyles(): string {
       border-radius: 6px;
       padding: 8px 10px;
       animation: slideIn 0.25s ease;
+      transition: border-color 0.2s;
     }
     .prep-row-top {
       display: flex;
@@ -1146,8 +1239,6 @@ export function getStyles(): string {
     }
 
     /* ── Credential setup screen ── */
-
-    /* Relative wrapper so the eye-toggle button can be inset */
     .input-password-wrap {
       position: relative;
     }
@@ -1166,11 +1257,11 @@ export function getStyles(): string {
       font-size: 14px;
       line-height: 1;
       padding: 2px;
-      transition: color 0.2s;
+      transition: color 0.15s;
     }
     .btn-toggle-visibility:hover { color: var(--vscode-foreground); }
 
-    /* Keychain/source badge shown in settings */
+    /* ── Credential source badge ── */
     .cred-source-badge {
       display: inline-flex;
       align-items: center;
@@ -1182,12 +1273,12 @@ export function getStyles(): string {
       letter-spacing: 0.03em;
     }
     .cred-source-badge.env {
-      background: transparent;
+      background: color-mix(in srgb, var(--vscode-testing-iconPassed) 12%, transparent);
       border: 1px solid var(--vscode-testing-iconPassed);
       color: var(--vscode-testing-iconPassed);
     }
     .cred-source-badge.keychain {
-      background: transparent;
+      background: color-mix(in srgb, var(--vscode-focusBorder) 12%, transparent);
       border: 1px solid var(--vscode-focusBorder);
       color: var(--vscode-focusBorder);
     }
@@ -1198,7 +1289,7 @@ export function getStyles(): string {
       opacity: 0.7;
     }
 
-    /* Row used inside the Settings credential section */
+    /* ── Credential info row ── */
     .cred-info-row {
       display: flex;
       align-items: center;
@@ -1215,7 +1306,7 @@ export function getStyles(): string {
       white-space: nowrap;
     }
 
-    /* Compact info icon with hover tooltip for env-var credential notice */
+    /* ── Credential info icon with tooltip ── */
     .cred-info-icon {
       position: relative;
       display: inline-flex;
@@ -1231,6 +1322,7 @@ export function getStyles(): string {
       border-radius: 50%;
       cursor: help;
       line-height: 1;
+      transition: color 0.15s, border-color 0.15s;
     }
     .cred-info-icon:hover,
     .cred-info-icon:focus {
@@ -1253,7 +1345,7 @@ export function getStyles(): string {
       line-height: 1.45;
       white-space: normal;
       z-index: 100;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
       pointer-events: none;
     }
     .cred-info-icon:hover .cred-info-tooltip,
@@ -1261,7 +1353,7 @@ export function getStyles(): string {
       display: block;
     }
 
-    /* Two equal-width side-by-side buttons for Update / Clear */
+    /* ── Credential button row ── */
     .cred-btn-row {
       display: flex;
       gap: 6px;
@@ -1273,7 +1365,7 @@ export function getStyles(): string {
       padding: 5px 6px;
     }
 
-    /* Subtle env-var hint at the bottom of the setup screen */
+    /* ── Credential env hint ── */
     .cred-env-hint {
       font-size: 11px;
       color: var(--vscode-descriptionForeground);
