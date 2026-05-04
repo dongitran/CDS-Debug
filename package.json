@@ -149,6 +149,6 @@
     }
   },
   "dependencies": {
-    "@saptools/cf-sync": "^0.4.2"
+    "@saptools/cf-sync": "^0.4.5"
   }
 }
