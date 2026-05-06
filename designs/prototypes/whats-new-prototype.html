@@ -409,7 +409,7 @@
       <div>
         <div class="hero-title-row">
           <div class="hero-title">What's New in CDS Debug</div>
-          <div class="version-chip">🚀 v0.3.32</div>
+          <div class="version-chip">🚀 v0.3.53</div>
         </div>
         <div class="hero-sub">Debug multiple SAP CAP services simultaneously — directly from VS Code.</div>
       </div>
@@ -451,6 +451,22 @@
           </div>
         </div>
 
+        <div class="card">
+          <div class="card-icon">🧭</div>
+          <div>
+            <div class="card-title">Dynamic Remote Roots</div>
+            <div class="card-desc">Regex-based <code>remoteRoot</code> values now resolve per CF app before debugging starts, so generated attach configs can map services deployed under different remote folders such as <code>/usr/sample-service-a</code>.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🧩</div>
+          <div>
+            <div class="card-title">Compatibility Refresh</div>
+            <div class="card-desc">Updated the extension engine target to VS Code 1.118 and refreshed core dependencies, including <code>@saptools/cf-sync</code>, ESLint, TypeScript ESLint, and VS Code API types.</div>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -475,16 +491,21 @@
       <div class="history-sidebar">
         <div class="history-sidebar-title">Versions</div>
 
-        <div class="version-item active latest" data-pane="v0310">
+        <div class="version-item active latest" data-pane="v0353">
+          <div class="version-dot"></div>
+          v0.3.53
+          <span class="new-tag">NEW</span>
+          <span class="version-date">2026</span>
+        </div>
+        <div class="version-item" data-pane="v0310">
           <div class="version-dot"></div>
           v0.3.10
-          <span class="new-tag">NEW</span>
-          <span class="version-date">2025</span>
+          <span class="version-date">2026</span>
         </div>
         <div class="version-item" data-pane="v030">
           <div class="version-dot"></div>
           v0.3.0
-          <span class="version-date">2025</span>
+          <span class="version-date">2026</span>
         </div>
         <div class="version-item" data-pane="v0241">
           <div class="version-dot"></div>
@@ -505,11 +526,26 @@
 
       <div class="history-content">
 
-        <div class="history-pane active" id="pane-v0310">
+        <div class="history-pane active" id="pane-v0353">
+          <div class="h-version-header">
+            <span class="h-version-number">v0.3.53</span>
+            <span class="h-version-badge badge-latest">Latest</span>
+            <span class="h-date">Stable 2026</span>
+          </div>
+          <div class="h-group">
+            <div class="h-group-label">✨ New Highlights</div>
+            <ul class="h-entry-list">
+              <li class="h-entry"><span class="h-entry-icon">🧭</span><span><strong>Dynamic remote roots</strong> — Regex-based <code>remoteRoot</code> settings resolve per CF app before debug attach, covering services deployed under different remote folders.</span></li>
+              <li class="h-entry"><span class="h-entry-icon">🧩</span><span><strong>Compatibility refresh</strong> — VS Code 1.118 engine support and refreshed CF sync, ESLint, TypeScript ESLint, and VS Code API dependencies.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="history-pane" id="pane-v0310">
           <div class="h-version-header">
             <span class="h-version-number">v0.3.10</span>
-            <span class="h-version-badge badge-latest">Latest</span>
-            <span class="h-date">Spring 2025</span>
+            <span class="h-version-badge badge-stable">Stable</span>
+            <span class="h-date">Spring 2026</span>
           </div>
           <div class="h-group">
             <div class="h-group-label">✨ New Features</div>
@@ -538,7 +574,7 @@
           <div class="h-version-header">
             <span class="h-version-number">v0.3.0</span>
             <span class="h-version-badge badge-stable">Stable</span>
-            <span class="h-date">2025</span>
+            <span class="h-date">2026</span>
           </div>
           <div class="h-group">
             <div class="h-group-label">✨ New Features</div>

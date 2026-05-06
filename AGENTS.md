@@ -135,6 +135,17 @@ pnpm test                 # Build extension + run Playwright
 pnpm test:report          # Open HTML report
 ```
 
+## E2E Test Registry
+
+### Launch JSON and CAP Debug Config
+1. User can reopen VS Code and stale CDS launch configs are cleaned while manual configs are kept.
+2. User setting overrides workspace cap config when generating launch.json.
+3. Workspace cap config is used when no user setting is configured.
+4. User can resolve regex remoteRoot to the matching CF service folder.
+5. User can start debug while remoteRoot warmup is in flight and get remoteRoot in the first launch.json.
+6. Per-service cap config overrides both user setting and workspace fallback.
+7. Malformed user setting falls back to workspace cap config.
+
 ## What's New Workflow
 
 When shipping a notable release, update **both** in the same PR — neither alone is enough:

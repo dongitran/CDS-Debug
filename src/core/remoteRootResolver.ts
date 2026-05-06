@@ -22,6 +22,29 @@ export interface ResolveRemoteRootOptions {
   findPackageJsonPaths?: (appName: string) => Promise<string[]>;
 }
 
+export class RemoteRootLookupCoordinator {
+  private readonly inFlight = new Map<string, Promise<RemoteRootResolution>>();
+
+  public resolve(
+    cacheKey: string,
+    appName: string,
+    configuredRemoteRoot: string,
+    options: ResolveRemoteRootOptions = {},
+  ): Promise<RemoteRootResolution> {
+    const existing = this.inFlight.get(cacheKey);
+    if (existing !== undefined) return existing;
+
+    const lookup = resolveRemoteRootForApp(appName, configuredRemoteRoot, options)
+      .finally(() => {
+        if (this.inFlight.get(cacheKey) === lookup) {
+          this.inFlight.delete(cacheKey);
+        }
+      });
+    this.inFlight.set(cacheKey, lookup);
+    return lookup;
+  }
+}
+
 export function parseRemoteRootSetting(value: string | undefined): RemoteRootSetting {
   const trimmed = value?.trim();
   if (!trimmed) return { kind: 'none' };

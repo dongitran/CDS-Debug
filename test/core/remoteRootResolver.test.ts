@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   normalizeRemotePackageJsonPath,
   parseRemoteRootSetting,
+  RemoteRootLookupCoordinator,
   resolveRemoteRootForApp,
 } from '../../src/core/remoteRootResolver';
 
@@ -98,5 +99,55 @@ describe('resolveRemoteRootForApp', () => {
     });
 
     expect(result).toEqual({ status: 'unmatched', pattern: '^/sample-service-a$' });
+  });
+});
+
+describe('RemoteRootLookupCoordinator', () => {
+  it('shares concurrent lookups for the same cache key', async () => {
+    const coordinator = new RemoteRootLookupCoordinator();
+    let calls = 0;
+    let releaseLookup: (() => void) | undefined;
+    let markLookupStarted: (() => void) | undefined;
+    const lookupReleased = new Promise<void>((resolve) => {
+      releaseLookup = resolve;
+    });
+    const lookupStarted = new Promise<void>((resolve) => {
+      markLookupStarted = resolve;
+    });
+
+    const first = coordinator.resolve('same-key', 'mock-service-a', 'regex:^/(usr/)?sample-service-a$', {
+      findPackageJsonPaths: async () => {
+        calls += 1;
+        if (markLookupStarted === undefined) throw new Error('Lookup start marker was not initialized.');
+        markLookupStarted();
+        await lookupReleased;
+        return ['/usr/sample-service-a/package.json'];
+      },
+    });
+
+    await lookupStarted;
+    const second = coordinator.resolve('same-key', 'mock-service-a', 'regex:^/(usr/)?sample-service-a$', {
+      findPackageJsonPaths: () => {
+        calls += 1;
+        return Promise.reject(new Error('duplicate lookup should not run'));
+      },
+    });
+
+    if (releaseLookup === undefined) throw new Error('Lookup release was not initialized.');
+    releaseLookup();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      {
+        status: 'resolved',
+        remoteRoot: '/usr/sample-service-a',
+        pattern: '^/(usr/)?sample-service-a$',
+      },
+      {
+        status: 'resolved',
+        remoteRoot: '/usr/sample-service-a',
+        pattern: '^/(usr/)?sample-service-a$',
+      },
+    ]);
+    expect(calls).toBe(1);
   });
 });

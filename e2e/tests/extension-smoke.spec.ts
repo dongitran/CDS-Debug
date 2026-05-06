@@ -34,6 +34,7 @@ type CfScenario =
   | 'slow-apps'
   | 'slow-target'
   | 'slow-target-after-apps'
+  | 'remote-root-race'
   | 'reload-changes'
   | 'multi-spaces';
 
@@ -110,6 +111,7 @@ cmd="\${1:-}"
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 slow_target_after_apps_ready="$script_dir/.slow-target-after-apps-ready"
 slow_target_after_apps_used="$script_dir/.slow-target-after-apps-used"
+remote_root_lookup_lock="$script_dir/.remote-root-lookup-lock"
 reload_apps_count="$script_dir/.reload-apps-count"
 
 case "$cmd" in
@@ -214,6 +216,15 @@ OUT
     ssh_mode="\${3:-}"
     ssh_command="\${4:-}"
     if [[ "$ssh_mode" == "-c" && "$ssh_command" == *package.json* ]]; then
+      if [[ "$SCENARIO" == "remote-root-race" ]]; then
+        if [[ -f "$remote_root_lookup_lock" ]]; then
+          echo "mock concurrent remote-root lookup rejected" >&2
+          exit 1
+        fi
+        touch "$remote_root_lookup_lock"
+        trap 'rm -f "$remote_root_lookup_lock"' EXIT
+        sleep 5
+      fi
       case "$app_name" in
         mock-service-a)
           cat <<'OUT'
@@ -257,6 +268,15 @@ esac
 
 async function createTempDirectory(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), prefix));
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await readFile(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function writeUserSettings(userDataDir: string, settings: Record<string, unknown>): Promise<void> {
@@ -584,7 +604,7 @@ async function createSessionArtifacts(options: SessionOptions): Promise<SessionA
 
 async function withVsCodeSession(
   options: SessionOptions,
-  run: (workbenchPage: Page) => Promise<void>,
+  run: (workbenchPage: Page, artifacts: SessionArtifacts) => Promise<void>,
   workspaceDir?: string,
 ): Promise<void> {
   const repoRoot = resolve(process.cwd(), '..');
@@ -635,7 +655,7 @@ async function withVsCodeSession(
     });
     await artifacts.workbenchPage.bringToFront();
     await captureStepEvidence(artifacts.workbenchPage, 'workbench-opened');
-    await run(artifacts.workbenchPage);
+    await run(artifacts.workbenchPage, artifacts);
     await persistSessionArtifacts({
       diagnostics,
       label: 'session-final',
@@ -1341,6 +1361,43 @@ test.describe('CAP Debug Config Precedence E2E', () => {
           await expect.poll(
             async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
             { timeout: 15_000 },
+          ).toBe('/usr/sample-service-a');
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+
+  test('User can start debug while remoteRoot warmup is in flight and get remoteRoot in the first launch.json', async () => {
+    const workspaceDir = await createWorkspaceForCapConfigTest({});
+
+    try {
+      await withVsCodeSession(
+        {
+          credentialMode: 'env',
+          cfScenario: 'remote-root-race',
+          userSettings: {
+            'cdsDebug.sharedCapDebugConfig': {
+              remoteRoot: 'regex:^/(usr/)?sample-service-a$',
+            },
+          },
+        },
+        async (workbenchPage, artifacts) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+
+          await expect.poll(
+            async () => pathExists(join(artifacts.mockBinDir, '.remote-root-lookup-lock')),
+            { timeout: 10_000 },
+          ).toBe(true);
+
+          await startDebugForApp(webview, 'mock-service-a');
+
+          await expect.poll(
+            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            { timeout: 20_000 },
           ).toBe('/usr/sample-service-a');
         },
         workspaceDir,

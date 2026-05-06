@@ -20,8 +20,8 @@ interface ChangelogVersion {
 
 const CHANGELOG: ChangelogVersion[] = [
   {
-    version: '0.3.32',
-    label: 'v0.3.32',
+    version: '0.3.53',
+    label: 'v0.3.53',
     features: [
       {
         icon: '📦',
@@ -46,6 +46,18 @@ const CHANGELOG: ChangelogVersion[] = [
         title: 'Stability & Fixes',
         description:
           'Suppressed spurious save-before-start permission errors, retry package loading when a session restarts, and corrected source map paths for generated CAP server files.',
+      },
+      {
+        icon: '🧭',
+        title: 'Dynamic Remote Roots',
+        description:
+          'Regex-based <code>remoteRoot</code> values now resolve per CF app before debugging starts, so generated attach configs can map services deployed under different remote folders such as <code>/usr/sample-service-a</code>.',
+      },
+      {
+        icon: '🧩',
+        title: 'Compatibility Refresh',
+        description:
+          'Updated the extension engine target to VS Code 1.118 and refreshed core dependencies, including <code>@saptools/cf-sync</code>, ESLint, TypeScript ESLint, and VS Code API types.',
       },
     ],
     fixes: [],

@@ -1,6 +1,15 @@
 # Changelog
 
-## [0.3.10] — 2025
+## [0.3.53] — 2026
+
+### New Highlights
+
+- **Dynamic remote roots** — Regex-based `remoteRoot` settings resolve per CF app before debug attach, covering services deployed under different remote folders such as `/usr/sample-service-a`.
+- **Compatibility refresh** — VS Code 1.118 engine support and refreshed CF sync, ESLint, TypeScript ESLint, and VS Code API dependencies.
+
+---
+
+## [0.3.10] — 2026
 
 ### New Features
 

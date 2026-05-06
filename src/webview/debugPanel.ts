@@ -34,7 +34,7 @@ import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig } from '.
 import { resolveSharedCapDebugConfig } from '../core/capDebugConfig';
 import {
   parseRemoteRootSetting,
-  resolveRemoteRootForApp,
+  RemoteRootLookupCoordinator,
   type RemoteRootResolution,
 } from '../core/remoteRootResolver';
 import { getConfig, mappingMatchesTarget, saveConfig, upsertOrgMappings } from '../storage/configStore';
@@ -115,6 +115,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   private readonly packageEntriesByApp = new Map<string, LoadedPackageEntry[]>();
   private readonly packageSearchIndexByApp = new Map<string, PackageSearchIndex>();
   private readonly resolvedRemoteRoots = new Map<string, string>();
+  private readonly remoteRootLookupCoordinator = new RemoteRootLookupCoordinator();
   private remoteRootWarmupGeneration = 0;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -808,8 +809,11 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
     if (setting.kind !== 'regex') return;
 
+    const cacheKey = this.remoteRootCacheKey(apiEndpoint, org, space, appName, configuredRemoteRoot);
+    if (this.resolvedRemoteRoots.has(cacheKey)) return;
+
     try {
-      const result = await resolveRemoteRootForApp(appName, configuredRemoteRoot);
+      const result = await this.remoteRootLookupCoordinator.resolve(cacheKey, appName, configuredRemoteRoot);
       if (generation !== this.remoteRootWarmupGeneration) return;
       this.storeResolvedRemoteRoot(apiEndpoint, org, space, appName, configuredRemoteRoot, result);
     } catch (err: unknown) {
@@ -864,7 +868,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
 
     try {
-      const result = await resolveRemoteRootForApp(target.appName, configuredRemoteRoot);
+      const result = await this.remoteRootLookupCoordinator.resolve(cacheKey, target.appName, configuredRemoteRoot);
       this.storeResolvedRemoteRoot(apiEndpoint, org, space, target.appName, configuredRemoteRoot, result);
       if (result.status === 'resolved') resolved.set(target.appName, result.remoteRoot);
     } catch (err: unknown) {
