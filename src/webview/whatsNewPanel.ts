@@ -20,8 +20,8 @@ interface ChangelogVersion {
 
 const CHANGELOG: ChangelogVersion[] = [
   {
-    version: '0.3.53',
-    label: 'v0.3.53',
+    version: '0.3.54',
+    label: 'v0.3.54',
     features: [
       {
         icon: '📦',
@@ -57,7 +57,7 @@ const CHANGELOG: ChangelogVersion[] = [
         icon: '🧩',
         title: 'Compatibility Refresh',
         description:
-          'Updated the extension engine target to VS Code 1.118 and refreshed core dependencies, including <code>@saptools/cf-sync</code>, ESLint, TypeScript ESLint, and VS Code API types.',
+          'Lowered the minimum VS Code engine target to 1.112 and checked the code against an older VS Code API type baseline, while keeping the existing CF sync, ESLint, and TypeScript ESLint updates.',
       },
     ],
     fixes: [],

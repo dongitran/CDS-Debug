@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.54] — 2026
+
+### Changes
+
+- **Wider VS Code compatibility** — Lowered the minimum required VS Code engine from `1.118` to `1.112`, so users on VS Code versions from 1.112 onwards can install and use CDS Debug without needing to be on the very latest editor release.
+
+---
+
 ## [0.3.53] — 2026
 
 ### New Highlights
