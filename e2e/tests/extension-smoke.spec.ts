@@ -957,6 +957,13 @@ async function completeMappingToReady(webview: Frame): Promise<void> {
   await completeMappingToReadyWithFolder(webview, MOCK_GROUP_FOLDER);
 }
 
+async function remapToOrgSelection(webview: Frame): Promise<void> {
+  await webview.locator('#btn-remap').click();
+  await expectRegionScreen(webview);
+  await loginFromRegionScreen(webview);
+  await expect(webview.getByText('Select CF Org')).toBeVisible();
+}
+
 async function startDebugForApp(webview: Frame, appName: string): Promise<void> {
   await webview.locator(`input[type="checkbox"][data-app="${appName}"]`).check();
   await expectButtonEnabled(webview.locator('#btn-start-debug'));
@@ -3232,16 +3239,15 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       });
     });
 
-    test('Change Mapping with no active sessions returns to Select CF Org', async () => {
+    test('User can change mapping and return to CF Region / Org', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
         await webview.locator('#btn-remap').click();
 
-        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
-        // Org list is rendered (previously logged-in orgs are preserved in state)
-        await expect(webview.locator('input[name="cf-org"]')).toHaveCount(2);
+        await expectRegionScreen(webview);
+        await captureStepEvidence(workbenchPage, 'change-mapping-region-org');
       });
     });
 
@@ -4179,9 +4185,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         // Complete the full setup for mock-org-alpha with MOCK_GROUP_FOLDER
         await completeMappingToReady(webview);
 
-        // Remap: no active sessions so btn-remap goes directly to SELECT_ORG
-        await webview.locator('#btn-remap').click();
-        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
+        await remapToOrgSelection(webview);
 
         // Re-select mock-org-alpha (the org that was already mapped)
         await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
@@ -4206,9 +4210,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         // Step 1: complete mapping for mock-org-alpha with MOCK_GROUP_FOLDER
         await completeMappingToReady(webview);
 
-        // Step 2: remap → SELECT_ORG → select org-beta → folder screen has no cached path
-        await webview.locator('#btn-remap').click();
-        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
+        // Step 2: remap through CF Region / Org → select org-beta → folder screen has no cached path
+        await remapToOrgSelection(webview);
         await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
         await webview.locator('#btn-next-org').click();
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
@@ -4222,9 +4225,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await webview.locator('#btn-save-mapping').click();
         await expectReadyScreen(webview);
 
-        // Step 4: remap → SELECT_ORG → switch back to org-alpha → folder-alpha pre-filled
-        await webview.locator('#btn-remap').click();
-        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
+        // Step 4: remap through CF Region / Org → switch back to org-alpha → folder-alpha pre-filled
+        await remapToOrgSelection(webview);
         await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
         await webview.locator('#btn-next-org').click();
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
@@ -4250,8 +4252,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await completeMappingToReady(webview);
 
         // Remap → select same org → folder is pre-filled with cached path
-        await webview.locator('#btn-remap').click();
-        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
+        await remapToOrgSelection(webview);
         await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
         await webview.locator('#btn-next-org').click();
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
@@ -4315,9 +4316,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         }
         await expectReadyScreen(webview);
 
-        // Remap → SELECT_ORG → select org-alpha → folder /cached/alpha is pre-filled
-        await webview.locator('#btn-remap').click();
-        await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 5_000 });
+        // Remap through CF Region / Org → select org-alpha → folder /cached/alpha is pre-filled
+        await remapToOrgSelection(webview);
         await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
         await webview.locator('#btn-next-org').click();
         await expect(webview.getByText(/Loading spaces for/)).toBeVisible();

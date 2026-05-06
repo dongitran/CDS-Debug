@@ -146,6 +146,9 @@ pnpm test:report          # Open HTML report
 6. Per-service cap config overrides both user setting and workspace fallback.
 7. Malformed user setting falls back to workspace cap config.
 
+### Ready Screen — Actions and Navigation
+1. User can change mapping and return to CF Region / Org.
+
 ## What's New Workflow
 
 When shipping a notable release, update **both** in the same PR — neither alone is enough:

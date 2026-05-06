@@ -641,8 +641,15 @@ export function getScript(nonce: string): string {
         if (Object.keys(state.activeSessions).length > 0) {
           vscode.postMessage({ type: 'REQUEST_CHANGE_MAPPING' });
         } else {
-          state.screen = SCREENS.SELECT_ORG; 
-          state.error = null; 
+          state.screen = SCREENS.REGION;
+          state.error = null;
+          state.selectedOrg = null;
+          state.selectedSpace = null;
+          state.selectedFolder = null;
+          state.selectedTopologyOrg = null;
+          state.pendingTopologyOrg = null;
+          state.orgSearchQuery = '';
+          state.regionSearchQuery = '';
           render();
         }
       });
@@ -691,8 +698,15 @@ export function getScript(nonce: string): string {
           render();
           break;
         case 'PROCEED_CHANGE_MAPPING':
-          state.screen = SCREENS.SELECT_ORG;
+          state.screen = SCREENS.REGION;
           state.error = null;
+          state.selectedOrg = null;
+          state.selectedSpace = null;
+          state.selectedFolder = null;
+          state.selectedTopologyOrg = null;
+          state.pendingTopologyOrg = null;
+          state.orgSearchQuery = '';
+          state.regionSearchQuery = '';
           render();
           return;
         case 'LOGIN_SUCCESS': {

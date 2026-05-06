@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.57] — 2026
+
+### Fixes
+
+- **Change Mapping navigation** — The launcher now returns to `1/3 CF Region / Org` when changing mappings, so users can choose a different CF region or org from the start of the mapping flow.
+
+---
+
 ## [0.3.54] — 2026
 
 ### Changes

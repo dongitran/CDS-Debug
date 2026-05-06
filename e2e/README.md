@@ -63,7 +63,7 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
 
 ### Ready Screen — Actions and Navigation (4 tests)
 34. DEBUG_ERROR clears PENDING sessions, shows error message, and shows `#btn-retry-apps` alongside the error box.
-35. Change Mapping with no active sessions returns to Select CF Org.
+35. Change Mapping with no active sessions returns to **CF Region / Org** (step 1/3), not Select CF Org.
 36. Cancel app loading returns to **Ready** screen (not Select Folder) when apps were previously loaded — verifies the `state.apps.length > 0` conditional branch.
 37. Refresh Apps bypasses cache and redisplays the latest app list.
 

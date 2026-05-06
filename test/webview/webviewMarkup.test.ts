@@ -74,6 +74,13 @@ describe('webview markup contracts', () => {
       .toBe('https://api.cf.cn40.platform.sapcloud.cn');
   });
 
+  it('routes Change Mapping back to the CF Region / Org step', () => {
+    const script = getScript('test-nonce');
+
+    expect(script).toMatch(/\$\('btn-remap'\)\?\.addEventListener\('click'[\s\S]*?else \{\s+state\.screen = SCREENS\.REGION;/);
+    expect(script).toMatch(/case 'PROCEED_CHANGE_MAPPING':\s+state\.screen = SCREENS\.REGION;/);
+  });
+
   it('keeps the package browser screen minimal', () => {
     const packageScript = getPackageBrowserScriptContent();
 
