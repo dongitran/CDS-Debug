@@ -11,7 +11,7 @@
   },
   "license": "MIT",
   "engines": {
-    "vscode": "^1.77.0",
+    "vscode": "^1.112.0",
     "node": ">=20"
   },
   "categories": [
@@ -129,7 +129,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.2",
-    "@types/vscode": "1.77.0",
+    "@types/vscode": "1.112.0",
     "@vitest/coverage-v8": "^4.1.2",
     "@vscode/vsce": "^3.9.1",
     "cspell": "^10.0.0",

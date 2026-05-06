@@ -4,7 +4,7 @@
 
 ### Changes
 
-- **Wider VS Code compatibility** — Lowered the minimum required VS Code engine from `1.118` to `1.77` (March 2023). Users on VS Code versions from 1.77 onwards can now install and use CDS Debug without upgrading their editor. The oldest API relied on by the extension is `DebugSessionOptions.suppressSaveBeforeStart`, which was introduced in VS Code 1.77.
+- **Wider VS Code compatibility** — Lowered the minimum required VS Code engine from `1.118` to `1.112` (November 2025). Users on VS Code versions from 1.112 onwards can now install and use CDS Debug without needing to be on the very latest editor release.
 
 ---
 
