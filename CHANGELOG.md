@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.58] — 2026
+
+### Changes
+
+- **CF region catalog** — Added the `eu10-004` Cloud Foundry region to the `1/3 CF Region / Org` picker with endpoint `https://api.cf.eu10-004.hana.ondemand.com`.
+
+---
+
 ## [0.3.57] — 2026
 
 ### Fixes

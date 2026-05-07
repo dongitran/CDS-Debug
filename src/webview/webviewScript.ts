@@ -20,13 +20,27 @@ function removeRegionKeySuffix(label: string, code: string): string {
   return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
 }
 
-const WEBVIEW_CF_REGIONS: readonly WebviewCfRegion[] = getAllRegions()
-  .map((region) => ({
+const ADDITIONAL_WEBVIEW_CF_REGIONS = [
+  {
+    code: 'eu10-004',
+    name: 'Europe (Frankfurt) - AWS',
+    label: 'Europe (Frankfurt) - AWS (eu10-004)',
+    apiEndpoint: 'https://api.cf.eu10-004.hana.ondemand.com',
+  },
+] as const satisfies readonly WebviewCfRegion[];
+
+const WEBVIEW_CF_REGIONS: readonly WebviewCfRegion[] = [
+  ...getAllRegions().map((region) => ({
     code: region.key,
     name: removeRegionKeySuffix(region.label, region.key),
     label: region.label,
     apiEndpoint: region.apiEndpoint,
-  }))
+  })),
+  ...ADDITIONAL_WEBVIEW_CF_REGIONS,
+]
+  .filter((region, index, regions) => (
+    regions.findIndex((candidate) => candidate.code === region.code) === index
+  ))
   .sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code));
 
 const WEBVIEW_CF_REGIONS_JSON = JSON.stringify(WEBVIEW_CF_REGIONS);
