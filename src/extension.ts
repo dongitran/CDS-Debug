@@ -67,9 +67,9 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('cdsDebug.stopAllSessions', () => {
-      stopAllProcesses();
-      void vscode.window.showInformationMessage('CDS Debug: all debug sessions stopped.');
+    vscode.commands.registerCommand('cdsDebug.stopAllSessions', async () => {
+      await stopAllProcesses();
+      await vscode.window.showInformationMessage('CDS Debug: all debug sessions stopped.');
     }),
   );
 
@@ -108,6 +108,6 @@ export async function deactivate(): Promise<void> {
     }
   }
 
-  disposeAllProcesses();
+  await disposeAllProcesses();
   disposeLogger();
 }

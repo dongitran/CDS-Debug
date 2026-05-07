@@ -249,7 +249,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'STOP_DEBUG':
-        stopProcess(raw.payload.appName);
+        await stopProcess(raw.payload.appName);
         break;
 
       case 'RETRY_DEBUG':
@@ -283,7 +283,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'STOP_ALL_DEBUG': {
-        stopAllProcesses();
+        await stopAllProcesses();
         break;
       }
         
@@ -292,7 +292,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'RESET_LOGIN':
-        stopAllProcesses();
+        await stopAllProcesses();
         break;
 
       case 'GET_SYNC_STATUS':
@@ -308,7 +308,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'REQUEST_CHANGE_MAPPING': {
-        stopAllProcesses();
+        await stopAllProcesses();
         this.postMessage({ type: 'PROCEED_CHANGE_MAPPING' });
         break;
       }
@@ -360,10 +360,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     // `silent = true` suppresses the EXITED broadcast so the active-session card stays
     // visible on screen — the card transitions directly from ERROR → TUNNELING with no
     // intermediate disappear/re-appear flash.
-    stopProcess(appName, /* skipConfigCleanup */ true, /* silent */ true);
-    // Brief pause so the OS releases the port before we re-bind.
-    // startTunnelAndAttach also calls killProcessOnPort, so this is belt-and-suspenders.
-    await new Promise(r => setTimeout(r, 300));
+    await stopProcess(appName, /* skipConfigCleanup */ true, /* silent */ true);
     // No manual DEBUG_CONNECTING post needed: spawnSshTunnel will emit TUNNELING via
     // debugProcessEvents which reaches the webview as APP_DEBUG_STATUS, updating the
     // card that is still visible from the silent stop above.

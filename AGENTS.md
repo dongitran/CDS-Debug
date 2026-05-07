@@ -154,6 +154,9 @@ pnpm test:report          # Open HTML report
 ### Ready Screen — Actions and Navigation
 1. User can change mapping and return to CF Region / Org.
 
+### Debug Session Process Lifecycle
+1. User can stop and restart the same attached session without port reuse errors.
+
 ## What's New Workflow
 
 When shipping a notable release, update **both** in the same PR — neither alone is enough:

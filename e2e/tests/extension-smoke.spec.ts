@@ -35,6 +35,7 @@ type CfScenario =
   | 'slow-target'
   | 'slow-target-after-apps'
   | 'remote-root-race'
+  | 'restart-race'
   | 'reload-changes'
   | 'multi-spaces';
 
@@ -92,6 +93,7 @@ const MOCK_GROUP_FOLDER = '/tmp/cds-debug-e2e-group';
 const WEBSOCKET_TIMEOUT_MS = 90_000;
 const FRAME_TIMEOUT_MS = 90_000;
 const MOCK_SLOW_TARGET_DELAY_SECONDS = 8;
+const MOCK_TUNNEL_RELEASE_DELAY_SECONDS = 0.75;
 const STEP_OBSERVE_DELAY_MS = (() => {
   const value = Number(process.env.CDS_DEBUG_E2E_STEP_DELAY_MS ?? '0');
   return Number.isFinite(value) && value > 0 ? value : 0;
@@ -246,6 +248,26 @@ OUT
       exit 0
     fi
     if [[ "$ssh_mode" == "-L" ]]; then
+      if [[ "$SCENARIO" == "restart-race" ]]; then
+        local_port="\${ssh_command%%:*}"
+        inspector_script="$script_dir/inspector-$local_port.js"
+        cat > "$inspector_script" <<'NODE'
+process.on('SIGTERM', () => {});
+process.on('SIGINT', () => {});
+setInterval(() => {}, 1000);
+NODE
+        node --inspect=127.0.0.1:"$local_port" "$inspector_script" &
+        inspector_pid="$!"
+        cleanup_tunnel() {
+          sleep ${MOCK_TUNNEL_RELEASE_DELAY_SECONDS}
+          kill -KILL "$inspector_pid" 2>/dev/null || true
+          wait "$inspector_pid" 2>/dev/null || true
+          exit 0
+        }
+        trap cleanup_tunnel TERM INT
+        wait "$inspector_pid"
+        exit 0
+      fi
       sleep 1
       exit 0
     fi
@@ -392,6 +414,11 @@ async function createMockCfCli(mockBinDir: string, scenario: CfScenario): Promis
   const script = buildMockCfScript(scenario);
   await writeFile(cfPath, script, 'utf8');
   await chmod(cfPath, 0o755);
+  if (scenario === 'restart-race') {
+    const lsofPath = join(mockBinDir, 'lsof');
+    await writeFile(lsofPath, '#!/usr/bin/env bash\nexit 1\n', 'utf8');
+    await chmod(lsofPath, 0o755);
+  }
 }
 
 function buildVsCodeEnv(mockBinDir: string, credentialMode: CredentialMode, userDataDir: string): NodeJS.ProcessEnv {
@@ -991,6 +1018,20 @@ async function startDebugForApp(webview: Frame, appName: string): Promise<void> 
   await webview.locator(`input[type="checkbox"][data-app="${appName}"]`).check();
   await expectButtonEnabled(webview.locator('#btn-start-debug'));
   await webview.locator('#btn-start-debug').click();
+}
+
+async function expectAttachedSessionCard(webview: Frame, appName: string): Promise<Locator> {
+  const activeCard = webview.locator('.active-card', { hasText: appName });
+  await expect(activeCard.getByText('Debugger Attached')).toBeVisible({ timeout: 45_000 });
+  await expect(activeCard.getByText(/address already in use/i)).toHaveCount(0);
+  return activeCard;
+}
+
+async function stopDebugForApp(webview: Frame, appName: string): Promise<void> {
+  const activeCard = webview.locator('.active-card', { hasText: appName });
+  await activeCard.locator(`[data-stop-app="${appName}"]`).click();
+  await expect(activeCard).toHaveCount(0, { timeout: 10_000 });
+  await expect(webview.locator(`input[type="checkbox"][data-app="${appName}"]`)).toBeEnabled({ timeout: 10_000 });
 }
 
 async function openBreakpointSnapshotsScreen(webview: Frame): Promise<void> {
@@ -2226,6 +2267,31 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
       const errorBoxEvents = await stopErrorBoxMonitor(webview);
       expect(errorBoxEvents).toEqual([]);
+    });
+  });
+
+  test.describe('Debug Session Process Lifecycle', () => {
+    test('User can stop and restart the same attached session without port reuse errors', async () => {
+      const workspaceDir = await createWorkspaceForCapConfigTest({});
+
+      try {
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'restart-race' }, async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await startErrorBoxMonitor(webview);
+
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            await startDebugForApp(webview, 'mock-service-a');
+            await expectAttachedSessionCard(webview, 'mock-service-a');
+            await stopDebugForApp(webview, 'mock-service-a');
+          }
+
+          const errorBoxEvents = await stopErrorBoxMonitor(webview);
+          expect(errorBoxEvents.join('\n')).not.toMatch(/address already in use/i);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
     });
   });
 

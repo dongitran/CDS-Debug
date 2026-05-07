@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.61-pre.1] — 2026
+
+### Fixes
+
+- **Verified SSH tunnel cleanup** — Stop and debug-session termination now await local debug port cleanup and verify the port is free before fast restarts, preventing confusing `address already in use` failures when restarting the same CF app quickly.
+
+---
+
 ## [0.3.61-pre.0] — 2026
 
 ### Security
