@@ -662,12 +662,20 @@ async function withVsCodeSession(
       page: artifacts.workbenchPage,
     });
   } catch (error: unknown) {
-    await persistSessionArtifacts({
+    const failureArtifacts: {
+      diagnostics: SessionDiagnostics;
+      error: unknown;
+      label: string;
+      page?: Page;
+    } = {
       diagnostics,
       error,
       label: 'session-failure',
-      page: artifacts.workbenchPage,
-    }).catch(() => undefined);
+    };
+    if (artifacts.workbenchPage) {
+      failureArtifacts.page = artifacts.workbenchPage;
+    }
+    await persistSessionArtifacts(failureArtifacts).catch(() => undefined);
     throw buildFailureError(error, diagnostics);
   } finally {
     if (artifacts.appProcess) {
@@ -708,8 +716,9 @@ async function expectRegionScreen(webview: Frame): Promise<void> {
   await expect(webview.getByRole('radio', { name: /ae01/i })).toBeAttached();
   await expect(webview.getByRole('radio', { name: /cn40/i })).toBeAttached();
   await expect(webview.getByRole('radio', { name: /sa31/i })).toBeAttached();
-  // Custom endpoint card is always present
-  await expect(webview.getByRole('radio', { name: /Custom endpoint/i })).toBeAttached();
+  // Custom endpoint is a footer action, not a scroll-list radio item.
+  await expect(webview.getByRole('button', { name: 'Custom endpoint' })).toBeVisible();
+  await expect(webview.locator('.region-card-custom')).toHaveCount(0);
   // Region screen must not leak launcher/setup controls
   await expect(webview.locator('#search-input')).toHaveCount(0);
   await expect(webview.locator('#btn-start-debug')).toHaveCount(0);
@@ -733,6 +742,24 @@ async function expectSetupCredentialsScreen(webview: Frame): Promise<void> {
   await expect(webview.locator('#search-input')).toHaveCount(0);
   await expect(webview.locator('#btn-start-debug')).toHaveCount(0);
   await expect(webview.locator('#btn-login')).toHaveCount(0);
+}
+
+async function openCustomEndpointPanel(webview: Frame): Promise<number> {
+  const loginButton = webview.getByRole('button', { name: 'Login to Cloud Foundry' });
+  const beforeBox = await loginButton.boundingBox();
+  expect(beforeBox).not.toBeNull();
+
+  await webview.getByRole('button', { name: 'Custom endpoint' }).click();
+  await expect(webview.locator('#api-endpoint-custom')).toBeVisible();
+  await expect(loginButton).toBeVisible();
+
+  return beforeBox?.y ?? 0;
+}
+
+async function expectLoginButtonYUnchanged(webview: Frame, expectedY: number): Promise<void> {
+  const afterBox = await webview.getByRole('button', { name: 'Login to Cloud Foundry' }).boundingBox();
+  expect(afterBox).not.toBeNull();
+  expect(Math.abs((afterBox?.y ?? 0) - expectedY)).toBeLessThanOrEqual(1);
 }
 
 async function expectReadyScreen(webview: Frame): Promise<void> {
@@ -874,7 +901,7 @@ async function startDomTextMonitor(webview: Frame, key: string, selector: string
       observer?: MutationObserver;
     };
 
-    const monitorWindow = window as Window & Record<string, DomTextMonitor | undefined>;
+    const monitorWindow = window as unknown as Window & Record<string, DomTextMonitor | undefined>;
     monitorWindow[monitorKey]?.observer?.disconnect();
 
     const events: string[] = [];
@@ -906,10 +933,6 @@ async function readPackagesErrorEvents(webview: Frame): Promise<string[]> {
   return readDomTextMonitorEvents(webview, '__cdsDebugPackagesErrorMonitor');
 }
 
-async function readErrorBoxEvents(webview: Frame): Promise<string[]> {
-  return readDomTextMonitorEvents(webview, '__cdsDebugErrorBoxMonitor');
-}
-
 async function readDomTextMonitorEvents(webview: Frame, key: string): Promise<string[]> {
   return webview.evaluate((monitorKey) => {
     type DomTextMonitor = {
@@ -917,7 +940,7 @@ async function readDomTextMonitorEvents(webview: Frame, key: string): Promise<st
       observer?: MutationObserver;
     };
 
-    const monitorWindow = window as Window & Record<string, DomTextMonitor | undefined>;
+    const monitorWindow = window as unknown as Window & Record<string, DomTextMonitor | undefined>;
     return monitorWindow[monitorKey]?.events.slice() ?? [];
   }, key);
 }
@@ -938,7 +961,7 @@ async function stopDomTextMonitor(webview: Frame, key: string): Promise<string[]
       observer?: MutationObserver;
     };
 
-    const monitorWindow = window as Window & Record<string, DomTextMonitor | undefined>;
+    const monitorWindow = window as unknown as Window & Record<string, DomTextMonitor | undefined>;
     monitorWindow[monitorKey]?.observer?.disconnect();
     delete monitorWindow[monitorKey];
   }, key);
@@ -1681,6 +1704,35 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
   });
 
+  test('User can open custom endpoint without losing region context', async () => {
+    await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+      const webview = await openCdsDebugWebview(workbenchPage);
+      await injectMessage(webview, {
+        type: 'CF_TOPOLOGY',
+        payload: {
+          ready: true,
+          accounts: [{
+            regionKey: 'us10',
+            regionLabel: 'US East (VA) - AWS (us10)',
+            apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
+            orgName: 'mock-org-beta',
+            spaces: ['app'],
+          }],
+        },
+      });
+
+      await webview.getByRole('tab', { name: 'Region' }).click();
+      const loginButtonY = await openCustomEndpointPanel(webview);
+      await expect(webview.locator('.step-badge', { hasText: '1/3' })).toBeVisible();
+      await expect(webview.getByText('CF Region / Org')).toBeVisible();
+      await expect(webview.getByRole('tab', { name: 'Org' })).toBeVisible();
+      await expect(webview.getByRole('tab', { name: 'Region (Custom)' })).toHaveAttribute('aria-selected', 'true');
+      await expect(webview.getByRole('radiogroup', { name: 'Cloud Foundry regions' })).toHaveCount(0);
+      await expectLoginButtonYUnchanged(webview, loginButtonY);
+      await captureStepEvidence(workbenchPage, 'region-tab-custom-endpoint-panel');
+    });
+  });
+
   test('User can see setup screen when credentials are missing', async () => {
     await withVsCodeSession({ credentialMode: 'none', cfScenario: 'success' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
@@ -1732,23 +1784,24 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await expectRegionScreen(webview);
 
-      // Select the custom endpoint card — UI swaps endpoint radio-desc for a text input
-      const customRegionCard = webview.locator('.region-card-custom');
-      await customRegionCard.scrollIntoViewIfNeeded();
-      await customRegionCard.click();
-      await expect(webview.locator('input[name="cf-region"][value="custom"]')).toBeChecked();
+      const loginButtonY = await openCustomEndpointPanel(webview);
       await expect(webview.locator('#api-endpoint-custom')).toBeVisible();
       await expect(webview.locator('.radio-desc', { hasText: 'Enter your full CF API URL' })).toBeVisible();
       // Standard eu10 endpoint text is gone when custom is selected
       await expect(webview.locator('.radio-desc', { hasText: 'api.cf.eu10.hana.ondemand.com' })).toHaveCount(0);
+      await expectLoginButtonYUnchanged(webview, loginButtonY);
 
       await webview.locator('#api-endpoint-custom').fill('http://api.cf.invalid.hana.ondemand.com');
 
       await loginFromRegionScreen(webview);
       await expect(webview.getByText('API endpoint must start with https://')).toBeVisible();
-      await expectRegionScreen(webview);
+      await expect(webview.locator('.step-badge', { hasText: '1/3' })).toBeVisible();
+      await expect(webview.getByText('CF Region / Org')).toBeVisible();
+      await expect(webview.locator('.section-label', { hasText: 'Custom Endpoint' })).toBeVisible();
       await expect(webview.locator('#api-endpoint-custom')).toBeVisible();
       await expect(webview.locator('#api-endpoint-custom')).toHaveValue('http://api.cf.invalid.hana.ondemand.com');
+      await expect(webview.getByRole('button', { name: 'Back to region list' })).toBeVisible();
+      await expectLoginButtonYUnchanged(webview, loginButtonY);
       await expect(webview.locator('#btn-cancel-login')).toHaveCount(0);
       await expect(webview.getByText('Logging in…')).toHaveCount(0);
     });
@@ -1759,10 +1812,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await expectRegionScreen(webview);
 
-      const customRegionCard = webview.locator('.region-card-custom');
-      await customRegionCard.scrollIntoViewIfNeeded();
-      await customRegionCard.click();
-      await expect(webview.locator('input[name="cf-region"][value="custom"]')).toBeChecked();
+      await openCustomEndpointPanel(webview);
       await webview.locator('#api-endpoint-custom').fill('https://api.cf.us10.hana.ondemand.com');
 
       await startErrorBoxMonitor(webview);

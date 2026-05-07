@@ -49,6 +49,10 @@ describe('webview markup contracts', () => {
     expect(rendererScript).toContain('region-selector-tabs');
     expect(rendererScript).toContain('class="region-list"');
     expect(rendererScript).toContain('role="radiogroup"');
+    expect(rendererScript).toContain('id="btn-custom-endpoint"');
+    expect(rendererScript).toContain('id="api-endpoint-custom"');
+    expect(rendererScript).toContain('id="btn-region-list"');
+    expect(rendererScript).toContain('Region (Custom)');
     expect(rendererScript).toContain('data-region-selector-mode="org"');
     expect(rendererScript).toContain('data-region-selector-mode="region"');
     expect(rendererScript).toContain('class="org-search-row ${selected ?');
@@ -56,6 +60,7 @@ describe('webview markup contracts', () => {
     expect(rendererScript).toContain('aria-pressed="');
     expect(rendererScript).toContain('Continue with Selected Org');
     expect(rendererScript).toContain('CF Region / Org');
+    expect(rendererScript).not.toContain('region-card-custom');
   });
 
   it('injects the complete sorted Cloud Foundry region catalog', () => {

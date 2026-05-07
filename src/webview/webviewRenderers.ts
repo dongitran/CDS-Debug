@@ -37,12 +37,6 @@ export function getRendererScriptContent(): string {
       });
     }
 
-    function shouldShowCustomRegion(query) {
-      const q = String(query || '').trim().toLowerCase();
-      if (q.length === 0 || state.useCustomEndpoint) return true;
-      return 'custom endpoint api url'.indexOf(q) !== -1;
-    }
-
     function findTopologyAccount(regionKey, orgName) {
       const accounts = (state.cfTopology && state.cfTopology.accounts) || [];
       for (const account of accounts) {
@@ -127,38 +121,14 @@ export function getRendererScriptContent(): string {
         </label>
       \`).join('');
 
-      const customCard = shouldShowCustomRegion(state.regionSearchQuery) ? \`
-        <label class="region-card region-card-custom \${state.useCustomEndpoint ? 'selected' : ''}">
-          <input type="radio" name="cf-region" value="custom"
-            \${state.useCustomEndpoint ? 'checked' : ''} />
-          <span class="region-card-content">
-            <span class="region-main">
-              <span class="region-code custom-region-code">Custom</span>
-              <span class="region-name">Custom endpoint</span>
-            </span>
-            <span class="region-endpoint">Enter a full CF API URL</span>
-          </span>
-        </label>
-      \` : '';
-
-      if (!regionCards && !customCard) {
+      if (!regionCards) {
         return \`<div class="region-list-empty">No regions match "\${escape(state.regionSearchQuery || '')}"</div>\`;
       }
-      return regionCards + customCard;
+      return regionCards;
     }
 
     function renderRegionPickerPanel(includeSearch) {
-      const customInput = state.useCustomEndpoint ? \`
-        <input class="input" id="api-endpoint-custom"
-          placeholder="https://api.cf.<region>.<domain>"
-          value="\${escape(state.apiEndpoint)}" />
-        <div class="radio-desc" style="margin-top:4px">Enter your full CF API URL</div>
-        <div style="height:8px"></div>
-      \` : \`
-        <div class="radio-desc" style="margin-bottom:8px">
-          Endpoint: <code>\${escape(regionToEndpoint(state.selectedRegion))}</code>
-        </div>
-      \`;
+      if (state.useCustomEndpoint) return renderCustomEndpointPanel();
 
       const searchHtml = includeSearch ? \`
         <div class="region-search-block">
@@ -172,12 +142,32 @@ export function getRendererScriptContent(): string {
         <div class="region-list" role="radiogroup" aria-label="Cloud Foundry regions">
           \${renderRegionCards()}
         </div>
-        \${customInput}
+        <div class="radio-desc region-current-endpoint">
+          Endpoint: <code>\${escape(regionToEndpoint(state.selectedRegion))}</code>
+        </div>
+      \`;
+    }
+
+    function renderCustomEndpointPanel() {
+      return \`
+        <div class="custom-endpoint-panel">
+          <div class="section-label">Custom Endpoint</div>
+          <label class="sr-only" for="api-endpoint-custom">Custom CF API endpoint</label>
+          <input class="input custom-endpoint-input" id="api-endpoint-custom" type="url"
+            placeholder="https://api.cf.<region>.<domain>"
+            value="\${escape(state.apiEndpoint)}"
+            autocomplete="off" spellcheck="false" />
+          <div class="radio-desc custom-endpoint-hint">Enter your full CF API URL</div>
+          <button class="btn btn-secondary custom-endpoint-back" id="btn-region-list" type="button">
+            Back to region list
+          </button>
+        </div>
       \`;
     }
 
     function renderRegionTabs() {
       const mode = state.regionSelectorMode === 'region' ? 'region' : 'org';
+      const regionLabel = state.useCustomEndpoint ? 'Region (Custom)' : 'Region';
       return \`
         <div class="region-selector-tabs" role="tablist" aria-label="Cloud Foundry selector">
           <button class="selector-tab \${mode === 'org' ? 'active' : ''}" type="button"
@@ -185,18 +175,25 @@ export function getRendererScriptContent(): string {
             data-region-selector-mode="org">Org</button>
           <button class="selector-tab \${mode === 'region' ? 'active' : ''}" type="button"
             role="tab" aria-selected="\${mode === 'region' ? 'true' : 'false'}"
-            data-region-selector-mode="region">Region</button>
+            data-region-selector-mode="region">\${regionLabel}</button>
         </div>
       \`;
     }
 
-    function renderRegionFooterButton(topologyReady) {
+    function renderRegionFooter(topologyReady) {
+      const showCustomButton = (!topologyReady || state.regionSelectorMode === 'region') && !state.useCustomEndpoint;
+      const customButton = showCustomButton
+        ? '<button class="btn btn-secondary" id="btn-custom-endpoint" type="button">Custom endpoint</button>'
+        : '';
+      let loginButton;
       if (!topologyReady || state.regionSelectorMode === 'region') {
-        return '<button class="btn" id="btn-login">Login to Cloud Foundry</button>';
+        loginButton = '<button class="btn" id="btn-login">Login to Cloud Foundry</button>';
+      } else {
+        const disabled = findSelectedTopologyAccount() ? '' : 'disabled';
+        const label = disabled ? 'Select an Org to Continue' : 'Continue with Selected Org';
+        loginButton = \`<button class="btn" id="btn-login" \${disabled}>\${label}</button>\`;
       }
-      const disabled = findSelectedTopologyAccount() ? '' : 'disabled';
-      const label = disabled ? 'Select an Org to Continue' : 'Continue with Selected Org';
-      return \`<button class="btn" id="btn-login" \${disabled}>\${label}</button>\`;
+      return \`<div class="region-actions">\${customButton}\${loginButton}</div>\`;
     }
 
     function findSelectedTopologyAccount() {
@@ -221,7 +218,7 @@ export function getRendererScriptContent(): string {
           <div class="region-tab-panel" role="tabpanel">
             \${topologyReady ? activePanel : renderRegionPickerPanel(true)}
           </div>
-          \${renderRegionFooterButton(topologyReady)}
+          \${renderRegionFooter(topologyReady)}
         </div>
       \`;
     }

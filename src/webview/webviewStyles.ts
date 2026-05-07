@@ -153,8 +153,11 @@ export function getStyles(): string {
       display: flex;
       flex-direction: column;
     }
-    .region-layout > .btn {
+    .region-actions {
       flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
 
     /* ── Region selector tabs ── */
@@ -275,10 +278,6 @@ export function getStyles(): string {
       text-transform: uppercase;
       white-space: nowrap;
     }
-    .custom-region-code {
-      font-size: 11px;
-      text-transform: none;
-    }
     .region-name {
       min-width: 0;
       font-size: 12px;
@@ -297,6 +296,30 @@ export function getStyles(): string {
 
     .region-search-block {
       margin-bottom: 8px;
+    }
+
+    .region-current-endpoint {
+      margin-bottom: 8px;
+    }
+
+    .custom-endpoint-panel {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .custom-endpoint-input {
+      flex-shrink: 0;
+    }
+
+    .custom-endpoint-hint {
+      margin-top: 6px;
+      margin-bottom: 10px;
+    }
+
+    .custom-endpoint-back {
+      margin-top: auto;
     }
 
     .region-list-empty {

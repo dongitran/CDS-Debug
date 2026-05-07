@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.61] — 2026
+
+### Fixes
+
+- **Custom endpoint flow** — Moved custom CF API endpoint entry out of the scrollable region list into a dedicated Region tab panel action, keeping the `1/3 CF Region / Org` header, selector tabs, and `Login to Cloud Foundry` footer position stable.
+
+---
+
 ## [0.3.60] — 2026
 
 ### Changes

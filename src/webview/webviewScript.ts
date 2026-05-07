@@ -466,17 +466,28 @@ export function getScript(nonce: string): string {
         if (!input) return;
         const value = input.value;
         state.selectedTopologyOrg = null;
-        if (value === 'custom') {
-          state.useCustomEndpoint = true;
-        } else {
-          state.useCustomEndpoint = false;
-          state.selectedRegion = value;
-          state.apiEndpoint = regionToEndpoint(value);
-        }
+        state.useCustomEndpoint = false;
+        state.selectedRegion = value;
+        state.apiEndpoint = regionToEndpoint(value);
         render();
       });
 
       $('api-endpoint-custom')?.addEventListener('input', e => { state.apiEndpoint = e.target.value; });
+
+      $('btn-custom-endpoint')?.addEventListener('click', () => {
+        state.regionSelectorMode = 'region';
+        state.useCustomEndpoint = true;
+        state.selectedTopologyOrg = null;
+        state.error = null;
+        render();
+      });
+
+      $('btn-region-list')?.addEventListener('click', () => {
+        state.useCustomEndpoint = false;
+        state.error = null;
+        state.apiEndpoint = regionToEndpoint(state.selectedRegion);
+        render();
+      });
 
       $('btn-login')?.addEventListener('click', () => {
         if (hasReadyTopology() && state.regionSelectorMode !== 'region') {
