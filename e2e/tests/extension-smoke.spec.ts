@@ -703,8 +703,8 @@ async function expectRegionScreen(webview: Frame): Promise<void> {
   await expect(webview.getByRole('radiogroup', { name: 'Cloud Foundry regions' })).toBeVisible();
   await expect(webview.getByRole('button', { name: 'Login to Cloud Foundry' })).toBeVisible();
   // Region cards are rendered with radio inputs for every region
-  await expect(webview.getByRole('radio', { name: /eu10/i })).toBeAttached();
-  await expect(webview.getByRole('radio', { name: /us10/i })).toBeAttached();
+  await expect(webview.getByRole('radio', { name: 'eu10 Europe (Frankfurt) - AWS' })).toBeAttached();
+  await expect(webview.getByRole('radio', { name: 'us10 US East (VA) - AWS' })).toBeAttached();
   await expect(webview.getByRole('radio', { name: /ae01/i })).toBeAttached();
   await expect(webview.getByRole('radio', { name: /cn40/i })).toBeAttached();
   await expect(webview.getByRole('radio', { name: /sa31/i })).toBeAttached();
@@ -1645,6 +1645,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.getByText('Select Region')).toBeVisible();
       const regionSearch = webview.getByLabel('Search regions');
       const regionList = webview.getByRole('radiogroup', { name: 'Cloud Foundry regions' });
+      const supplementalRegionCases = [
+        { code: 'eu10-005', endpoint: 'api.cf.eu10-005.hana.ondemand.com' },
+        { code: 'eu20-002', endpoint: 'api.cf.eu20-002.hana.ondemand.com' },
+        { code: 'us10-001', endpoint: 'api.cf.us10-001.hana.ondemand.com' },
+        { code: 'us10-004', endpoint: 'api.cf.us10-004.hana.ondemand.com' },
+      ] as const;
       await expect(regionSearch).toBeVisible();
       await expect.poll(async () => regionList.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
 
@@ -1652,11 +1658,17 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.locator('.region-card', { hasText: 'us20' })).toBeVisible();
       await expect(webview.locator('.region-card', { hasText: 'eu10' })).toHaveCount(0);
 
-      await regionSearch.fill('us10-004');
-      await expect(webview.locator('.region-card', { hasText: 'us10-004' })).toBeVisible();
-      await webview.locator('.region-card', { hasText: 'us10-004' }).click();
-      await expect(webview.locator('.radio-desc', { hasText: 'api.cf.us10-004.hana.ondemand.com' })).toBeVisible();
-      await captureStepEvidence(workbenchPage, 'region-tab-us10-004-result');
+      for (const supplementalRegion of supplementalRegionCases) {
+        const regionCard = webview.locator('.region-card', { hasText: supplementalRegion.code });
+        await regionSearch.fill(supplementalRegion.code);
+        await expect(regionCard).toBeVisible();
+        await regionCard.click();
+        await expect(webview.locator('.radio-desc', { hasText: supplementalRegion.endpoint })).toBeVisible();
+        if (supplementalRegion.code === 'eu20-002') {
+          await captureStepEvidence(workbenchPage, 'region-tab-sap-supplemental-region-result');
+        }
+      }
+      await captureStepEvidence(workbenchPage, 'region-tab-supplemental-regions-result');
 
       await regionSearch.fill('china');
       await expect(webview.locator('.region-card', { hasText: 'cn40' })).toBeVisible();
@@ -1721,7 +1733,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expectRegionScreen(webview);
 
       // Select the custom endpoint card — UI swaps endpoint radio-desc for a text input
-      await webview.locator('input[name="cf-region"][value="custom"]').check({ force: true });
+      const customRegionCard = webview.locator('.region-card-custom');
+      await customRegionCard.scrollIntoViewIfNeeded();
+      await customRegionCard.click();
+      await expect(webview.locator('input[name="cf-region"][value="custom"]')).toBeChecked();
       await expect(webview.locator('#api-endpoint-custom')).toBeVisible();
       await expect(webview.locator('.radio-desc', { hasText: 'Enter your full CF API URL' })).toBeVisible();
       // Standard eu10 endpoint text is gone when custom is selected
@@ -1744,7 +1759,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await expectRegionScreen(webview);
 
-      await webview.locator('input[name="cf-region"][value="custom"]').check({ force: true });
+      const customRegionCard = webview.locator('.region-card-custom');
+      await customRegionCard.scrollIntoViewIfNeeded();
+      await customRegionCard.click();
+      await expect(webview.locator('input[name="cf-region"][value="custom"]')).toBeChecked();
       await webview.locator('#api-endpoint-custom').fill('https://api.cf.us10.hana.ondemand.com');
 
       await startErrorBoxMonitor(webview);

@@ -61,25 +61,72 @@ describe('webview markup contracts', () => {
   it('injects the complete sorted Cloud Foundry region catalog', () => {
     const regions = readInjectedRegions(getScript('test-nonce'));
     const sortedNames = regions.map((region) => region.name);
+    const supplementalRegions = [
+      {
+        code: 'eu10-002',
+        name: 'Europe (Frankfurt) - AWS',
+        label: 'Europe (Frankfurt) - AWS (eu10-002)',
+        apiEndpoint: 'https://api.cf.eu10-002.hana.ondemand.com',
+      },
+      {
+        code: 'eu10-003',
+        name: 'Europe (Frankfurt) - AWS',
+        label: 'Europe (Frankfurt) - AWS (eu10-003)',
+        apiEndpoint: 'https://api.cf.eu10-003.hana.ondemand.com',
+      },
+      {
+        code: 'eu10-004',
+        name: 'Europe (Frankfurt) - AWS',
+        label: 'Europe (Frankfurt) - AWS (eu10-004)',
+        apiEndpoint: 'https://api.cf.eu10-004.hana.ondemand.com',
+      },
+      {
+        code: 'eu10-005',
+        name: 'Europe (Frankfurt) - AWS',
+        label: 'Europe (Frankfurt) - AWS (eu10-005)',
+        apiEndpoint: 'https://api.cf.eu10-005.hana.ondemand.com',
+      },
+      {
+        code: 'eu20-001',
+        name: 'Europe (Netherlands) - Azure',
+        label: 'Europe (Netherlands) - Azure (eu20-001)',
+        apiEndpoint: 'https://api.cf.eu20-001.hana.ondemand.com',
+      },
+      {
+        code: 'eu20-002',
+        name: 'Europe (Netherlands) - Azure',
+        label: 'Europe (Netherlands) - Azure (eu20-002)',
+        apiEndpoint: 'https://api.cf.eu20-002.hana.ondemand.com',
+      },
+      {
+        code: 'us10-001',
+        name: 'US East (VA) - AWS',
+        label: 'US East (VA) - AWS (us10-001)',
+        apiEndpoint: 'https://api.cf.us10-001.hana.ondemand.com',
+      },
+      {
+        code: 'us10-002',
+        name: 'US East (VA) - AWS',
+        label: 'US East (VA) - AWS (us10-002)',
+        apiEndpoint: 'https://api.cf.us10-002.hana.ondemand.com',
+      },
+      {
+        code: 'us10-004',
+        name: 'US East (VA) - AWS',
+        label: 'US East (VA) - AWS (us10-004)',
+        apiEndpoint: 'https://api.cf.us10-004.hana.ondemand.com',
+      },
+    ] as const satisfies readonly WebviewRegion[];
 
-    expect(regions).toHaveLength(43);
+    expect(regions).toHaveLength(50);
     expect(sortedNames).toEqual([...sortedNames].sort((a, b) => a.localeCompare(b)));
     expect(regions[0]?.code).toBe('ap12');
     expect(regions.some((region) => region.code === 'ae01')).toBe(true);
     expect(regions.some((region) => region.code === 'sa31')).toBe(true);
     expect(regions.some((region) => region.code === 'uk20')).toBe(true);
-    expect(regions.find((region) => region.code === 'eu10-004')).toEqual({
-      code: 'eu10-004',
-      name: 'Europe (Frankfurt) - AWS',
-      label: 'Europe (Frankfurt) - AWS (eu10-004)',
-      apiEndpoint: 'https://api.cf.eu10-004.hana.ondemand.com',
-    });
-    expect(regions.find((region) => region.code === 'us10-004')).toEqual({
-      code: 'us10-004',
-      name: 'US East (VA) - AWS',
-      label: 'US East (VA) - AWS (us10-004)',
-      apiEndpoint: 'https://api.cf.us10-004.hana.ondemand.com',
-    });
+    for (const supplementalRegion of supplementalRegions) {
+      expect(regions.find((region) => region.code === supplementalRegion.code)).toEqual(supplementalRegion);
+    }
     expect(regions.find((region) => region.code === 'cn20')?.apiEndpoint)
       .toBe('https://api.cf.cn20.platform.sapcloud.cn');
     expect(regions.find((region) => region.code === 'cn40')?.apiEndpoint)

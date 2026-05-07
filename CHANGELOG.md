@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.60] — 2026
+
+### Changes
+
+- **CF region catalog** — Completed the `1/3 CF Region / Org` picker supplemental endpoints from SAP's Cloud Foundry region table, adding `eu10-002`, `eu10-003`, `eu10-005`, `eu20-001`, `eu20-002`, `us10-001`, and `us10-002` while keeping the product-supported `us10-004` endpoint.
+
+---
+
 ## [0.3.58] — 2026
 
 ### Changes

@@ -20,12 +20,56 @@ function removeRegionKeySuffix(label: string, code: string): string {
   return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
 }
 
+// cf-sync can lag SAP's published landscape table; keep UI-only additions here
+// so login/debug can target newer endpoints without passing unsupported keys to cf-sync.
 const ADDITIONAL_WEBVIEW_CF_REGIONS = [
+  {
+    code: 'eu10-002',
+    name: 'Europe (Frankfurt) - AWS',
+    label: 'Europe (Frankfurt) - AWS (eu10-002)',
+    apiEndpoint: 'https://api.cf.eu10-002.hana.ondemand.com',
+  },
+  {
+    code: 'eu10-003',
+    name: 'Europe (Frankfurt) - AWS',
+    label: 'Europe (Frankfurt) - AWS (eu10-003)',
+    apiEndpoint: 'https://api.cf.eu10-003.hana.ondemand.com',
+  },
   {
     code: 'eu10-004',
     name: 'Europe (Frankfurt) - AWS',
     label: 'Europe (Frankfurt) - AWS (eu10-004)',
     apiEndpoint: 'https://api.cf.eu10-004.hana.ondemand.com',
+  },
+  {
+    code: 'eu10-005',
+    name: 'Europe (Frankfurt) - AWS',
+    label: 'Europe (Frankfurt) - AWS (eu10-005)',
+    apiEndpoint: 'https://api.cf.eu10-005.hana.ondemand.com',
+  },
+  {
+    code: 'eu20-001',
+    name: 'Europe (Netherlands) - Azure',
+    label: 'Europe (Netherlands) - Azure (eu20-001)',
+    apiEndpoint: 'https://api.cf.eu20-001.hana.ondemand.com',
+  },
+  {
+    code: 'eu20-002',
+    name: 'Europe (Netherlands) - Azure',
+    label: 'Europe (Netherlands) - Azure (eu20-002)',
+    apiEndpoint: 'https://api.cf.eu20-002.hana.ondemand.com',
+  },
+  {
+    code: 'us10-001',
+    name: 'US East (VA) - AWS',
+    label: 'US East (VA) - AWS (us10-001)',
+    apiEndpoint: 'https://api.cf.us10-001.hana.ondemand.com',
+  },
+  {
+    code: 'us10-002',
+    name: 'US East (VA) - AWS',
+    label: 'US East (VA) - AWS (us10-002)',
+    apiEndpoint: 'https://api.cf.us10-002.hana.ondemand.com',
   },
   {
     code: 'us10-004',
@@ -109,7 +153,7 @@ export function getScript(nonce: string): string {
       searchQuery: '',
       error: null,
       activeSessions: {}, // { appName: { status, message, msgPhase, intervalId } }
-      syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 14 },
+      syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 0 },
       cacheConfig: { enabled: true, intervalHours: 24 },
       // Branch preparation state: [{ appName, targetBranch, currentBranch, step, message }]
       branchPrepServices: [],

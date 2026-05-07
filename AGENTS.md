@@ -147,7 +147,7 @@ pnpm test:report          # Open HTML report
 7. Malformed user setting falls back to workspace cap config.
 
 ### CF Region / Org
-1. User can switch to region fallback and filter supplemental `us10-004` plus China region endpoints after synced topology is ready.
+1. User can switch to region fallback and filter supplemental SAP `eu10-*`, `eu20-*`, and `us10-*` endpoint mappings plus China region endpoints after synced topology is ready.
 
 ### Ready Screen — Actions and Navigation
 1. User can change mapping and return to CF Region / Org.
