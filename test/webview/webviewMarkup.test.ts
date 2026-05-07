@@ -62,7 +62,7 @@ describe('webview markup contracts', () => {
     const regions = readInjectedRegions(getScript('test-nonce'));
     const sortedNames = regions.map((region) => region.name);
 
-    expect(regions).toHaveLength(42);
+    expect(regions).toHaveLength(43);
     expect(sortedNames).toEqual([...sortedNames].sort((a, b) => a.localeCompare(b)));
     expect(regions[0]?.code).toBe('ap12');
     expect(regions.some((region) => region.code === 'ae01')).toBe(true);
@@ -73,6 +73,12 @@ describe('webview markup contracts', () => {
       name: 'Europe (Frankfurt) - AWS',
       label: 'Europe (Frankfurt) - AWS (eu10-004)',
       apiEndpoint: 'https://api.cf.eu10-004.hana.ondemand.com',
+    });
+    expect(regions.find((region) => region.code === 'us10-004')).toEqual({
+      code: 'us10-004',
+      name: 'US East (VA) - AWS',
+      label: 'US East (VA) - AWS (us10-004)',
+      apiEndpoint: 'https://api.cf.us10-004.hana.ondemand.com',
     });
     expect(regions.find((region) => region.code === 'cn20')?.apiEndpoint)
       .toBe('https://api.cf.cn20.platform.sapcloud.cn');

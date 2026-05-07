@@ -146,6 +146,9 @@ pnpm test:report          # Open HTML report
 6. Per-service cap config overrides both user setting and workspace fallback.
 7. Malformed user setting falls back to workspace cap config.
 
+### CF Region / Org
+1. User can switch to region fallback and filter supplemental `us10-004` plus China region endpoints after synced topology is ready.
+
 ### Ready Screen — Actions and Navigation
 1. User can change mapping and return to CF Region / Org.
 

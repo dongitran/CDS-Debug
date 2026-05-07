@@ -1652,6 +1652,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.locator('.region-card', { hasText: 'us20' })).toBeVisible();
       await expect(webview.locator('.region-card', { hasText: 'eu10' })).toHaveCount(0);
 
+      await regionSearch.fill('us10-004');
+      await expect(webview.locator('.region-card', { hasText: 'us10-004' })).toBeVisible();
+      await webview.locator('.region-card', { hasText: 'us10-004' }).click();
+      await expect(webview.locator('.radio-desc', { hasText: 'api.cf.us10-004.hana.ondemand.com' })).toBeVisible();
+      await captureStepEvidence(workbenchPage, 'region-tab-us10-004-result');
+
       await regionSearch.fill('china');
       await expect(webview.locator('.region-card', { hasText: 'cn40' })).toBeVisible();
       await expect(webview.locator('.region-card', { hasText: 'cn20' })).toBeVisible();

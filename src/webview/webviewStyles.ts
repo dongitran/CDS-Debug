@@ -268,11 +268,12 @@ export function getStyles(): string {
       min-width: 0;
     }
     .region-code {
-      flex: 0 0 42px;
+      flex: 0 0 64px;
       font-size: 12px;
       font-weight: 700;
       font-family: var(--vscode-editor-font-family);
       text-transform: uppercase;
+      white-space: nowrap;
     }
     .custom-region-code {
       font-size: 11px;
