@@ -27,6 +27,12 @@ const ADDITIONAL_WEBVIEW_CF_REGIONS = [
     label: 'Europe (Frankfurt) - AWS (eu10-004)',
     apiEndpoint: 'https://api.cf.eu10-004.hana.ondemand.com',
   },
+  {
+    code: 'us10-004',
+    name: 'US East (VA) - AWS',
+    label: 'US East (VA) - AWS (us10-004)',
+    apiEndpoint: 'https://api.cf.us10-004.hana.ondemand.com',
+  },
 ] as const satisfies readonly WebviewCfRegion[];
 
 const WEBVIEW_CF_REGIONS: readonly WebviewCfRegion[] = [
