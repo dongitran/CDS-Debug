@@ -1,15 +1,22 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import type { CapDebugConfig, DebugTarget, LaunchConfiguration, LaunchJson } from '../types/index';
 import { readCapDebugConfig } from './capDebugConfig';
+import { logWarn } from './logger';
 import { parseRemoteRootSetting } from './remoteRootResolver';
 
 export { readCapDebugConfig } from './capDebugConfig';
 
 const LAUNCH_JSON_VERSION = '0.2.0';
-const GENERATED_SRV_PATH = 'gen/srv';
 const SKIP_FILES = ['<node_internals>/**'];
 export const DEBUG_CONFIG_PREFIX = 'Debug: ';
+
+// Glob folders that may contain runtime JS for a typical SAP CAP service. `srv` is the
+// canonical handler location per https://cap.cloud.sap/docs/node.js/cds-serve, while
+// `gen/srv` is emitted by `cds build` for deploy. The remaining folders cover common
+// custom-bundling layouts (esbuild → dist, tsc → build, app-layer libs → app/lib).
+const OUT_FILES_FOLDERS = ['srv', 'gen/srv', 'app', 'lib', 'dist', 'build'] as const;
+const SCRIPT_GLOB_SUFFIX = '/**/*.{js,cjs,mjs}';
 
 export interface LaunchGenerationOptions {
   resolvedRemoteRoots?: ReadonlyMap<string, string>;
@@ -36,7 +43,6 @@ export function buildLaunchConfiguration(
   localRootOverride?: string,
 ): LaunchConfiguration {
   const localRoot = localRootOverride ?? target.folderPath;
-  const outFilesRoot = join(target.folderPath, GENERATED_SRV_PATH);
   const config: LaunchConfiguration = {
     type: 'node',
     request: 'attach',
@@ -48,16 +54,39 @@ export function buildLaunchConfiguration(
     sourceMaps: true,
     restart: true,
     skipFiles: SKIP_FILES,
-    outFiles: [`${outFilesRoot}/**/*.js`],
+    outFiles: buildOutFilesGlobs(localRoot),
+    // null disables the workspace-only filter. Required for attach-mode debugging
+    // through SSH tunnels because source maps embed remote paths (/home/vcap/app/...)
+    // that fall outside the workspace and would otherwise be silently dropped.
+    // See microsoft/vscode-js-debug#759.
+    resolveSourceMapLocations: null,
   };
 
-  // Only include remoteRoot when explicitly provided — omitting it avoids
-  // path-mapping errors when the remote and local paths happen to align.
   if (remoteRoot !== undefined) {
     config.remoteRoot = remoteRoot;
   }
 
   return config;
+}
+
+function buildOutFilesGlobs(localRoot: string): string[] {
+  const include = OUT_FILES_FOLDERS.map((folder) => `${join(localRoot, folder)}${SCRIPT_GLOB_SUFFIX}`);
+  return [...include, `!${localRoot}/**/node_modules/**`];
+}
+
+async function resolveLocalRootSafe(rawPath: string): Promise<string> {
+  try {
+    const resolved = await realpath(rawPath);
+    if (typeof resolved !== 'string' || resolved.length === 0) return rawPath;
+    if (resolved !== rawPath) {
+      logWarn(`[LaunchConfig] localRoot resolved via symlink: ${rawPath} → ${resolved}`);
+    }
+    return resolved;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    logWarn(`[LaunchConfig] failed to resolve realpath for ${rawPath} (${message}); using raw path`);
+    return rawPath;
+  }
 }
 
 export async function generateLaunchConfigurations(
@@ -70,8 +99,13 @@ export async function generateLaunchConfigurations(
     const appConfig = await readCapDebugConfig(target.folderPath);
     // Per-app config takes priority; workspace-level .vscode/cap-debug-config.json is the fallback
     const configuredRemoteRoot = appConfig?.remoteRoot ?? fallbackConfig?.remoteRoot;
-    const remoteRoot = resolveLaunchRemoteRoot(configuredRemoteRoot, options.resolvedRemoteRoots?.get(target.appName));
-    configs.push(buildLaunchConfiguration(target, remoteRoot));
+    const localRoot = await resolveLocalRootSafe(target.folderPath);
+    const remoteRoot = resolveLaunchRemoteRoot(
+      configuredRemoteRoot,
+      options.resolvedRemoteRoots?.get(target.appName),
+      localRoot,
+    );
+    configs.push(buildLaunchConfiguration(target, remoteRoot, localRoot));
   }
   return configs;
 }
@@ -115,11 +149,21 @@ export async function mergeLaunchJson(
 function resolveLaunchRemoteRoot(
   configuredRemoteRoot: string | undefined,
   resolvedRemoteRoot: string | undefined,
+  localRoot: string,
 ): string | undefined {
   const setting = parseRemoteRootSetting(configuredRemoteRoot);
   if (setting.kind === 'literal') return setting.value;
-  if (setting.kind === 'regex') return resolvedRemoteRoot;
-  return undefined;
+  if (setting.kind !== 'regex') return undefined;
+  if (resolvedRemoteRoot !== undefined) return resolvedRemoteRoot;
+  // Sprint 1 Fix #1 — regex configured but the lookup has not yet produced a match.
+  // Falling back to localRoot guarantees launch.json includes a remoteRoot so VS Code
+  // installs a path-mapping rule. Without this, source maps with embedded remote paths
+  // are silently dropped and breakpoints stay unbound until a Stop+Start cycle warms
+  // the resolver cache.
+  logWarn(
+    `[LaunchConfig] regex remoteRoot "${setting.pattern}" did not resolve; falling back to localRoot ${localRoot}`,
+  );
+  return localRoot;
 }
 
 // Removes configurations with the given debug names (e.g. "Debug: my-app")

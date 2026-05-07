@@ -78,6 +78,13 @@ export interface LaunchConfiguration {
   restart: boolean;
   skipFiles: string[];
   outFiles: string[];
+  /**
+   * `null` disables the default workspace-only filter. Required for attach-mode
+   * debugging through SSH tunnels because source maps embed remote paths
+   * (e.g. /home/vcap/app/...) that fall outside the workspace and would
+   * otherwise be silently dropped. See microsoft/vscode-js-debug#759.
+   */
+  resolveSourceMapLocations?: string[] | null;
 }
 
 export interface LaunchJson {

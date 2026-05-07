@@ -7,6 +7,13 @@ vi.mock('vscode', () => ({
       inspect: () => undefined,
     }),
   },
+  window: {
+    createOutputChannel: () => ({
+      appendLine: vi.fn(),
+      dispose: vi.fn(),
+      show: vi.fn(),
+    }),
+  },
 }));
 
 import {
@@ -29,6 +36,9 @@ const TARGETS: DebugTarget[] = [
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(fs.access).mockResolvedValue(undefined);
+  // realpath is auto-mocked to return undefined; default to identity passthrough so existing
+  // tests continue to compare raw paths. Tests that exercise symlink resolution override this.
+  vi.mocked(fs.realpath).mockImplementation((path) => Promise.resolve(String(path)));
 });
 
 describe('readCapDebugConfig', () => {
@@ -89,9 +99,9 @@ describe('buildLaunchConfiguration', () => {
     expect(config.localRoot).toBe('/group/sub-a/myapp_svc_one');
   });
 
-  it('sets outFiles using the generated srv path', () => {
+  it('keeps the gen/srv compiled output folder in the outFiles glob list', () => {
     const config = buildLaunchConfiguration(target, undefined);
-    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/gen/srv/**/*.js');
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/gen/srv/**/*.{js,cjs,mjs}');
   });
 
   it('sets sourceMaps to true', () => {
@@ -117,6 +127,29 @@ describe('buildLaunchConfiguration', () => {
   it('omits remoteRoot when not provided', () => {
     const config = buildLaunchConfiguration(target, undefined);
     expect('remoteRoot' in config).toBe(false);
+  });
+
+  it('extends outFiles to cover the runtime srv folder, not just gen/srv', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/srv/**/*.{js,cjs,mjs}');
+  });
+
+  it('includes additional CAP layout folders (app, lib, dist, build) in outFiles', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/app/**/*.{js,cjs,mjs}');
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/lib/**/*.{js,cjs,mjs}');
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/dist/**/*.{js,cjs,mjs}');
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/build/**/*.{js,cjs,mjs}');
+  });
+
+  it('excludes node_modules from outFiles via a negative glob', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.outFiles).toContain('!/group/sub-a/myapp_svc_one/**/node_modules/**');
+  });
+
+  it('sets resolveSourceMapLocations to null so remote source maps are not silently dropped', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.resolveSourceMapLocations).toBeNull();
   });
 });
 
@@ -170,7 +203,7 @@ describe('generateLaunchConfigurations', () => {
     const configs = await generateLaunchConfigurations([firstTarget]);
 
     expect(configs[0]?.localRoot).toBe('/group/sub-a/myapp_svc_one');
-    expect(configs[0]?.outFiles).toContain('/group/sub-a/myapp_svc_one/gen/srv/**/*.js');
+    expect(configs[0]?.outFiles).toContain('/group/sub-a/myapp_svc_one/gen/srv/**/*.{js,cjs,mjs}');
   });
 
   it('uses workspace-level fallback remoteRoot when app config is absent', async () => {
@@ -196,7 +229,11 @@ describe('generateLaunchConfigurations', () => {
     expect(configs[0]?.remoteRoot).toBe('/usr/sample-service-a');
   });
 
-  it('does not write unresolved regex remoteRoot values into launch.json', async () => {
+  it('falls back to localRoot when a regex remoteRoot has not yet resolved', async () => {
+    // Sprint 1 Fix #1 — the previous behavior silently omitted remoteRoot, leaving VS Code
+    // without a path mapping rule and breakpoints unbound until a Stop+Start cycle warmed
+    // the resolver cache. Falling back to localRoot guarantees launch.json always includes
+    // remoteRoot when the user configured it via regex.
     vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
 
     const firstTarget = TARGETS[0];
@@ -205,7 +242,35 @@ describe('generateLaunchConfigurations', () => {
       remoteRoot: 'regex:^/(usr/)?sample-service-a$',
     });
 
-    expect('remoteRoot' in (configs[0] ?? {})).toBe(false);
+    expect(configs[0]?.remoteRoot).toBe('/group/sub-a/myapp_svc_one');
+  });
+
+  it('resolves localRoot via fs.realpath when the workspace path is a symlink', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    vi.mocked(fs.realpath).mockImplementation((path) => {
+      if (path === '/group/sub-a/myapp_svc_one') {
+        return Promise.resolve('/private/var/group/sub-a/myapp_svc_one');
+      }
+      return Promise.resolve(String(path));
+    });
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget]);
+
+    expect(configs[0]?.localRoot).toBe('/private/var/group/sub-a/myapp_svc_one');
+    expect(configs[0]?.outFiles).toContain('/private/var/group/sub-a/myapp_svc_one/srv/**/*.{js,cjs,mjs}');
+  });
+
+  it('falls back to the raw localRoot when fs.realpath rejects', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    vi.mocked(fs.realpath).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget]);
+
+    expect(configs[0]?.localRoot).toBe('/group/sub-a/myapp_svc_one');
   });
 
   it('app-level remoteRoot takes priority over workspace fallback', async () => {

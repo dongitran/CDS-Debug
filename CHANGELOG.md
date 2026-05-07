@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.0] — 2026
+
+### Fixes
+
+- **Breakpoints bind on the first attach (Sprint 1 of breakpoint-bind hardening)** — Generated launch configurations now expand `outFiles` to cover `srv`, `gen/srv`, `app`, `lib`, `dist`, and `build` (excluding `node_modules`), set `resolveSourceMapLocations: null` so source maps with embedded remote paths are no longer silently dropped, resolve `localRoot` through `fs.realpath` to handle macOS `/private/var/...` symlink workspaces, and fall back to `localRoot` when a regex `remoteRoot` is configured but has not yet resolved — eliminating the "Stop and Start again to bind" workaround for several common configurations.
+
+---
+
 ## [0.3.61-pre.1] — 2026
 
 ### Fixes
