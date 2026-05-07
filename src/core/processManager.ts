@@ -534,7 +534,7 @@ function spawnSshTunnel(
   const isWindows = process.platform === 'win32';
   const child = spawn('cf', ['ssh', appName, '-L', tunnelArg], {
     cwd: folderPath,
-    shell: isWindows,
+    shell: false,
     // Detached so killProcessGroup(-pid) terminates the entire cf ssh process tree
     detached: !isWindows,
   });

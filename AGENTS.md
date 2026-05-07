@@ -145,6 +145,7 @@ pnpm test:report          # Open HTML report
 5. User can start debug while remoteRoot warmup is in flight and get remoteRoot in the first launch.json.
 6. Per-service cap config overrides both user setting and workspace fallback.
 7. Malformed user setting falls back to workspace cap config.
+8. User can see a security warning instead of executing an unsafe cap config branch.
 
 ### CF Region / Org
 1. User can switch to region fallback and filter supplemental SAP `eu10-*`, `eu20-*`, and `us10-*` endpoint mappings plus China region endpoints after synced topology is ready.

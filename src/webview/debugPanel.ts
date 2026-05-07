@@ -90,6 +90,7 @@ import {
 } from '../testing/e2eBridge';
 import {
   checkoutBranch,
+  describeGitBranchForLog,
   getCurrentBranch,
   getGitRepoRoot,
   hasUncommittedChanges,
@@ -1181,13 +1182,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
           }
 
           if (currentBranch !== info.targetBranch) {
-            logInfo(`[${info.appName}] Checking out branch ${info.targetBranch} in ${repoRoot}`);
+            logInfo(`[${info.appName}] Checking out branch ${describeGitBranchForLog(info.targetBranch)} in ${repoRoot}`);
             postStatus(info.appName, 'checking-out');
             await checkoutBranch(repoRoot, info.targetBranch);
             changedWorkingTree = true;
           }
 
-          logInfo(`[${info.appName}] Pulling latest changes for branch ${info.targetBranch} in ${repoRoot}`);
+          logInfo(
+            `[${info.appName}] Pulling latest changes for branch ${describeGitBranchForLog(info.targetBranch)} in ${repoRoot}`,
+          );
           postStatus(info.appName, 'pulling');
           const pullResult = await pullLatest(repoRoot);
           if (pullResult.changed) {
@@ -1196,7 +1199,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
           if (!changedWorkingTree) {
             // Already on the correct branch, no local changes stashed, and no remote updates
-            logInfo(`[${info.appName}] Branch ${info.targetBranch} is up to date, skipping install/build.`);
+            logInfo(
+              `[${info.appName}] Branch ${describeGitBranchForLog(info.targetBranch)} is up to date, skipping install/build.`,
+            );
             postStatus(info.appName, 'skipped', `Up to date`);
             repoCheckedOut.set(repoRoot, false);
             successfulTargets.push(target);

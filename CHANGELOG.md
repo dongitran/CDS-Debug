@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.61-pre.0] — 2026
+
+### Security
+
+- **Branch preparation RCE hardening** — Replaced shell-based git and pnpm execution with `execFile` argument arrays, added strict branch-name validation for `cap-debug-config.json` and `cdsDebug.sharedCapDebugConfig`, and surface unsafe branch config warnings without logging payloads.
+
+---
+
 ## [0.3.61] — 2026
 
 ### Fixes

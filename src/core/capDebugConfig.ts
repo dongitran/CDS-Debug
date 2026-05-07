@@ -2,14 +2,22 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type { CapDebugConfig } from '../types/index';
+import { isValidGitBranchName } from './gitOperations';
+import { logWarn } from './logger';
 
 const CAP_DEBUG_CONFIG_FILE = 'cap-debug-config.json';
 const SHARED_CAP_DEBUG_CONFIG_KEY = 'sharedCapDebugConfig';
 
 export function normalizeCapDebugConfig(value: unknown): CapDebugConfig | null {
+  return normalizeCapDebugConfigFromSource(value, 'CAP debug config');
+}
+
+function normalizeCapDebugConfigFromSource(value: unknown, source: string): CapDebugConfig | null {
   if (typeof value !== 'object' || value === null) return null;
 
   const record = value as Record<string, unknown>;
+  if (hasUnsafeBranchValue(record, source)) return null;
+
   const normalized: CapDebugConfig = {};
 
   if (typeof record.remoteRoot === 'string') normalized.remoteRoot = record.remoteRoot;
@@ -19,6 +27,32 @@ export function normalizeCapDebugConfig(value: unknown): CapDebugConfig | null {
   if (orgBranchMap !== undefined) normalized.orgBranchMap = orgBranchMap;
 
   return normalized;
+}
+
+function hasUnsafeBranchValue(record: Record<string, unknown>, source: string): boolean {
+  if (typeof record.branch === 'string' && !isValidGitBranchName(record.branch)) {
+    warnUnsafeBranch(source, 'branch');
+    return true;
+  }
+
+  const orgBranchMap = record.orgBranchMap;
+  if (typeof orgBranchMap !== 'object' || orgBranchMap === null) return false;
+
+  for (const value of Object.values(orgBranchMap)) {
+    if (typeof value === 'string' && !isValidGitBranchName(value)) {
+      warnUnsafeBranch(source, 'orgBranchMap');
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function warnUnsafeBranch(source: string, field: 'branch' | 'orgBranchMap'): void {
+  const message = `Rejected unsafe git branch in ${source} (${field}). `
+    + 'Use only letters, numbers, ".", "_", "-", and "/" in git branch values.';
+  logWarn(`[Security] ${message}`);
+  void vscode.window.showWarningMessage(`CDS Debug: ${message}`);
 }
 
 function normalizeOrgBranchMap(value: unknown): Record<string, string> | undefined {
@@ -45,7 +79,7 @@ export async function readCapDebugConfig(folderPath: string): Promise<CapDebugCo
 
   try {
     const raw = await readFile(configPath, 'utf8');
-    return normalizeCapDebugConfig(JSON.parse(raw) as unknown);
+    return normalizeCapDebugConfigFromSource(JSON.parse(raw) as unknown, configPath);
   } catch {
     return null;
   }
@@ -56,7 +90,10 @@ export function getUserCapDebugConfig(): CapDebugConfig | null {
     .getConfiguration('cdsDebug')
     .inspect<unknown>(SHARED_CAP_DEBUG_CONFIG_KEY);
 
-  const normalized = normalizeCapDebugConfig(inspectResult?.globalValue);
+  const normalized = normalizeCapDebugConfigFromSource(
+    inspectResult?.globalValue,
+    `user setting cdsDebug.${SHARED_CAP_DEBUG_CONFIG_KEY}`,
+  );
   return hasConfigValues(normalized) ? normalized : null;
 }
 

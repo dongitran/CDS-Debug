@@ -1012,6 +1012,18 @@ async function enableBreakpointSnapshotHandlingFromSettings(webview: Frame): Pro
   await expect(webview.locator('#btn-open-breakpoint-snapshots')).toBeVisible();
 }
 
+async function enableBranchPrepFromSettings(webview: Frame): Promise<void> {
+  await webview.locator('#btn-gear').click();
+  await expect(webview.getByText('Settings')).toBeVisible();
+  const toggle = webview.locator('#chk-branch-prep');
+  if (!(await toggle.isChecked())) {
+    await toggle.check({ force: true });
+  }
+  await expect(toggle).toBeChecked();
+  await webview.locator('#btn-back-settings').click();
+  await expectReadyScreen(webview);
+}
+
 async function expectButtonDisabled(button: Locator): Promise<void> {
   await expect(button).toBeDisabled();
 }
@@ -1530,6 +1542,35 @@ test.describe('CAP Debug Config Precedence E2E', () => {
               remoteRoot: '/sample/workspace-root',
             },
           ]);
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+
+  test('User can see a security warning instead of executing an unsafe cap config branch', async () => {
+    const workspaceDir = await createWorkspaceForCapConfigTest({});
+    const sentinelPath = join(workspaceDir, 'branch-sentinel');
+    await writeFile(
+      join(workspaceDir, 'mock-service-a', 'cap-debug-config.json'),
+      JSON.stringify({ branch: `main; touch ${sentinelPath}; #` }, null, 2) + '\n',
+      'utf8',
+    );
+
+    try {
+      await withVsCodeSession(
+        { credentialMode: 'env', cfScenario: 'success' },
+        async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await enableBranchPrepFromSettings(webview);
+          await startDebugForApp(webview, 'mock-service-a');
+
+          await expect(workbenchPage.getByText(/Rejected unsafe git branch/).first()).toBeVisible({ timeout: 10_000 });
+          await expect(webview.getByText('Preparing Branches')).toHaveCount(0);
+          expect(await pathExists(sentinelPath)).toBe(false);
         },
         workspaceDir,
       );
