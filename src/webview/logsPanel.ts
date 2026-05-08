@@ -4,6 +4,7 @@ import { cfLogsManager } from '../core/cfLogsManager';
 import { getConfig, mappingSpace } from '../storage/configStore';
 import { cfTarget } from '../core/cfClient';
 import { logError, logInfo, logWarn } from '../core/logger';
+import { selectPreferredOrgMapping } from './mappingState';
 
 function getNonce(): string {
   let text = '';
@@ -305,7 +306,9 @@ export class CfLogsViewProvider implements vscode.WebviewViewProvider {
     this._view?.show(true);
 
     const config = getConfig();
-    const mapping = config?.orgGroupMappings[0];
+    const mapping = config
+      ? selectPreferredOrgMapping(config.orgs, config.orgGroupMappings)
+      : null;
     if (!mapping) {
       logWarn(`[CfLogs] No org mapping found — cannot stream logs for ${appName}.`);
       return;
@@ -343,7 +346,9 @@ export class CfLogsViewProvider implements vscode.WebviewViewProvider {
       case 'LOGS_START': {
         const appName = raw.payload.appName;
         const config = getConfig();
-        const mapping = config?.orgGroupMappings[0];
+        const mapping = config
+          ? selectPreferredOrgMapping(config.orgs, config.orgGroupMappings)
+          : null;
         if (!mapping) {
           this.postLogs({ type: 'LOGS_ERROR', payload: { appName, message: 'No CF org configured. Complete setup in the Debug Launcher panel first.' } });
           return;

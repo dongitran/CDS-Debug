@@ -8,6 +8,7 @@ import type {
   CfApp,
   CredentialStatus,
   DebugTarget,
+  ExtensionConfig,
   E2eBridgeCommand,
   ExtensionMessage,
   LoadedPackageEntry,
@@ -108,6 +109,18 @@ interface ServiceBranchInfo {
   repoRoot: string | null;
   targetBranch: string | null;
   currentBranch: string | null;
+}
+
+export function buildLoginConfig(
+  apiEndpoint: string,
+  orgs: string[],
+  existing: ExtensionConfig | undefined,
+): ExtensionConfig {
+  return {
+    apiEndpoint,
+    orgs,
+    orgGroupMappings: existing?.orgGroupMappings ?? [],
+  };
 }
 
 export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
@@ -589,20 +602,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const orgs = await cfOrgs();
       logInfo(`Login successful. Found ${orgs.length.toString()} org(s): ${orgs.join(', ')}`);
 
-      // Preserve only mappings whose org exists in the new region.
-      // Stale mappings from a previous region would cause "org not found" when
-      // the extension auto-selects them or the user resumes without re-mapping.
-      const newOrgSet = new Set(orgs);
       const existing = getConfig();
-      const validMappings = (existing?.orgGroupMappings ?? []).filter(
-        (m) => newOrgSet.has(m.cfOrg),
-      );
-
-      await saveConfig({
-        apiEndpoint,
-        orgs,
-        orgGroupMappings: validMappings,
-      });
+      await saveConfig(buildLoginConfig(apiEndpoint, orgs, existing));
       this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs } });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);

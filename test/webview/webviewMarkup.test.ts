@@ -145,6 +145,16 @@ describe('webview markup contracts', () => {
     expect(script).toMatch(/case 'PROCEED_CHANGE_MAPPING':\s+state\.screen = SCREENS\.REGION;/);
   });
 
+  it('uses compatible MRU org mappings for webview save and restore flows', () => {
+    const script = getScript('test-nonce');
+
+    expect(script).toContain('function selectPreferredOrgMapping');
+    expect(script).toContain('function upsertWebviewOrgMapping');
+    expect(script).toMatch(/lastUsedAt:\s*Date\.now\(\)/);
+    expect(script).toMatch(/state\.mappings\s*=\s*upsertWebviewOrgMapping\(state\.mappings,\s*mapping\)/);
+    expect(script).toMatch(/const mapping = selectPreferredOrgMapping\(state\.orgs,\s*state\.mappings\);/);
+  });
+
   it('keeps the package browser screen minimal', () => {
     const packageScript = getPackageBrowserScriptContent();
 

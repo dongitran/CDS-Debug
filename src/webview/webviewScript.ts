@@ -7,6 +7,7 @@
 import { getRendererScriptContent } from './webviewRenderers';
 import { getPackageBrowserScriptContent } from './packageBrowserContent';
 import { getAllRegions } from '@saptools/cf-sync';
+import { selectPreferredOrgMapping, upsertWebviewOrgMapping } from './mappingState';
 
 interface WebviewCfRegion {
   readonly code: string;
@@ -129,6 +130,9 @@ export function getScript(nonce: string): string {
       "Waiting for trace route...",
       "Establishing connection..."
     ];
+
+    ${selectPreferredOrgMapping.toString()}
+    ${upsertWebviewOrgMapping.toString()}
 
     // === STATE ===
 
@@ -591,12 +595,14 @@ export function getScript(nonce: string): string {
         if (!state.selectedOrg || !state.selectedSpace || !state.selectedFolder) return;
         const key = selectedTargetKey();
         if (key) state.foldersByTarget[key] = state.selectedFolder;
-        const mappings = [{
+        const mapping = {
           cfOrg: state.selectedOrg,
           cfSpace: state.selectedSpace,
-          groupFolderPath: state.selectedFolder
-        }];
-        state.mappings = mappings;
+          groupFolderPath: state.selectedFolder,
+          lastUsedAt: Date.now()
+        };
+        const mappings = [mapping];
+        state.mappings = upsertWebviewOrgMapping(state.mappings, mapping);
         state.error = null;
         state.screen = SCREENS.LOADING_APPS;
         render();
@@ -1146,17 +1152,19 @@ export function getScript(nonce: string): string {
           }
 
           if (cfg && state.mappings.length > 0) {
-            const mapping = state.mappings[0];
-            state.selectedOrg = mapping.cfOrg;
-            state.selectedSpace = mappingSpace(mapping);
-            state.selectedFolder = mapping.groupFolderPath;
-            // Mark as restoring so APPS_ERROR can trigger auto-reconnect instead
-            // of leaving the user stuck on a broken READY screen.
-            state.isRestoringSession = true;
-            state.screen = SCREENS.LOADING_APPS;
-            render();
-            vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, space: state.selectedSpace } });
-            return;
+            const mapping = selectPreferredOrgMapping(state.orgs, state.mappings);
+            if (mapping) {
+              state.selectedOrg = mapping.cfOrg;
+              state.selectedSpace = mappingSpace(mapping);
+              state.selectedFolder = mapping.groupFolderPath;
+              // Mark as restoring so APPS_ERROR can trigger auto-reconnect instead
+              // of leaving the user stuck on a broken READY screen.
+              state.isRestoringSession = true;
+              state.screen = SCREENS.LOADING_APPS;
+              render();
+              vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, space: state.selectedSpace } });
+              return;
+            }
           }
 
           state.screen = SCREENS.REGION;
@@ -1174,15 +1182,17 @@ export function getScript(nonce: string): string {
           if (state.screen === SCREENS.SETUP_CREDENTIALS) {
             // If saved config had mappings, restore the session; else go to REGION.
             if (state.mappings && state.mappings.length > 0) {
-              const mapping = state.mappings[0];
-              state.selectedOrg = mapping.cfOrg;
-              state.selectedSpace = mappingSpace(mapping);
-              state.selectedFolder = mapping.groupFolderPath;
-              state.isRestoringSession = true;
-              state.screen = SCREENS.LOADING_APPS;
-              render();
-              vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, space: state.selectedSpace } });
-              return;
+              const mapping = selectPreferredOrgMapping(state.orgs, state.mappings);
+              if (mapping) {
+                state.selectedOrg = mapping.cfOrg;
+                state.selectedSpace = mappingSpace(mapping);
+                state.selectedFolder = mapping.groupFolderPath;
+                state.isRestoringSession = true;
+                state.screen = SCREENS.LOADING_APPS;
+                render();
+                vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, space: state.selectedSpace } });
+                return;
+              }
             }
             state.screen = SCREENS.REGION;
           }

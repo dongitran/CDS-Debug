@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.4] — 2026
+
+### Fixes
+
+- **Org folder mappings now survive CF region switches** — Logging into another CF region now preserves all saved local folder mappings instead of deleting mappings for orgs outside the current region. Restore logic now only auto-loads mappings compatible with the active region and prefers the most recently used org/space mapping.
+
+---
+
 ## [0.3.62-pre.3] — 2026
 
 ### Fixes

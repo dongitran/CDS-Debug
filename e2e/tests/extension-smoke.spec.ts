@@ -37,7 +37,8 @@ type CfScenario =
   | 'remote-root-race'
   | 'restart-race'
   | 'reload-changes'
-  | 'multi-spaces';
+  | 'multi-spaces'
+  | 'multi-region-cache';
 
 interface SessionOptions {
   credentialMode: CredentialMode;
@@ -92,6 +93,7 @@ const MOCK_ENV_PASSWORD = 'e2e-mock-password';
 const MOCK_GROUP_FOLDER = '/tmp/cds-debug-e2e-group';
 const WEBSOCKET_TIMEOUT_MS = 90_000;
 const FRAME_TIMEOUT_MS = 90_000;
+const WEBVIEW_OPEN_RETRY_TIMEOUT_MS = 15_000;
 const MOCK_SLOW_TARGET_DELAY_SECONDS = 8;
 const MOCK_TUNNEL_RELEASE_DELAY_SECONDS = 0.75;
 const STEP_OBSERVE_DELAY_MS = (() => {
@@ -115,9 +117,11 @@ slow_target_after_apps_ready="$script_dir/.slow-target-after-apps-ready"
 slow_target_after_apps_used="$script_dir/.slow-target-after-apps-used"
 remote_root_lookup_lock="$script_dir/.remote-root-lookup-lock"
 reload_apps_count="$script_dir/.reload-apps-count"
+current_api_file="$script_dir/.current-api"
 
 case "$cmd" in
   api)
+    echo "\${2:-}" > "$current_api_file"
     echo "Setting API endpoint to \${2:-}..."
     echo "OK"
     ;;
@@ -138,6 +142,23 @@ case "$cmd" in
   orgs)
     if [[ "$SCENARIO" == "no-orgs" ]]; then
       echo "name"
+      exit 0
+    fi
+    if [[ "$SCENARIO" == "multi-region-cache" ]]; then
+      current_api="$(cat "$current_api_file" 2>/dev/null || true)"
+      if [[ "$current_api" == *"us10"* ]]; then
+        cat <<'OUT'
+Getting orgs as e2e.mock.user@example.com...
+name
+sample-org-beta
+OUT
+      else
+        cat <<'OUT'
+Getting orgs as e2e.mock.user@example.com...
+name
+sample-org-alpha
+OUT
+      fi
       exit 0
     fi
     cat <<'OUT'
@@ -162,6 +183,26 @@ OUT
     fi
     ;;
   target)
+    if [[ "$SCENARIO" == "multi-region-cache" ]]; then
+      target_org=""
+      for ((i = 1; i <= $#; i++)); do
+        if [[ "\${!i}" == "-o" ]]; then
+          next=$((i + 1))
+          if [[ "$next" -le "$#" ]]; then
+            target_org="\${!next}"
+          fi
+        fi
+      done
+      current_api="$(cat "$current_api_file" 2>/dev/null || true)"
+      if [[ "$current_api" == *"us10"* && "$target_org" != "sample-org-beta" ]]; then
+        echo "org '$target_org' not found in current region" >&2
+        exit 1
+      fi
+      if [[ "$current_api" != *"us10"* && "$target_org" != "sample-org-alpha" ]]; then
+        echo "org '$target_org' not found in current region" >&2
+        exit 1
+      fi
+    fi
     if [[ "$SCENARIO" == "slow-target" ]]; then
       sleep ${MOCK_SLOW_TARGET_DELAY_SECONDS}
     fi
@@ -629,14 +670,14 @@ async function createSessionArtifacts(options: SessionOptions): Promise<SessionA
   };
 }
 
-async function withVsCodeSession(
+async function runVsCodeSessionWithArtifacts(
   options: SessionOptions,
+  artifacts: SessionArtifacts,
   run: (workbenchPage: Page, artifacts: SessionArtifacts) => Promise<void>,
   workspaceDir?: string,
 ): Promise<void> {
   const repoRoot = resolve(process.cwd(), '..');
   const cdpPort = await allocatePort();
-  const artifacts = await createSessionArtifacts(options);
   const diagnostics: SessionDiagnostics = createSessionDiagnostics();
 
   try {
@@ -714,15 +755,65 @@ async function withVsCodeSession(
     }
 
     await cleanupSessionHelpers(artifacts.userDataDir, artifacts.mockBinDir);
-    await removeDirWithRetry(artifacts.userDataDir);
-    await removeDirWithRetry(artifacts.extensionsDir);
-    await removeDirWithRetry(artifacts.mockBinDir);
+    delete artifacts.appProcess;
+    delete artifacts.browser;
+    delete artifacts.workbenchPage;
+  }
+}
+
+async function disposeSessionArtifacts(artifacts: SessionArtifacts): Promise<void> {
+  await cleanupSessionHelpers(artifacts.userDataDir, artifacts.mockBinDir);
+  await removeDirWithRetry(artifacts.userDataDir);
+  await removeDirWithRetry(artifacts.extensionsDir);
+  await removeDirWithRetry(artifacts.mockBinDir);
+}
+
+async function withVsCodeSession(
+  options: SessionOptions,
+  run: (workbenchPage: Page, artifacts: SessionArtifacts) => Promise<void>,
+  workspaceDir?: string,
+): Promise<void> {
+  const artifacts = await createSessionArtifacts(options);
+
+  try {
+    await runVsCodeSessionWithArtifacts(options, artifacts, run, workspaceDir);
+  } finally {
+    await disposeSessionArtifacts(artifacts);
+  }
+}
+
+async function withRestartableVsCodeSession(
+  options: SessionOptions,
+  run: (startSession: (step: (webview: Frame, workbenchPage: Page) => Promise<void>) => Promise<void>, artifacts: SessionArtifacts) => Promise<void>,
+  workspaceDir?: string,
+): Promise<void> {
+  const artifacts = await createSessionArtifacts(options);
+
+  try {
+    const startSession = async (step: (webview: Frame, workbenchPage: Page) => Promise<void>): Promise<void> => {
+      await runVsCodeSessionWithArtifacts(options, artifacts, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await step(webview, workbenchPage);
+      }, workspaceDir);
+    };
+
+    await run(startSession, artifacts);
+  } finally {
+    await disposeSessionArtifacts(artifacts);
   }
 }
 
 async function openCdsDebugWebview(workbenchPage: Page): Promise<Frame> {
-  await openExtensionView(workbenchPage);
-  await expect(workbenchPage.locator('iframe.webview').first()).toBeVisible({ timeout: FRAME_TIMEOUT_MS });
+  const iframe = workbenchPage.locator('iframe.webview').first();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await openExtensionView(workbenchPage);
+    const timeout = attempt === 2 ? FRAME_TIMEOUT_MS : WEBVIEW_OPEN_RETRY_TIMEOUT_MS;
+    const visible = await expect(iframe).toBeVisible({ timeout }).then(() => true, () => false);
+    if (visible) {
+      return waitForExtensionWebviewFrame(workbenchPage);
+    }
+  }
+  await expect(iframe).toBeVisible({ timeout: FRAME_TIMEOUT_MS });
   return waitForExtensionWebviewFrame(workbenchPage);
 }
 
@@ -815,6 +906,10 @@ async function goToFolderSelection(webview: Frame, orgName = 'mock-org-alpha'): 
   await webview.locator(`input[name="cf-org"][value="${orgName}"]`).check({ force: true });
   await webview.locator('#btn-next-org').click();
   await expect(webview.getByText('Select Local Folder')).toBeVisible();
+}
+
+async function selectRegion(webview: Frame, accessibleName: string | RegExp): Promise<void> {
+  await webview.getByRole('radio', { name: accessibleName }).check({ force: true });
 }
 
 async function injectSelectedFolder(webview: Frame, folderPath: string): Promise<void> {
@@ -995,8 +1090,12 @@ async function stopDomTextMonitor(webview: Frame, key: string): Promise<string[]
   return events;
 }
 
-async function completeMappingToReadyWithFolder(webview: Frame, folderPath: string): Promise<void> {
-  await goToFolderSelection(webview);
+async function completeMappingToReadyWithFolder(
+  webview: Frame,
+  folderPath: string,
+  orgName = 'mock-org-alpha',
+): Promise<void> {
+  await goToFolderSelection(webview, orgName);
   await injectSelectedFolder(webview, folderPath);
   await expect(webview.getByText(folderPath)).toBeVisible();
   await webview.locator('#btn-save-mapping').click();
@@ -1012,6 +1111,17 @@ async function remapToOrgSelection(webview: Frame): Promise<void> {
   await expectRegionScreen(webview);
   await loginFromRegionScreen(webview);
   await expect(webview.getByText('Select CF Org')).toBeVisible();
+}
+
+async function remapToRegionScreen(webview: Frame): Promise<void> {
+  await webview.locator('#btn-remap').click();
+  await expectRegionScreen(webview);
+}
+
+async function expectReadyTarget(webview: Frame, org: string, space = 'app'): Promise<void> {
+  const cfInfoBox = webview.locator('.cf-info-box');
+  await expect(cfInfoBox.locator('.cf-info-value', { hasText: org })).toBeVisible();
+  await expect(cfInfoBox.locator('.cf-info-value', { hasText: space })).toBeVisible();
 }
 
 async function startDebugForApp(webview: Frame, appName: string): Promise<void> {
@@ -4357,6 +4467,94 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
   test.describe('Org-Folder Caching', () => {
     const MOCK_GROUP_FOLDER_BETA = '/tmp/cds-debug-e2e-group-beta';
+
+    test('User can return to a previous region without selecting its local folder again', async () => {
+      const folderA = await createTempDirectory('cds-debug-e2e-sample-folder-a-');
+      const folderB = await createTempDirectory('cds-debug-e2e-sample-folder-b-');
+
+      try {
+        await withRestartableVsCodeSession(
+          { credentialMode: 'env', cfScenario: 'multi-region-cache' },
+          async (startSession) => {
+            await startSession(async (webview) => {
+              await completeMappingToReadyWithFolder(webview, folderA, 'sample-org-alpha');
+              await expectReadyTarget(webview, 'sample-org-alpha');
+            });
+
+            await startSession(async (webview) => {
+              await expectReadyScreen(webview);
+              await expectReadyTarget(webview, 'sample-org-alpha');
+              await remapToRegionScreen(webview);
+              await selectRegion(webview, 'us10 US East (VA) - AWS');
+              await loginFromRegionScreen(webview);
+              await expect(webview.getByText('Select CF Org')).toBeVisible();
+              await webview.locator('input[name="cf-org"][value="sample-org-beta"]').check({ force: true });
+              await webview.locator('#btn-next-org').click();
+              await expect(webview.getByText('Select Local Folder')).toBeVisible();
+              await injectSelectedFolder(webview, folderB);
+              await webview.locator('#btn-save-mapping').click();
+              await expectReadyScreen(webview);
+              await expectReadyTarget(webview, 'sample-org-beta');
+            });
+
+            await startSession(async (webview) => {
+              await expectReadyScreen(webview);
+              await expectReadyTarget(webview, 'sample-org-beta');
+              await remapToRegionScreen(webview);
+              await selectRegion(webview, 'eu10 Europe (Frankfurt) - AWS');
+              await loginFromRegionScreen(webview);
+              await expect(webview.getByText('Select CF Org')).toBeVisible();
+              await webview.locator('input[name="cf-org"][value="sample-org-alpha"]').check({ force: true });
+              await webview.locator('#btn-next-org').click();
+              await expect(webview.getByText('Select Local Folder')).toBeVisible();
+              await expect(webview.getByText(folderA)).toBeVisible();
+              await expectButtonEnabled(webview.locator('#btn-save-mapping'));
+            });
+          },
+        );
+      } finally {
+        await removeDirWithRetry(folderA);
+        await removeDirWithRetry(folderB);
+      }
+    });
+
+    test('User can restart VS Code and restore the most recently used org in the same region', async () => {
+      const folderA = await createTempDirectory('cds-debug-e2e-sample-same-region-a-');
+      const folderB = await createTempDirectory('cds-debug-e2e-sample-same-region-b-');
+
+      try {
+        await withRestartableVsCodeSession(
+          { credentialMode: 'env', cfScenario: 'success' },
+          async (startSession) => {
+            await startSession(async (webview) => {
+              await completeMappingToReadyWithFolder(webview, folderA);
+              await remapToOrgSelection(webview);
+              await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
+              await webview.locator('#btn-next-org').click();
+              await expect(webview.getByText('Select Local Folder')).toBeVisible();
+              await injectSelectedFolder(webview, folderB);
+              await webview.locator('#btn-save-mapping').click();
+              await expectReadyScreen(webview);
+              await expectReadyTarget(webview, 'mock-org-beta');
+            });
+
+            await startSession(async (webview) => {
+              await expectReadyScreen(webview);
+              await expectReadyTarget(webview, 'mock-org-beta');
+              await remapToOrgSelection(webview);
+              await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
+              await webview.locator('#btn-next-org').click();
+              await expect(webview.getByText('Select Local Folder')).toBeVisible();
+              await expect(webview.getByText(folderB)).toBeVisible();
+              await expectButtonEnabled(webview.locator('#btn-save-mapping'));
+            });
+          },
+        );
+      } finally {
+        await removeDirWithRetry(folderA);
+        await removeDirWithRetry(folderB);
+      }
+    });
 
     test('Cached folder is auto-restored when re-selecting a previously mapped org', async () => {
       // Verifies that after completing the full mapping flow for an org, navigating back

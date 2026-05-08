@@ -61,6 +61,8 @@ export interface OrgGroupMapping {
   /** Missing in legacy configs; treated as CF_DEFAULT_SPACE. */
   cfSpace?: string;
   groupFolderPath: string; // absolute path to the local group folder
+  /** Unix epoch milliseconds when this org/space folder was last confirmed by the user. */
+  lastUsedAt?: number;
 }
 
 export interface DebugTarget {

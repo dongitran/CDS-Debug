@@ -154,6 +154,10 @@ pnpm test:report          # Open HTML report
 ### Ready Screen — Actions and Navigation
 1. User can change mapping and return to CF Region / Org.
 
+### Org-Folder Caching
+1. User can return to a previous region without selecting its local folder again.
+2. User can restart VS Code and restore the most recently used org in the same region.
+
 ### Debug Session Process Lifecycle
 1. User can stop and restart the same attached session without port reuse errors.
 
