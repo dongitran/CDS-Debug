@@ -69,17 +69,39 @@ export function buildLaunchConfiguration(
     resolveSourceMapLocations: overrides?.resolveSourceMapLocations !== undefined
       ? overrides.resolveSourceMapLocations
       : null,
+    sourceMapPathOverrides: resolveSourceMapPathOverrides(localRoot, remoteRoot, overrides),
+    // SAP CAP commonly spawns child processes (MTX sidecar, worker_threads, clusters);
+    // attaching to them lets breakpoints bind in child code without manual setup.
+    autoAttachChildProcesses: true,
   };
 
   if (remoteRoot !== undefined) {
     config.remoteRoot = remoteRoot;
   }
 
-  if (overrides?.sourceMapPathOverrides !== undefined) {
-    config.sourceMapPathOverrides = overrides.sourceMapPathOverrides;
-  }
-
   return config;
+}
+
+function resolveSourceMapPathOverrides(
+  localRoot: string,
+  remoteRoot: string | undefined,
+  overrides: LaunchConfigOverrides | undefined,
+): Record<string, string> {
+  // Defaults cover (a) vscode-js-debug's webpack patterns we do not want to break and
+  // (b) the Cloud Foundry runtime layout, where app source lives at /home/vcap/app/...
+  // and dependencies live at /home/vcap/deps/0/node_modules/... per the CF Node buildpack.
+  const defaults: Record<string, string> = {
+    'webpack:///./~/*': `${localRoot}/node_modules/*`,
+    'webpack:////*': '/*',
+    'webpack://?:*/*': `${localRoot}/*`,
+    '/home/vcap/app/*': `${localRoot}/*`,
+    '/home/vcap/deps/0/node_modules/*': `${localRoot}/node_modules/*`,
+  };
+  if (remoteRoot !== undefined && remoteRoot !== '/home/vcap/app' && remoteRoot !== localRoot) {
+    defaults[`${remoteRoot}/*`] = `${localRoot}/*`;
+  }
+  // User keys win on collision so explicit configuration always overrides our heuristics.
+  return { ...defaults, ...overrides?.sourceMapPathOverrides };
 }
 
 function resolveOutFiles(localRoot: string, overrides: LaunchConfigOverrides | undefined): string[] {

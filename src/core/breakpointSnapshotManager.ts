@@ -70,9 +70,29 @@ function isBreakpointSnapshotHandlingEnabled(): boolean {
     return getDebugPreferences().enableBreakpointSnapshotHandling;
   } catch {
     // Preferences store can be unavailable in early lifecycle / test harness.
-    // Preserve the legacy default behavior when that happens.
-    return true;
+    // Fail-safe to disabled so an unconfigured user never sees the auto-continue
+    // behavior accidentally and mistakes it for a "breakpoint did not bind" bug.
+    return false;
   }
+}
+
+const sessionsNotifiedAboutSnapshot = new Set<string>();
+
+function maybeNotifyAutoContinueOnce(session: vscode.DebugSession, appName: string): void {
+  if (sessionsNotifiedAboutSnapshot.has(session.id)) return;
+  sessionsNotifiedAboutSnapshot.add(session.id);
+  const message = `CDS Debug: breakpoint snapshot handling is ON for "${appName}". `
+    + 'The debugger captured context and auto-continued. To pause and inspect, set `cdsDebug.pauseOnBreakpoint` to true.';
+  void vscode.window.showInformationMessage(message, 'Open Settings', 'Disable Snapshot Handling')
+    .then((choice) => {
+      if (choice === 'Open Settings') {
+        return vscode.commands.executeCommand('workbench.action.openSettings', 'cdsDebug.pauseOnBreakpoint');
+      }
+      if (choice === 'Disable Snapshot Handling') {
+        return vscode.commands.executeCommand('workbench.action.openSettings', 'enableBreakpointSnapshotHandling');
+      }
+      return undefined;
+    });
 }
 
 // Walks the session hierarchy to find the CDS Debug app name.
@@ -96,6 +116,7 @@ export function disposeBreakpointSnapshotManager(): void {
   trackerRegistration = undefined;
   snapshotStore.length = 0;
   sessionQueues.clear();
+  sessionsNotifiedAboutSnapshot.clear();
 }
 
 export function getBreakpointSnapshots(): BreakpointContextSnapshot[] {
@@ -146,6 +167,7 @@ async function handleBreakpointStop(
   pushSnapshot(snapshot);
 
   if (autoResumed) {
+    maybeNotifyAutoContinueOnce(session, appName);
     await autoContinue(session, appName, threadId);
   }
 }

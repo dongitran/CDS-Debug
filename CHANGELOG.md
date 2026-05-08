@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.62-pre.2] — 2026
+
+### Fixes
+
+- **Breakpoint-bind Sprint 3 advanced cases** — Generated launch configurations now set `autoAttachChildProcesses: true` so SAP CAP MTX sidecar / cluster workers are debugged automatically, ship default `sourceMapPathOverrides` for the Cloud Foundry runtime layout (`/home/vcap/app/*`, `/home/vcap/deps/0/node_modules/*`, plus the existing webpack defaults), and a new debug-adapter tracker re-issues `setBreakpoints` after `loadedSource` events so breakpoints land in lazily-required scripts that were eagerly loaded before attach completed (workaround for microsoft/vscode-js-debug#1510).
+- **Breakpoint snapshot handling default is now fail-safe** — When the preferences store is unavailable, snapshot handling reports as disabled instead of accidentally enabling the auto-continue UX, and the first auto-continue per session surfaces an informational notification with shortcuts to the relevant settings.
+
+---
+
 ## [0.3.62-pre.1] — 2026
 
 ### Fixes

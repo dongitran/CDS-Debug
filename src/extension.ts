@@ -8,6 +8,7 @@ import { disposeAllProcesses, initializeProcessManager, stopAllProcesses, getAct
 import { setSecretStorage, clearCredentialsFromSecretStorage } from './core/shellEnv';
 import { cleanStaleDebugConfigs, removeLaunchConfigs } from './core/launchConfigurator';
 import { disposeBreakpointSnapshotManager, initializeBreakpointSnapshotManager } from './core/breakpointSnapshotManager';
+import { disposeBreakpointResolver, initializeBreakpointResolver } from './core/breakpointResolver';
 import { showWhatsNewIfNeeded } from './core/whatsNewManager';
 import { WhatsNewPanel } from './webview/whatsNewPanel';
 
@@ -20,6 +21,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   initializeProcessManager();
   initializeBreakpointSnapshotManager();
+  initializeBreakpointResolver();
 
   // Remove stale debug configurations left by a previous session that ended without
   // proper cleanup (e.g. VS Code was force-killed while a debug session was active).
@@ -95,6 +97,7 @@ export function activate(context: vscode.ExtensionContext): void {
 export async function deactivate(): Promise<void> {
   disposeCacheSync();
   disposeBreakpointSnapshotManager();
+  disposeBreakpointResolver();
 
   // Best-effort cleanup of active debug configurations on normal VS Code shutdown.
   // Removes the Debug: entries from launch.json so the file is not left dirty when the

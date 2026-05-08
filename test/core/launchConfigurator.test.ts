@@ -155,6 +155,43 @@ describe('buildLaunchConfiguration', () => {
     const config = buildLaunchConfiguration(target, undefined);
     expect(config.resolveSourceMapLocations).toBeNull();
   });
+
+  it('enables autoAttachChildProcesses so CAP MTX sidecar and worker children are debuggable', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.autoAttachChildProcesses).toBe(true);
+  });
+
+  it('seeds sourceMapPathOverrides with the Cloud Foundry runtime layout', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.sourceMapPathOverrides).toMatchObject({
+      '/home/vcap/app/*': '/group/sub-a/myapp_svc_one/*',
+      '/home/vcap/deps/0/node_modules/*': '/group/sub-a/myapp_svc_one/node_modules/*',
+    });
+  });
+
+  it('preserves the webpack defaults inside sourceMapPathOverrides for backward compatibility', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.sourceMapPathOverrides).toMatchObject({
+      'webpack:///./~/*': '/group/sub-a/myapp_svc_one/node_modules/*',
+      'webpack:////*': '/*',
+      'webpack://?:*/*': '/group/sub-a/myapp_svc_one/*',
+    });
+  });
+
+  it('adds a remoteRoot-specific path mapping when remoteRoot is non-default', () => {
+    const config = buildLaunchConfiguration(target, '/usr/sample-service');
+    expect(config.sourceMapPathOverrides).toMatchObject({
+      '/usr/sample-service/*': '/group/sub-a/myapp_svc_one/*',
+    });
+  });
+
+  it('does not add a redundant remoteRoot mapping when it equals /home/vcap/app or localRoot', () => {
+    const homeVcap = buildLaunchConfiguration(target, '/home/vcap/app');
+    expect(homeVcap.sourceMapPathOverrides?.['/home/vcap/app/*']).toBe('/group/sub-a/myapp_svc_one/*');
+
+    const sameAsLocal = buildLaunchConfiguration(target, '/group/sub-a/myapp_svc_one');
+    expect(sameAsLocal.sourceMapPathOverrides?.['/group/sub-a/myapp_svc_one/*']).toBeUndefined();
+  });
 });
 
 describe('generateLaunchConfigurations', () => {
@@ -316,10 +353,11 @@ describe('generateLaunchConfigurations', () => {
     expect(configs[0]?.resolveSourceMapLocations).toEqual(['${workspaceFolder}/**', '!**/node_modules/**']);
   });
 
-  it('flows sourceMapPathOverrides from cap-debug-config.json into the generated launch config', async () => {
+  it('lets cap-debug-config.json sourceMapPathOverrides win on key collision while keeping defaults', async () => {
     vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
       sourceMapPathOverrides: {
-        '/home/vcap/app/*': '/group/sub-a/myapp_svc_one/*',
+        '/home/vcap/app/*': '/custom/local/*',
+        '/extra/remote/*': '/extra/local/*',
       },
     }));
 
@@ -327,9 +365,13 @@ describe('generateLaunchConfigurations', () => {
     if (!firstTarget) throw new Error('TARGETS[0] must exist');
     const configs = await generateLaunchConfigurations([firstTarget]);
 
-    expect(configs[0]?.sourceMapPathOverrides).toEqual({
-      '/home/vcap/app/*': '/group/sub-a/myapp_svc_one/*',
-    });
+    const overrides = configs[0]?.sourceMapPathOverrides ?? {};
+    // User override wins on key collision.
+    expect(overrides['/home/vcap/app/*']).toBe('/custom/local/*');
+    // User-only key also makes it through.
+    expect(overrides['/extra/remote/*']).toBe('/extra/local/*');
+    // Default entry that the user did not touch is preserved.
+    expect(overrides['/home/vcap/deps/0/node_modules/*']).toBe('/group/sub-a/myapp_svc_one/node_modules/*');
   });
 
   it('per-service outFiles take priority over workspace-level outFiles', async () => {

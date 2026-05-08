@@ -51,6 +51,11 @@ vi.mock('vscode', () => ({
       show: () => undefined,
       dispose: () => undefined,
     }),
+    showInformationMessage: () => Promise.resolve(undefined),
+    showWarningMessage: () => Promise.resolve(undefined),
+  },
+  commands: {
+    executeCommand: () => Promise.resolve(undefined),
   },
   workspace: {
     getConfiguration: () => ({

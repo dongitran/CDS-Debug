@@ -108,6 +108,13 @@ export interface LaunchConfiguration {
    * workspace paths when the standard remoteRoot/localRoot rule is not enough.
    */
   sourceMapPathOverrides?: Record<string, string>;
+  /**
+   * When true, vscode-js-debug attaches a sub-debugger to child processes spawned
+   * by the attached Node process. Required for SAP CAP MTX sidecar (`@sap/cds-mtxs`),
+   * worker_threads, and cluster workers — without this, breakpoints in child code
+   * never bind even when the parent's breakpoints work.
+   */
+  autoAttachChildProcesses?: boolean;
 }
 
 export interface LaunchJson {

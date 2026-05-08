@@ -138,6 +138,9 @@
     "localappdata",
     "saptools",
     "sapcloud",
-    "usr"
+    "usr",
+    "buildpack",
+    "mtxs",
+    "reresolve"
   ]
 }
