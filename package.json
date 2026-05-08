@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.62-pre.0",
+  "version": "0.3.62-pre.1",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -89,6 +89,26 @@
                 "type": "string"
               },
               "markdownDescription": "Maps Cloud Foundry org names to git branches for branch preparation."
+            },
+            "outFiles": {
+              "type": "array",
+              "items": { "type": "string" },
+              "markdownDescription": "Replaces the default `outFiles` glob list in generated attach configurations. Use this when the standard CAP folder layout (`srv`, `gen/srv`, `app`, `lib`, `dist`, `build`) does not match your project."
+            },
+            "outFilesExtra": {
+              "type": "array",
+              "items": { "type": "string" },
+              "markdownDescription": "Appended to the default `outFiles` glob list. Ignored when `outFiles` is set. Useful for adding extra build folders without redefining the entire list."
+            },
+            "resolveSourceMapLocations": {
+              "type": ["array", "null"],
+              "items": { "type": "string" },
+              "markdownDescription": "Overrides VS Code's `resolveSourceMapLocations`. Defaults to `null` so source maps with embedded remote paths (e.g. `/home/vcap/app/...`) are not silently dropped during attach. Set an explicit list of globs to re-enable filtering."
+            },
+            "sourceMapPathOverrides": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "markdownDescription": "Path-mapping overrides merged on top of the extension defaults. Keys are the source-map embedded paths, values are the local replacements (e.g. `\"/home/vcap/app/*\": \"${workspaceFolder}/*\"`)."
             }
           }
         }

@@ -27,6 +27,10 @@ export function logWarn(message: string): void {
   getChannel().appendLine(`[${timestamp()}] [WARN]  ${message}`);
 }
 
+export function showLogChannel(): void {
+  getChannel().show(true);
+}
+
 export function disposeLogger(): void {
   _channel?.dispose();
   _channel = undefined;

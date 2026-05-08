@@ -22,6 +22,13 @@ export interface LaunchGenerationOptions {
   resolvedRemoteRoots?: ReadonlyMap<string, string>;
 }
 
+export interface LaunchConfigOverrides {
+  outFiles?: string[];
+  outFilesExtra?: string[];
+  resolveSourceMapLocations?: string[] | null;
+  sourceMapPathOverrides?: Record<string, string>;
+}
+
 let launchJsonLock = Promise.resolve();
 
 async function withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -41,6 +48,7 @@ export function buildLaunchConfiguration(
   target: DebugTarget,
   remoteRoot: string | undefined,
   localRootOverride?: string,
+  overrides?: LaunchConfigOverrides,
 ): LaunchConfiguration {
   const localRoot = localRootOverride ?? target.folderPath;
   const config: LaunchConfiguration = {
@@ -52,21 +60,39 @@ export function buildLaunchConfiguration(
     localRoot,
     cdsDebugManaged: true,
     sourceMaps: true,
-    restart: true,
     skipFiles: SKIP_FILES,
-    outFiles: buildOutFilesGlobs(localRoot),
+    outFiles: resolveOutFiles(localRoot, overrides),
     // null disables the workspace-only filter. Required for attach-mode debugging
     // through SSH tunnels because source maps embed remote paths (/home/vcap/app/...)
     // that fall outside the workspace and would otherwise be silently dropped.
     // See microsoft/vscode-js-debug#759.
-    resolveSourceMapLocations: null,
+    resolveSourceMapLocations: overrides?.resolveSourceMapLocations !== undefined
+      ? overrides.resolveSourceMapLocations
+      : null,
   };
 
   if (remoteRoot !== undefined) {
     config.remoteRoot = remoteRoot;
   }
 
+  if (overrides?.sourceMapPathOverrides !== undefined) {
+    config.sourceMapPathOverrides = overrides.sourceMapPathOverrides;
+  }
+
   return config;
+}
+
+function resolveOutFiles(localRoot: string, overrides: LaunchConfigOverrides | undefined): string[] {
+  if (overrides?.outFiles !== undefined) return [...overrides.outFiles];
+
+  const defaults = buildOutFilesGlobs(localRoot);
+  const extra = overrides?.outFilesExtra;
+  if (extra === undefined || extra.length === 0) return defaults;
+
+  // The trailing `!**/node_modules/**` glob must remain last so its negation
+  // still applies after the user-supplied include patterns are appended.
+  const lastIndex = defaults.length - 1;
+  return [...defaults.slice(0, lastIndex), ...extra, ...defaults.slice(lastIndex)];
 }
 
 function buildOutFilesGlobs(localRoot: string): string[] {
@@ -105,9 +131,31 @@ export async function generateLaunchConfigurations(
       options.resolvedRemoteRoots?.get(target.appName),
       localRoot,
     );
-    configs.push(buildLaunchConfiguration(target, remoteRoot, localRoot));
+    const overrides = mergeLaunchConfigOverrides(appConfig, fallbackConfig);
+    configs.push(buildLaunchConfiguration(target, remoteRoot, localRoot, overrides));
   }
   return configs;
+}
+
+function mergeLaunchConfigOverrides(
+  appConfig: CapDebugConfig | null,
+  fallbackConfig: CapDebugConfig | null,
+): LaunchConfigOverrides {
+  // Per-service config beats the workspace/user fallback for every override field.
+  // resolveSourceMapLocations needs an explicit `in` check because `null` is a meaningful
+  // user value (keep VS Code's filter disabled) and would collapse under nullish coalescing.
+  const resolveSourceMapLocations = appConfig?.resolveSourceMapLocations !== undefined
+    ? appConfig.resolveSourceMapLocations
+    : fallbackConfig?.resolveSourceMapLocations;
+  const overrides: LaunchConfigOverrides = {};
+  const outFiles = appConfig?.outFiles ?? fallbackConfig?.outFiles;
+  if (outFiles !== undefined) overrides.outFiles = outFiles;
+  const outFilesExtra = appConfig?.outFilesExtra ?? fallbackConfig?.outFilesExtra;
+  if (outFilesExtra !== undefined) overrides.outFilesExtra = outFilesExtra;
+  if (resolveSourceMapLocations !== undefined) overrides.resolveSourceMapLocations = resolveSourceMapLocations;
+  const sourceMapPathOverrides = appConfig?.sourceMapPathOverrides ?? fallbackConfig?.sourceMapPathOverrides;
+  if (sourceMapPathOverrides !== undefined) overrides.sourceMapPathOverrides = sourceMapPathOverrides;
+  return overrides;
 }
 
 export async function getExistingLaunchConfigs(workspacePath: string): Promise<LaunchJson> {

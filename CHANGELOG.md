@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.62-pre.1] — 2026
+
+### Fixes
+
+- **Breakpoint-bind Sprint 2 cleanup** — Generated launch configurations no longer set `restart: true` so vscode-js-debug stops racing the extension's own auto-reconnect, the regex `remoteRoot` warning surfaces in a one-shot VS Code notification with actions to open the offending `cap-debug-config.json` or the CDS Debug output channel instead of failing silently, and auto-reconnect re-runs `mergeLaunchJson` before the next attach so edits to `cap-debug-config.json` made mid-session are picked up.
+
+### Changes
+
+- **`cap-debug-config.json` and `cdsDebug.sharedCapDebugConfig` schema extended** — Added `outFiles`, `outFilesExtra`, `resolveSourceMapLocations`, and `sourceMapPathOverrides` fields with strict type guards so users can replace, append to, or refine the source-map handling produced by the extension without hand-editing `launch.json`.
+
+---
+
 ## [0.3.62-pre.0] — 2026
 
 ### Fixes

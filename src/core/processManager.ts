@@ -40,6 +40,23 @@ const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // VS Code's debug API is not safe for simultaneous attach requests.
 let debugAttachQueue = Promise.resolve();
 
+export type BeforeReconnectHook = (
+  appName: string,
+  params: { folderPath: string; port: number; launchConfigName: string },
+) => Promise<void>;
+
+let beforeReconnectHook: BeforeReconnectHook | undefined;
+
+/**
+ * Registers a callback invoked before each auto-reconnect attempt re-spawns the
+ * tunnel and re-attaches VS Code. Used by the webview layer to refresh
+ * launch.json so any cap-debug-config.json edits made between the original
+ * Start and the reconnect are picked up. Pass `undefined` to clear.
+ */
+export function setBeforeReconnectHook(hook: BeforeReconnectHook | undefined): void {
+  beforeReconnectHook = hook;
+}
+
 function bumpLifecycleVersion(appName: string): number {
   const next = (lifecycleVersions.get(appName) ?? 0) + 1;
   lifecycleVersions.set(appName, next);
@@ -197,27 +214,48 @@ function scheduleReconnect(
   clearReconnectTimer(appName);
   const timer = setTimeout(() => {
     reconnectTimers.delete(appName);
-    if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) {
-      reconnecting.delete(appName);
-      return;
-    }
-    const params = sessionParams.get(appName);
-    if (!params) {
-      reconnecting.delete(appName);
-      return;
-    }
-    // reconnecting stays set until ATTACHED/ERROR in probeTunnelAndAttach.
-    void startTunnelAndAttach(appName, params.folderPath, params.port, params.launchConfigName)
-      .catch((err: unknown) => {
-        reconnecting.delete(appName);
-        const msg = err instanceof Error ? err.message : String(err);
-        logError(`[${appName}] Auto-reconnect (${trigger}) failed unexpectedly: ${msg}`);
-        sessionStates.set(appName, { status: 'ERROR', message: msg });
-        debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
-      });
+    void runReconnectAttempt(appName, lifecycleVersion, trigger);
   }, delayMs);
   reconnectTimers.set(appName, timer);
   return true;
+}
+
+async function runReconnectAttempt(
+  appName: string,
+  lifecycleVersion: number,
+  trigger: 'session terminate' | 'child close',
+): Promise<void> {
+  if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) {
+    reconnecting.delete(appName);
+    return;
+  }
+  const params = sessionParams.get(appName);
+  if (!params) {
+    reconnecting.delete(appName);
+    return;
+  }
+  if (beforeReconnectHook !== undefined) {
+    try {
+      await beforeReconnectHook(appName, params);
+    } catch (err: unknown) {
+      // The hook is best-effort — failure leaves the existing launch.json in place,
+      // which still contains the configuration written at the original Start.
+      logWarn(`[${appName}] beforeReconnect hook failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) {
+    reconnecting.delete(appName);
+    return;
+  }
+  // reconnecting stays set until ATTACHED/ERROR in probeTunnelAndAttach.
+  startTunnelAndAttach(appName, params.folderPath, params.port, params.launchConfigName)
+    .catch((err: unknown) => {
+      reconnecting.delete(appName);
+      const msg = err instanceof Error ? err.message : String(err);
+      logError(`[${appName}] Auto-reconnect (${trigger}) failed unexpectedly: ${msg}`);
+      sessionStates.set(appName, { status: 'ERROR', message: msg });
+      debugProcessEvents.emit('statusChanged', { appName, status: 'ERROR', message: msg });
+    });
 }
 
 export function initializeProcessManager(): void {

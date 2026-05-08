@@ -82,6 +82,45 @@ describe('normalizeCapDebugConfig', () => {
       },
     });
   });
+
+  it('parses outFiles, outFilesExtra, resolveSourceMapLocations and sourceMapPathOverrides', () => {
+    const result = normalizeCapDebugConfig({
+      outFiles: ['/sample/srv/**/*.js', '!/sample/skip/**'],
+      outFilesExtra: ['/sample/extra/**/*.js'],
+      resolveSourceMapLocations: ['${workspaceFolder}/**'],
+      sourceMapPathOverrides: {
+        '/home/vcap/app/*': '/local/*',
+        invalid: 123,
+      },
+    });
+
+    expect(result).toEqual({
+      outFiles: ['/sample/srv/**/*.js', '!/sample/skip/**'],
+      outFilesExtra: ['/sample/extra/**/*.js'],
+      resolveSourceMapLocations: ['${workspaceFolder}/**'],
+      sourceMapPathOverrides: {
+        '/home/vcap/app/*': '/local/*',
+      },
+    });
+  });
+
+  it('preserves an explicit null for resolveSourceMapLocations', () => {
+    const result = normalizeCapDebugConfig({ resolveSourceMapLocations: null });
+    expect(result).toEqual({ resolveSourceMapLocations: null });
+  });
+
+  it('drops invalid types in array and record overrides without throwing', () => {
+    const result = normalizeCapDebugConfig({
+      outFiles: 'not-an-array',
+      outFilesExtra: [123, 'ok'],
+      resolveSourceMapLocations: 'wrong-type',
+      sourceMapPathOverrides: 'wrong-type',
+    });
+
+    expect(result).toEqual({
+      outFilesExtra: ['ok'],
+    });
+  });
 });
 
 describe('getUserCapDebugConfig', () => {
@@ -150,6 +189,19 @@ describe('getUserCapDebugConfig', () => {
 
     expect(getUserCapDebugConfig()).toBeNull();
     expectSecurityWarningWithoutPayload(payload);
+  });
+
+  it('returns the user setting when only outFiles is configured (new override fields are recognized)', () => {
+    vscodeConfigState.inspectResult = {
+      key: 'sharedCapDebugConfig',
+      globalValue: {
+        outFiles: ['/sample/srv/**/*.js'],
+      },
+    };
+
+    expect(getUserCapDebugConfig()).toEqual({
+      outFiles: ['/sample/srv/**/*.js'],
+    });
   });
 
   it('rejects unsafe user setting orgBranchMap values with a security warning', () => {

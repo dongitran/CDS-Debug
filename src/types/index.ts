@@ -14,6 +14,17 @@ export interface CapDebugConfig {
   branch?: string;
   /** Maps CF org name to the git branch that should be checked out before debugging. */
   orgBranchMap?: Record<string, string>;
+  /** Replaces the default outFiles glob list when present. */
+  outFiles?: string[];
+  /** Appended to the default outFiles glob list when outFiles is not set. */
+  outFilesExtra?: string[];
+  /**
+   * Overrides the default `resolveSourceMapLocations: null`. Use `null` to keep
+   * the workspace-only filter disabled, or pass an explicit glob list.
+   */
+  resolveSourceMapLocations?: string[] | null;
+  /** Path-mapping overrides merged on top of the extension defaults. */
+  sourceMapPathOverrides?: Record<string, string>;
 }
 
 export type BranchPrepStep =
@@ -75,7 +86,13 @@ export interface LaunchConfiguration {
    */
   cdsDebugManaged?: boolean;
   sourceMaps: boolean;
-  restart: boolean;
+  /**
+   * Optional. Omitted by default because the extension manages tunnel/session
+   * recovery itself via processManager.scheduleReconnect; setting `restart: true`
+   * causes vscode-js-debug to retry attach in parallel with our own reconnect,
+   * which races against port re-binding and breakpoint state.
+   */
+  restart?: boolean;
   skipFiles: string[];
   outFiles: string[];
   /**
@@ -85,6 +102,12 @@ export interface LaunchConfiguration {
    * otherwise be silently dropped. See microsoft/vscode-js-debug#759.
    */
   resolveSourceMapLocations?: string[] | null;
+  /**
+   * Optional path-mapping overrides merged on top of vscode-js-debug's defaults.
+   * Used to map remote source-map paths (e.g. /home/vcap/app/*) onto local
+   * workspace paths when the standard remoteRoot/localRoot rule is not enough.
+   */
+  sourceMapPathOverrides?: Record<string, string>;
 }
 
 export interface LaunchJson {

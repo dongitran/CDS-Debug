@@ -90,8 +90,12 @@ describe('buildLaunchConfiguration', () => {
       name: 'Debug: myapp-svc-one',
       address: '127.0.0.1',
       port: 9229,
-      restart: true,
     });
+  });
+
+  it('omits the restart attribute so vscode-js-debug does not race with the extension reconnect', () => {
+    const config = buildLaunchConfiguration(target, undefined);
+    expect(config.restart).toBeUndefined();
   });
 
   it('uses the repository root as localRoot', () => {
@@ -271,6 +275,76 @@ describe('generateLaunchConfigurations', () => {
     const configs = await generateLaunchConfigurations([firstTarget]);
 
     expect(configs[0]?.localRoot).toBe('/group/sub-a/myapp_svc_one');
+  });
+
+  it('lets cap-debug-config.json replace the default outFiles glob list', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
+      outFiles: ['/group/sub-a/myapp_svc_one/custom/**/*.js'],
+    }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget]);
+
+    expect(configs[0]?.outFiles).toEqual(['/group/sub-a/myapp_svc_one/custom/**/*.js']);
+  });
+
+  it('appends outFilesExtra to the defaults while keeping the trailing node_modules exclusion last', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
+      outFilesExtra: ['/group/sub-a/myapp_svc_one/extra/**/*.js'],
+    }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget]);
+
+    const outFiles = configs[0]?.outFiles ?? [];
+    expect(outFiles).toContain('/group/sub-a/myapp_svc_one/srv/**/*.{js,cjs,mjs}');
+    expect(outFiles).toContain('/group/sub-a/myapp_svc_one/extra/**/*.js');
+    expect(outFiles[outFiles.length - 1]).toBe('!/group/sub-a/myapp_svc_one/**/node_modules/**');
+  });
+
+  it('lets cap-debug-config.json override resolveSourceMapLocations with an explicit glob list', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
+      resolveSourceMapLocations: ['${workspaceFolder}/**', '!**/node_modules/**'],
+    }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget]);
+
+    expect(configs[0]?.resolveSourceMapLocations).toEqual(['${workspaceFolder}/**', '!**/node_modules/**']);
+  });
+
+  it('flows sourceMapPathOverrides from cap-debug-config.json into the generated launch config', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
+      sourceMapPathOverrides: {
+        '/home/vcap/app/*': '/group/sub-a/myapp_svc_one/*',
+      },
+    }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations([firstTarget]);
+
+    expect(configs[0]?.sourceMapPathOverrides).toEqual({
+      '/home/vcap/app/*': '/group/sub-a/myapp_svc_one/*',
+    });
+  });
+
+  it('per-service outFiles take priority over workspace-level outFiles', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
+      outFiles: ['/group/sub-a/myapp_svc_one/per-service/**/*.js'],
+    }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations(
+      [firstTarget],
+      { outFiles: ['/group/workspace/**/*.js'] },
+    );
+
+    expect(configs[0]?.outFiles).toEqual(['/group/sub-a/myapp_svc_one/per-service/**/*.js']);
   });
 
   it('app-level remoteRoot takes priority over workspace fallback', async () => {

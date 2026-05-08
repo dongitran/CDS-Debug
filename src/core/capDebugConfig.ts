@@ -26,7 +26,39 @@ function normalizeCapDebugConfigFromSource(value: unknown, source: string): CapD
   const orgBranchMap = normalizeOrgBranchMap(record.orgBranchMap);
   if (orgBranchMap !== undefined) normalized.orgBranchMap = orgBranchMap;
 
+  const outFiles = normalizeStringArray(record.outFiles);
+  if (outFiles !== undefined) normalized.outFiles = outFiles;
+
+  const outFilesExtra = normalizeStringArray(record.outFilesExtra);
+  if (outFilesExtra !== undefined) normalized.outFilesExtra = outFilesExtra;
+
+  const resolveSourceMapLocations = normalizeResolveSourceMapLocations(record.resolveSourceMapLocations);
+  if (resolveSourceMapLocations !== undefined) normalized.resolveSourceMapLocations = resolveSourceMapLocations;
+
+  const sourceMapPathOverrides = normalizeStringRecord(record.sourceMapPathOverrides);
+  if (sourceMapPathOverrides !== undefined) normalized.sourceMapPathOverrides = sourceMapPathOverrides;
+
   return normalized;
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const result = value.filter((item): item is string => typeof item === 'string');
+  return result.length > 0 ? result : undefined;
+}
+
+function normalizeStringRecord(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === 'string') result[key] = entry;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function normalizeResolveSourceMapLocations(value: unknown): string[] | null | undefined {
+  if (value === null) return null;
+  return normalizeStringArray(value);
 }
 
 function hasUnsafeBranchValue(record: Record<string, unknown>, source: string): boolean {
@@ -71,6 +103,10 @@ function hasConfigValues(config: CapDebugConfig | null): config is CapDebugConfi
       config.remoteRoot !== undefined
       || config.branch !== undefined
       || config.orgBranchMap !== undefined
+      || config.outFiles !== undefined
+      || config.outFilesExtra !== undefined
+      || config.resolveSourceMapLocations !== undefined
+      || config.sourceMapPathOverrides !== undefined
     );
 }
 

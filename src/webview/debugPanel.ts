@@ -57,7 +57,7 @@ import {
 } from '../storage/cacheStore';
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { getTopologySnapshot, getTopologySnapshotSync } from '../core/cfTopology';
-import { logError, logInfo, logWarn } from '../core/logger';
+import { logError, logInfo, logWarn, showLogChannel } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
 import {
   startTunnelAndAttach,
@@ -70,6 +70,7 @@ import {
   getActiveSessions,
   getProcessOutputChannel,
   getSessionParams,
+  setBeforeReconnectHook,
 } from '../core/processManager';
 import { breakpointSnapshotEvents, clearBreakpointSnapshots, getBreakpointSnapshots } from '../core/breakpointSnapshotManager';
 import {
@@ -116,7 +117,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   private readonly packageEntriesByApp = new Map<string, LoadedPackageEntry[]>();
   private readonly packageSearchIndexByApp = new Map<string, PackageSearchIndex>();
   private readonly resolvedRemoteRoots = new Map<string, string>();
+  // Parallel map keyed by appName so reconnect re-merges can pick up the cached
+  // remoteRoot without needing to recompute the (apiEndpoint, org, space) cache key.
+  private readonly resolvedRemoteRootByApp = new Map<string, string>();
   private readonly remoteRootLookupCoordinator = new RemoteRootLookupCoordinator();
+  // Tracks (apiEndpoint, org, space, appName, configuredRemoteRoot) keys that have already
+  // surfaced a "remoteRoot did not resolve" notification, so we do not nag the user during
+  // each Start Debug click. Cleared on Reset Configuration / window reload by definition.
+  private readonly notifiedUnmatchedRemoteRoots = new Set<string>();
   private remoteRootWarmupGeneration = 0;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -135,6 +143,29 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       if (!isBreakpointSnapshot(snapshot)) return;
       this.postMessage({ type: 'BREAKPOINT_SNAPSHOT_ADDED', payload: { snapshot } });
     });
+    setBeforeReconnectHook((appName, params) => this.handleBeforeReconnect(appName, params));
+  }
+
+  private async handleBeforeReconnect(
+    appName: string,
+    params: { folderPath: string; port: number; launchConfigName: string },
+  ): Promise<void> {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (workspaceRoot === undefined) return;
+
+    const target: DebugTarget = { appName, folderPath: params.folderPath, port: params.port };
+    const fallbackConfig = await resolveSharedCapDebugConfig(workspaceRoot);
+    const cachedRemoteRoot = this.resolvedRemoteRootByApp.get(appName);
+    const resolvedRemoteRoots = cachedRemoteRoot !== undefined
+      ? new Map([[appName, cachedRemoteRoot]])
+      : new Map<string, string>();
+
+    try {
+      await mergeLaunchJson(workspaceRoot, [target], fallbackConfig, { resolvedRemoteRoots });
+      logInfo(`[${appName}] Reconnect re-merged launch.json from current cap-debug-config.json.`);
+    } catch (err: unknown) {
+      logWarn(`[${appName}] Reconnect re-merge of launch.json failed: ${extractErrorMessage(err)}`);
+    }
   }
 
   resolveWebviewView(
@@ -868,9 +899,47 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     try {
       const result = await this.remoteRootLookupCoordinator.resolve(cacheKey, target.appName, configuredRemoteRoot);
       this.storeResolvedRemoteRoot(apiEndpoint, org, space, target.appName, configuredRemoteRoot, result);
-      if (result.status === 'resolved') resolved.set(target.appName, result.remoteRoot);
+      if (result.status === 'resolved') {
+        resolved.set(target.appName, result.remoteRoot);
+      } else if (result.status === 'unmatched' || result.status === 'invalid-regex') {
+        this.notifyUnmatchedRemoteRoot(target.appName, cacheKey, result, target.folderPath);
+      }
     } catch (err: unknown) {
       logWarn(`[RemoteRoot] ${target.appName}: on-demand lookup failed (${extractErrorMessage(err)})`);
+    }
+  }
+
+  private notifyUnmatchedRemoteRoot(
+    appName: string,
+    cacheKey: string,
+    result: RemoteRootResolution,
+    folderPath: string,
+  ): void {
+    if (this.notifiedUnmatchedRemoteRoots.has(cacheKey)) return;
+    this.notifiedUnmatchedRemoteRoots.add(cacheKey);
+
+    const detail = describeRemoteRootResolution(result);
+    const message = `CDS Debug: remoteRoot for "${appName}" — ${detail}. Breakpoints may not bind until cap-debug-config.json is corrected.`;
+    void vscode.window.showWarningMessage(message, 'Open cap-debug-config.json', 'Open Output Channel', 'Continue Anyway')
+      .then((choice) => {
+        if (choice === 'Open cap-debug-config.json') {
+          return this.openCapDebugConfig(folderPath);
+        }
+        if (choice === 'Open Output Channel') {
+          showLogChannel();
+        }
+        return undefined;
+      });
+  }
+
+  private async openCapDebugConfig(folderPath: string): Promise<void> {
+    const configUri = vscode.Uri.joinPath(vscode.Uri.file(folderPath), 'cap-debug-config.json');
+    try {
+      const doc = await vscode.workspace.openTextDocument(configUri);
+      await vscode.window.showTextDocument(doc);
+    } catch {
+      // No per-service file — fall back to the user-level setting that controls the same field.
+      await vscode.commands.executeCommand('workbench.action.openSettings', 'cdsDebug.sharedCapDebugConfig');
     }
   }
 
@@ -885,6 +954,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     if (result.status === 'resolved') {
       const cacheKey = this.remoteRootCacheKey(apiEndpoint, org, space, appName, configuredRemoteRoot);
       this.resolvedRemoteRoots.set(cacheKey, result.remoteRoot);
+      this.resolvedRemoteRootByApp.set(appName, result.remoteRoot);
       logInfo(`[RemoteRoot] ${appName} resolved to ${result.remoteRoot}`);
       return;
     }
