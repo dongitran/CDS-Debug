@@ -148,7 +148,7 @@ pnpm test:report          # Open HTML report
 8. User can see a security warning instead of executing an unsafe cap config branch.
 
 ### CF Region / Org
-1. User can switch to region fallback and filter supplemental SAP `eu10-*`, `eu20-*`, and `us10-*` endpoint mappings plus China region endpoints after synced topology is ready.
+1. User can switch to region catalog fallback and filter `cf-sync` supplemental SAP endpoints plus the local `us10-004` fallback and China region endpoints after synced topology is ready.
 2. User can open custom endpoint without losing Region/Org context, keeping the header, tabs, and login footer position stable.
 
 ### Ready Screen — Actions and Navigation

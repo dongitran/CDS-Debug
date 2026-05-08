@@ -1,5 +1,6 @@
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
+import { getAllRegions } from '@saptools/cf-sync';
 
 import { getPackageBrowserScriptContent } from '../../src/webview/packageBrowserContent';
 import { getPackageBrowserStyles } from '../../src/webview/packageBrowserStyles';
@@ -12,6 +13,66 @@ interface WebviewRegion {
   readonly label: string;
   readonly apiEndpoint: string;
 }
+
+const UPSTREAM_CF_SYNC_REGION_CASES = [
+  {
+    code: 'eu10-002',
+    name: 'Europe (Frankfurt) - AWS',
+    label: 'Europe (Frankfurt) - AWS (eu10-002)',
+    apiEndpoint: 'https://api.cf.eu10-002.hana.ondemand.com',
+  },
+  {
+    code: 'eu10-003',
+    name: 'Europe (Frankfurt) - AWS',
+    label: 'Europe (Frankfurt) - AWS (eu10-003)',
+    apiEndpoint: 'https://api.cf.eu10-003.hana.ondemand.com',
+  },
+  {
+    code: 'eu10-004',
+    name: 'Europe (Frankfurt) - AWS',
+    label: 'Europe (Frankfurt) - AWS (eu10-004)',
+    apiEndpoint: 'https://api.cf.eu10-004.hana.ondemand.com',
+  },
+  {
+    code: 'eu10-005',
+    name: 'Europe (Frankfurt) - AWS',
+    label: 'Europe (Frankfurt) - AWS (eu10-005)',
+    apiEndpoint: 'https://api.cf.eu10-005.hana.ondemand.com',
+  },
+  {
+    code: 'eu20-001',
+    name: 'Europe (Netherlands) - Azure',
+    label: 'Europe (Netherlands) - Azure (eu20-001)',
+    apiEndpoint: 'https://api.cf.eu20-001.hana.ondemand.com',
+  },
+  {
+    code: 'eu20-002',
+    name: 'Europe (Netherlands) - Azure',
+    label: 'Europe (Netherlands) - Azure (eu20-002)',
+    apiEndpoint: 'https://api.cf.eu20-002.hana.ondemand.com',
+  },
+  {
+    code: 'us10-001',
+    name: 'US East (VA) - AWS',
+    label: 'US East (VA) - AWS (us10-001)',
+    apiEndpoint: 'https://api.cf.us10-001.hana.ondemand.com',
+  },
+  {
+    code: 'us10-002',
+    name: 'US East (VA) - AWS',
+    label: 'US East (VA) - AWS (us10-002)',
+    apiEndpoint: 'https://api.cf.us10-002.hana.ondemand.com',
+  },
+] as const satisfies readonly WebviewRegion[];
+
+const LOCAL_WEBVIEW_FALLBACK_REGION_CASES = [
+  {
+    code: 'us10-004',
+    name: 'US East (VA) - AWS',
+    label: 'US East (VA) - AWS (us10-004)',
+    apiEndpoint: 'https://api.cf.us10-004.hana.ondemand.com',
+  },
+] as const satisfies readonly WebviewRegion[];
 
 function isWebviewRegion(value: unknown): value is WebviewRegion {
   if (!value || typeof value !== 'object') return false;
@@ -153,74 +214,31 @@ describe('webview markup contracts', () => {
     expect(rendererScript).not.toContain('region-card-custom');
   });
 
-  it('injects the complete sorted Cloud Foundry region catalog', () => {
-    const regions = readInjectedRegions(getScript('test-nonce'));
-    const sortedNames = regions.map((region) => region.name);
-    const supplementalRegions = [
-      {
-        code: 'eu10-002',
-        name: 'Europe (Frankfurt) - AWS',
-        label: 'Europe (Frankfurt) - AWS (eu10-002)',
-        apiEndpoint: 'https://api.cf.eu10-002.hana.ondemand.com',
-      },
-      {
-        code: 'eu10-003',
-        name: 'Europe (Frankfurt) - AWS',
-        label: 'Europe (Frankfurt) - AWS (eu10-003)',
-        apiEndpoint: 'https://api.cf.eu10-003.hana.ondemand.com',
-      },
-      {
-        code: 'eu10-004',
-        name: 'Europe (Frankfurt) - AWS',
-        label: 'Europe (Frankfurt) - AWS (eu10-004)',
-        apiEndpoint: 'https://api.cf.eu10-004.hana.ondemand.com',
-      },
-      {
-        code: 'eu10-005',
-        name: 'Europe (Frankfurt) - AWS',
-        label: 'Europe (Frankfurt) - AWS (eu10-005)',
-        apiEndpoint: 'https://api.cf.eu10-005.hana.ondemand.com',
-      },
-      {
-        code: 'eu20-001',
-        name: 'Europe (Netherlands) - Azure',
-        label: 'Europe (Netherlands) - Azure (eu20-001)',
-        apiEndpoint: 'https://api.cf.eu20-001.hana.ondemand.com',
-      },
-      {
-        code: 'eu20-002',
-        name: 'Europe (Netherlands) - Azure',
-        label: 'Europe (Netherlands) - Azure (eu20-002)',
-        apiEndpoint: 'https://api.cf.eu20-002.hana.ondemand.com',
-      },
-      {
-        code: 'us10-001',
-        name: 'US East (VA) - AWS',
-        label: 'US East (VA) - AWS (us10-001)',
-        apiEndpoint: 'https://api.cf.us10-001.hana.ondemand.com',
-      },
-      {
-        code: 'us10-002',
-        name: 'US East (VA) - AWS',
-        label: 'US East (VA) - AWS (us10-002)',
-        apiEndpoint: 'https://api.cf.us10-002.hana.ondemand.com',
-      },
-      {
-        code: 'us10-004',
-        name: 'US East (VA) - AWS',
-        label: 'US East (VA) - AWS (us10-004)',
-        apiEndpoint: 'https://api.cf.us10-004.hana.ondemand.com',
-      },
-    ] as const satisfies readonly WebviewRegion[];
+  it('receives supplemental Cloud Foundry regions from cf-sync', () => {
+    const upstreamCodes = new Set<string>(getAllRegions().map((region) => region.key));
 
-    expect(regions).toHaveLength(50);
-    expect(sortedNames).toEqual([...sortedNames].sort((a, b) => a.localeCompare(b)));
+    for (const region of UPSTREAM_CF_SYNC_REGION_CASES) {
+      expect(upstreamCodes.has(region.code)).toBe(true);
+    }
+    expect(upstreamCodes.has('us10-004')).toBe(false);
+  });
+
+  it('injects the sorted cf-sync region catalog plus local fallback without duplicates', () => {
+    const regions = readInjectedRegions(getScript('test-nonce'));
+    const regionCodes = regions.map((region) => region.code);
+    const sortedKeys = regions.map((region) => `${region.name} ${region.code}`);
+
+    expect(new Set(regionCodes).size).toBe(regionCodes.length);
+    expect(sortedKeys).toEqual([...sortedKeys].sort((a, b) => a.localeCompare(b)));
     expect(regions[0]?.code).toBe('ap12');
     expect(regions.some((region) => region.code === 'ae01')).toBe(true);
     expect(regions.some((region) => region.code === 'sa31')).toBe(true);
     expect(regions.some((region) => region.code === 'uk20')).toBe(true);
-    for (const supplementalRegion of supplementalRegions) {
-      expect(regions.find((region) => region.code === supplementalRegion.code)).toEqual(supplementalRegion);
+    for (const catalogRegion of UPSTREAM_CF_SYNC_REGION_CASES) {
+      expect(regions.find((region) => region.code === catalogRegion.code)).toEqual(catalogRegion);
+    }
+    for (const fallbackRegion of LOCAL_WEBVIEW_FALLBACK_REGION_CASES) {
+      expect(regions.find((region) => region.code === fallbackRegion.code)).toEqual(fallbackRegion);
     }
     expect(regions.find((region) => region.code === 'cn20')?.apiEndpoint)
       .toBe('https://api.cf.cn20.platform.sapcloud.cn');

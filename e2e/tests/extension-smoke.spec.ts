@@ -1894,7 +1894,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
   });
 
-  test('User can switch to region fallback and filter regions after synced topology is ready', async () => {
+  test('User can switch to region catalog and filter cf-sync regions plus local fallback after synced topology is ready', async () => {
     await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await injectMessage(webview, {
@@ -1916,36 +1916,36 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.getByText('Select Region')).toBeVisible();
       const regionSearch = webview.getByLabel('Search regions');
       const regionList = webview.getByRole('radiogroup', { name: 'Cloud Foundry regions' });
-      const supplementalRegionCases = [
-        { code: 'eu10-005', endpoint: 'api.cf.eu10-005.hana.ondemand.com' },
+      const catalogAndFallbackRegionCases = [
+        { code: 'eu10-002', endpoint: 'api.cf.eu10-002.hana.ondemand.com' },
         { code: 'eu20-002', endpoint: 'api.cf.eu20-002.hana.ondemand.com' },
-        { code: 'us10-001', endpoint: 'api.cf.us10-001.hana.ondemand.com' },
+        { code: 'us10-002', endpoint: 'api.cf.us10-002.hana.ondemand.com' },
         { code: 'us10-004', endpoint: 'api.cf.us10-004.hana.ondemand.com' },
       ] as const;
       await expect(regionSearch).toBeVisible();
       await expect.poll(async () => regionList.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
 
       await regionSearch.fill('us west');
-      await expect(webview.locator('.region-card', { hasText: 'us20' })).toBeVisible();
-      await expect(webview.locator('.region-card', { hasText: 'eu10' })).toHaveCount(0);
+      await expect(webview.getByRole('radio', { name: /us20/i })).toBeVisible();
+      await expect(webview.getByRole('radio', { name: /eu10/i })).toHaveCount(0);
 
-      for (const supplementalRegion of supplementalRegionCases) {
-        const regionCard = webview.locator('.region-card', { hasText: supplementalRegion.code });
-        await regionSearch.fill(supplementalRegion.code);
-        await expect(regionCard).toBeVisible();
-        await regionCard.click();
-        await expect(webview.locator('.radio-desc', { hasText: supplementalRegion.endpoint })).toBeVisible();
-        if (supplementalRegion.code === 'eu20-002') {
-          await captureStepEvidence(workbenchPage, 'region-tab-sap-supplemental-region-result');
+      for (const regionCase of catalogAndFallbackRegionCases) {
+        const regionRadio = webview.getByRole('radio', { name: new RegExp(regionCase.code, 'i') });
+        await regionSearch.fill(regionCase.code);
+        await expect(regionRadio).toBeVisible();
+        await regionRadio.check({ force: true });
+        await expect(webview.getByRole('code')).toContainText(regionCase.endpoint);
+        if (regionCase.code === 'eu20-002') {
+          await captureStepEvidence(workbenchPage, 'region-tab-cf-sync-catalog-region-result');
         }
       }
-      await captureStepEvidence(workbenchPage, 'region-tab-supplemental-regions-result');
+      await captureStepEvidence(workbenchPage, 'region-tab-catalog-plus-fallback-region-result');
 
       await regionSearch.fill('china');
-      await expect(webview.locator('.region-card', { hasText: 'cn40' })).toBeVisible();
-      await expect(webview.locator('.region-card', { hasText: 'cn20' })).toBeVisible();
-      await webview.locator('.region-card', { hasText: 'cn40' }).click();
-      await expect(webview.locator('.radio-desc', { hasText: 'api.cf.cn40.platform.sapcloud.cn' })).toBeVisible();
+      await expect(webview.getByRole('radio', { name: /cn40/i })).toBeVisible();
+      await expect(webview.getByRole('radio', { name: /cn20/i })).toBeVisible();
+      await webview.getByRole('radio', { name: /cn40/i }).check({ force: true });
+      await expect(webview.getByRole('code')).toContainText('api.cf.cn40.platform.sapcloud.cn');
 
       await expect(webview.getByRole('button', { name: 'Login to Cloud Foundry' })).toBeEnabled();
       await captureStepEvidence(workbenchPage, 'region-tab-filtered-results');
@@ -4010,23 +4010,14 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
-        // Wait for the extension's settings responses to be fully processed before injecting.
-        // The extension sends GET_CACHE_CONFIG and GET_CREDENTIALS_STATUS responses in order;
-        // .cred-info-email only appears after CREDENTIALS_STATUS (the last response) is received,
-        // ensuring GET_CACHE_CONFIG's response has also landed — preventing a race where the
-        // extension's CACHE_CONFIG { enabled: true } response overwrites the injected value.
         await expect(webview.locator('.cred-info-email')).toContainText(MOCK_ENV_EMAIL);
 
-        // Inject CACHE_CONFIG with enabled=false
-        await injectMessage(webview, {
-          type: 'CACHE_CONFIG',
-          payload: { enabled: false, intervalHours: 24 },
-        });
+        await webview.getByRole('checkbox', { name: 'Enable background sync' }).uncheck({ force: true });
 
         // Cache disabled: checkbox unchecked, interval select disabled, Sync Now disabled
-        await expect(webview.locator('#chk-cache-enabled')).not.toBeChecked();
+        await expect(webview.getByRole('checkbox', { name: 'Enable background sync' })).not.toBeChecked();
         await expect(webview.locator('#select-interval')).toBeDisabled();
-        await expect(webview.locator('#btn-trigger-sync')).toBeDisabled();
+        await expect(webview.getByRole('button', { name: /Sync Now/ })).toBeDisabled();
         // Status row shows "Caching disabled" text
         await expect(webview.locator('.sync-status-row')).toContainText('Caching disabled');
       });

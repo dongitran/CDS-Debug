@@ -11,12 +11,15 @@ vi.mock('@saptools/cf-sync', () => ({
 import { refreshCfSyncSpace, resolveRegionKeyForEndpoint } from '../../src/core/cfSpaceRefresh';
 
 const EU10_ENDPOINT = 'https://api.cf.eu10.hana.ondemand.com';
+const EU10_002_ENDPOINT = 'https://api.cf.eu10-002.hana.ondemand.com';
+const US10_004_ENDPOINT = 'https://api.cf.us10-004.hana.ondemand.com';
 
 describe('cfSpaceRefresh', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getAllRegionsMock.mockReturnValue([
       { key: 'eu10', label: 'Europe (Frankfurt)', apiEndpoint: EU10_ENDPOINT },
+      { key: 'eu10-002', label: 'Europe (Frankfurt) - AWS (eu10-002)', apiEndpoint: EU10_002_ENDPOINT },
       { key: 'ap11', label: 'Singapore', apiEndpoint: 'https://api.cf.ap11.hana.ondemand.com' },
     ]);
   });
@@ -24,6 +27,10 @@ describe('cfSpaceRefresh', () => {
   it('resolves a built-in region from its API endpoint', () => {
     expect(resolveRegionKeyForEndpoint(EU10_ENDPOINT)).toBe('eu10');
     expect(resolveRegionKeyForEndpoint(`${EU10_ENDPOINT}/`)).toBe('eu10');
+  });
+
+  it('resolves supplemental regions supplied by cf-sync', () => {
+    expect(resolveRegionKeyForEndpoint(EU10_002_ENDPOINT)).toBe('eu10-002');
   });
 
   it('refreshes the default app space and returns the app count', async () => {
@@ -49,6 +56,31 @@ describe('cfSpaceRefresh', () => {
       password: 'secret',
     });
     expect(result).toEqual({ status: 'refreshed', regionKey: 'eu10', appCount: 2 });
+  });
+
+  it('refreshes a supplemental region when cf-sync knows the endpoint', async () => {
+    syncSpaceMock.mockResolvedValue({
+      space: {
+        name: 'app',
+        apps: [{ name: 'sample-service-a' }],
+      },
+    });
+
+    const result = await refreshCfSyncSpace({
+      apiEndpoint: EU10_002_ENDPOINT,
+      orgName: 'demo-org',
+      email: 'demo@example.com',
+      password: 'secret',
+    });
+
+    expect(syncSpaceMock).toHaveBeenCalledWith({
+      regionKey: 'eu10-002',
+      orgName: 'demo-org',
+      spaceName: 'app',
+      email: 'demo@example.com',
+      password: 'secret',
+    });
+    expect(result).toEqual({ status: 'refreshed', regionKey: 'eu10-002', appCount: 1 });
   });
 
   it('refreshes the requested space when one is provided', async () => {
@@ -82,6 +114,18 @@ describe('cfSpaceRefresh', () => {
       status: 'skipped',
       reason: 'missing-credentials',
     });
+    expect(syncSpaceMock).not.toHaveBeenCalled();
+  });
+
+  it('skips UI-only fallback endpoints that cf-sync does not know', async () => {
+    await expect(
+      refreshCfSyncSpace({
+        apiEndpoint: US10_004_ENDPOINT,
+        orgName: 'demo-org',
+        email: 'demo@example.com',
+        password: 'secret',
+      }),
+    ).resolves.toEqual({ status: 'skipped', reason: 'unknown-region' });
     expect(syncSpaceMock).not.toHaveBeenCalled();
   });
 

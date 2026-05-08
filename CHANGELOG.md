@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.6] — 2026
+
+### Changes
+
+- **CF region catalog source cleanup** — Updated `@saptools/cf-sync` to `0.4.6`, using its catalog for `eu10-*`, `eu20-*`, `us10-001`, and `us10-002` region endpoints while keeping CDS Debug's local fallback only for upstream-missing endpoints such as `us10-004`.
+
+---
+
 ## [0.3.62-pre.5] — 2026
 
 ### Changes

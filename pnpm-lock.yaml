@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@saptools/cf-sync':
-        specifier: ^0.4.5
-        version: 0.4.5
+        specifier: ^0.4.6
+        version: 0.4.6
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -891,8 +891,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@saptools/cf-sync@0.4.5':
-    resolution: {integrity: sha512-qPuk6eXpbMLWjiWNNwIWRpGLFwNePPTlqyKXhC4BhKbpeA9G3ux3pR/9LYZ4wx6hAcqMzycVlmpJj3tD5E9KlA==}
+  '@saptools/cf-sync@0.4.6':
+    resolution: {integrity: sha512-8AkxWtUAWG41jNK1P1GPCK1C4pmV5iqR25CE9rriuIUolA353hz3JLNea5cNahJJXnENsW36512kn/PRZREk3w==}
     engines: {node: '>=20.0.0'}
     hasBin: true
 
@@ -3327,7 +3327,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.1':
     optional: true
 
-  '@saptools/cf-sync@0.4.5':
+  '@saptools/cf-sync@0.4.6':
     dependencies:
       commander: 13.1.0
       ora: 9.4.0
