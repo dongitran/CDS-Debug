@@ -125,7 +125,7 @@ function collectSourceBreakpoints(sourcePath: string): DapSourceBreakpoint[] {
   for (const breakpoint of vscode.debug.breakpoints) {
     if (!(breakpoint instanceof vscode.SourceBreakpoint)) continue;
     if (!breakpoint.enabled) continue;
-    if (breakpoint.location.uri.fsPath !== sourcePath) continue;
+    if (!filesystemPathsEqual(breakpoint.location.uri.fsPath, sourcePath)) continue;
     const dap: DapSourceBreakpoint = {
       // DAP uses 1-based lines; vscode.Position is 0-based.
       line: breakpoint.location.range.start.line + 1,
@@ -143,4 +143,20 @@ function collectSourceBreakpoints(sourcePath: string): DapSourceBreakpoint[] {
     result.push(dap);
   }
   return result;
+}
+
+/**
+ * Compares two filesystem paths with platform-correct case sensitivity.
+ *
+ * VS Code's `Uri.fsPath` and the DAP `source.path` reported by vscode-js-debug
+ * can differ in drive-letter casing on Windows (`C:\` vs `c:\`) even when they
+ * resolve to the same file, so a strict `===` check would skip valid breakpoint
+ * matches. macOS preserves casing in `fsPath`, and we keep the strict check on
+ * Linux to avoid masking genuine path mismatches on a case-sensitive filesystem.
+ */
+function filesystemPathsEqual(a: string, b: string): boolean {
+  if (process.platform === 'win32') {
+    return a.toLowerCase() === b.toLowerCase();
+  }
+  return a === b;
 }

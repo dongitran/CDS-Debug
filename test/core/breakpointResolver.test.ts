@@ -216,3 +216,58 @@ describe('loadedSource handling', () => {
     expect(session.customRequest).not.toHaveBeenCalled();
   });
 });
+
+describe('Windows path comparison', () => {
+  let originalPlatform: NodeJS.Platform;
+
+  beforeEach(() => {
+    originalPlatform = process.platform;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+  });
+
+  it('matches breakpoint URIs and DAP source paths case-insensitively on Windows', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    vi.useFakeTimers();
+    vscodeMockState.breakpoints = [
+      new MockSourceBreakpoint({
+        enabled: true,
+        location: {
+          uri: { fsPath: 'C:\\workspace\\srv\\catalog-service.js' },
+          range: { start: { line: 9, character: 0 } },
+        },
+      }),
+    ];
+    const session = createSession('Debug: catalog-service');
+    const tracker = vscodeMockState.factory?.createDebugAdapterTracker(session);
+    tracker?.onDidSendMessage(loadedSourceEvent('c:\\workspace\\srv\\catalog-service.js'));
+
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(session.customRequest).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the strict comparison on case-sensitive platforms (linux/darwin)', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    vi.useFakeTimers();
+    vscodeMockState.breakpoints = [
+      new MockSourceBreakpoint({
+        enabled: true,
+        location: {
+          uri: { fsPath: '/Users/Dev/Workspace/srv/catalog-service.js' },
+          range: { start: { line: 0, character: 0 } },
+        },
+      }),
+    ];
+    const session = createSession('Debug: catalog-service');
+    const tracker = vscodeMockState.factory?.createDebugAdapterTracker(session);
+    // Different casing — should NOT match on a case-sensitive platform.
+    tracker?.onDidSendMessage(loadedSourceEvent('/users/dev/workspace/srv/catalog-service.js'));
+
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(session.customRequest).not.toHaveBeenCalled();
+  });
+});

@@ -45,6 +45,13 @@ export type BeforeReconnectHook = (
   params: { folderPath: string; port: number; launchConfigName: string },
 ) => Promise<void>;
 
+// Cap how long the beforeReconnect hook can run before we give up and fall back
+// to the existing launch.json. A hung hook (locked file, unresponsive disk, slow
+// cap-debug-config.json read) must not stall recovery indefinitely — the user
+// would see the session stuck in TUNNELING with no way to recover short of
+// stopping and restarting manually.
+export const BEFORE_RECONNECT_HOOK_TIMEOUT_MS = 3000;
+
 let beforeReconnectHook: BeforeReconnectHook | undefined;
 
 /**
@@ -220,6 +227,24 @@ function scheduleReconnect(
   return true;
 }
 
+async function runHookWithTimeout(
+  hook: BeforeReconnectHook,
+  appName: string,
+  params: { folderPath: string; port: number; launchConfigName: string },
+): Promise<void> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(`beforeReconnect hook timed out after ${BEFORE_RECONNECT_HOOK_TIMEOUT_MS.toString()}ms`));
+    }, BEFORE_RECONNECT_HOOK_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([hook(appName, params), timeout]);
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+  }
+}
+
 async function runReconnectAttempt(
   appName: string,
   lifecycleVersion: number,
@@ -236,10 +261,10 @@ async function runReconnectAttempt(
   }
   if (beforeReconnectHook !== undefined) {
     try {
-      await beforeReconnectHook(appName, params);
+      await runHookWithTimeout(beforeReconnectHook, appName, params);
     } catch (err: unknown) {
-      // The hook is best-effort — failure leaves the existing launch.json in place,
-      // which still contains the configuration written at the original Start.
+      // The hook is best-effort — failure or timeout leaves the existing launch.json
+      // in place, which still contains the configuration written at the original Start.
       logWarn(`[${appName}] beforeReconnect hook failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }

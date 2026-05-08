@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.62-pre.3] — 2026
+
+### Fixes
+
+- **Auto-reconnect can no longer stall on a hung pre-reconnect hook** — The beforeReconnect hook that re-runs `mergeLaunchJson` is now bounded by a 3-second timeout. A locked launch.json, slow disk, or unresponsive cap-debug-config.json read will log a warning and proceed with the existing configuration instead of leaving the session stuck in `TUNNELING…`.
+- **Breakpoints in lazily-loaded scripts now bind on Windows when drive-letter casing differs** — The DAP loadedSource re-resolve now compares filesystem paths case-insensitively on Windows, where VS Code's `Uri.fsPath` (`C:\…`) and the DAP `source.path` (`c:\…`) can differ in casing despite referring to the same file.
+
+---
+
 ## [0.3.62-pre.2] — 2026
 
 ### Fixes
