@@ -11,6 +11,7 @@ import { disposeBreakpointSnapshotManager, initializeBreakpointSnapshotManager }
 import { disposeBreakpointResolver, initializeBreakpointResolver } from './core/breakpointResolver';
 import { showWhatsNewIfNeeded } from './core/whatsNewManager';
 import { WhatsNewPanel } from './webview/whatsNewPanel';
+import type { SharedCfScope } from './types/index';
 
 export function activate(context: vscode.ExtensionContext): void {
   initConfigStore(context);
@@ -54,6 +55,15 @@ export function activate(context: vscode.ExtensionContext): void {
           type: 'DEBUG_SESSION_PACKAGE_PREFS',
           payload: getDebugSessionPackagePreferences(),
         });
+      }
+
+      if (e.affectsConfiguration('sapCap.currentScope')) {
+        const newScope = vscode.workspace
+          .getConfiguration('sapCap')
+          .get<SharedCfScope>('currentScope');
+        if (newScope) {
+          provider.handleExternalScopeChange(newScope);
+        }
       }
     }),
   );

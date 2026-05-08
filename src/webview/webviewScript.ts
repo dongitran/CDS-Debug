@@ -170,6 +170,7 @@ export function getScript(nonce: string): string {
       // True when the current LOAD_APPS was triggered automatically by session restore
       // (VS Code restart). Used to determine whether APPS_ERROR should auto-reconnect.
       isRestoringSession: false,
+      suppressConfigAutoRestore: false,
       // True when auto-reconnect was triggered (shows different spinner message).
       isReconnecting: false,
       // Credential setup screen state
@@ -469,6 +470,7 @@ export function getScript(nonce: string): string {
         const input = e.target.closest('input[name="cf-region"]');
         if (!input) return;
         const value = input.value;
+        state.suppressConfigAutoRestore = true;
         state.selectedTopologyOrg = null;
         state.useCustomEndpoint = false;
         state.selectedRegion = value;
@@ -479,6 +481,7 @@ export function getScript(nonce: string): string {
       $('api-endpoint-custom')?.addEventListener('input', e => { state.apiEndpoint = e.target.value; });
 
       $('btn-custom-endpoint')?.addEventListener('click', () => {
+        state.suppressConfigAutoRestore = true;
         state.regionSelectorMode = 'region';
         state.useCustomEndpoint = true;
         state.selectedTopologyOrg = null;
@@ -487,6 +490,7 @@ export function getScript(nonce: string): string {
       });
 
       $('btn-region-list')?.addEventListener('click', () => {
+        state.suppressConfigAutoRestore = true;
         state.useCustomEndpoint = false;
         state.error = null;
         state.apiEndpoint = regionToEndpoint(state.selectedRegion);
@@ -494,6 +498,7 @@ export function getScript(nonce: string): string {
       });
 
       $('btn-login')?.addEventListener('click', () => {
+        state.suppressConfigAutoRestore = true;
         if (hasReadyTopology() && state.regionSelectorMode !== 'region') {
           continueWithSelectedTopologyOrg();
           return;
@@ -555,6 +560,7 @@ export function getScript(nonce: string): string {
 
       $('btn-next-org')?.addEventListener('click', () => {
         if (!state.selectedOrg) return;
+        state.suppressConfigAutoRestore = true;
         state.error = null;
         state.screen = SCREENS.LOADING_SPACES;
         render();
@@ -575,6 +581,7 @@ export function getScript(nonce: string): string {
 
       $('btn-next-space')?.addEventListener('click', () => {
         if (!state.selectedOrg || !state.selectedSpace) return;
+        state.suppressConfigAutoRestore = true;
         state.error = null;
         restoreFolderForSelectedTarget();
         state.screen = SCREENS.SELECT_FOLDER;
@@ -593,6 +600,7 @@ export function getScript(nonce: string): string {
 
       $('btn-save-mapping')?.addEventListener('click', () => {
         if (!state.selectedOrg || !state.selectedSpace || !state.selectedFolder) return;
+        state.suppressConfigAutoRestore = true;
         const key = selectedTargetKey();
         if (key) state.foldersByTarget[key] = state.selectedFolder;
         const mapping = {
@@ -719,6 +727,7 @@ export function getScript(nonce: string): string {
       });
 
       $('btn-remap')?.addEventListener('click', () => {
+        state.suppressConfigAutoRestore = true;
         if (Object.keys(state.activeSessions).length > 0) {
           vscode.postMessage({ type: 'REQUEST_CHANGE_MAPPING' });
         } else {
@@ -1147,9 +1156,12 @@ export function getScript(nonce: string): string {
 
           // Gate: require credentials before proceeding with any other screen.
           if (!state.credentialStatus.hasCredentials) {
+            if (state.suppressConfigAutoRestore) return;
             state.screen = SCREENS.SETUP_CREDENTIALS;
             break;
           }
+
+          if (state.suppressConfigAutoRestore) return;
 
           if (cfg && state.mappings.length > 0) {
             const mapping = selectPreferredOrgMapping(state.orgs, state.mappings);
@@ -1227,6 +1239,15 @@ export function getScript(nonce: string): string {
           state.isSavingCreds = false;
           state.credentialStatus = { hasCredentials: false, email: '', source: 'none' };
           state.screen = SCREENS.SETUP_CREDENTIALS;
+          break;
+        }
+
+        case 'SCOPE_SYNCED': {
+          const { orgName, spaceName } = msg.payload;
+          if (state.selectedOrg === orgName && state.selectedSpace === spaceName) break;
+          state.selectedOrg = orgName;
+          state.selectedSpace = spaceName;
+          vscode.postMessage({ type: 'LOAD_APPS', payload: { org: orgName, space: spaceName } });
           break;
         }
       }

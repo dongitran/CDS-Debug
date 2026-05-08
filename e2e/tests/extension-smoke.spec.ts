@@ -55,6 +55,12 @@ interface SessionArtifacts {
   mockBinDir: string;
 }
 
+interface SharedCfScopeSetting {
+  regionCode: string;
+  orgName: string;
+  spaceName: string;
+}
+
 interface FixturePackageFile {
   id: string;
   label: string;
@@ -352,6 +358,34 @@ async function writeUserSettings(userDataDir: string, settings: Record<string, u
   );
 }
 
+async function readUserSettings(userDataDir: string): Promise<Record<string, unknown>> {
+  const settingsPath = join(userDataDir, 'User', 'settings.json');
+  if (!(await pathExists(settingsPath))) return {};
+  const parsed: unknown = JSON.parse(await readFile(settingsPath, 'utf8'));
+  return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {};
+}
+
+async function writeSapCapCurrentScope(
+  userDataDir: string,
+  scope: SharedCfScopeSetting,
+): Promise<void> {
+  const settings = await readUserSettings(userDataDir);
+  await writeUserSettings(userDataDir, {
+    ...settings,
+    'sapCap.currentScope': scope,
+  });
+}
+
+async function expectSapCapCurrentScope(
+  userDataDir: string,
+  scope: SharedCfScopeSetting,
+): Promise<void> {
+  await expect.poll(async () => {
+    const settings = await readUserSettings(userDataDir);
+    return settings['sapCap.currentScope'];
+  }, { timeout: 15_000 }).toEqual(scope);
+}
+
 async function createWorkspaceWithLaunchJson(configurations: Record<string, unknown>[]): Promise<string> {
   const workspaceDir = await createTempDirectory('cds-debug-e2e-workspace-');
   const vscodeDir = join(workspaceDir, '.vscode');
@@ -426,7 +460,7 @@ async function readManagedRemoteRoot(workspaceDir: string, appName: string): Pro
   }
 }
 
-async function allocatePort(): Promise<number> {
+async function allocateSinglePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
     server.once('error', reject);
@@ -448,6 +482,14 @@ async function allocatePort(): Promise<number> {
       });
     });
   });
+}
+
+async function allocatePort(): Promise<number> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const port = await allocateSinglePort();
+    if (port < 65000) return port;
+  }
+  return allocateSinglePort();
 }
 
 async function createMockCfCli(mockBinDir: string, scenario: CfScenario): Promise<void> {
@@ -1106,15 +1148,29 @@ async function completeMappingToReady(webview: Frame): Promise<void> {
   await completeMappingToReadyWithFolder(webview, MOCK_GROUP_FOLDER);
 }
 
+async function clickChangeMapping(webview: Frame): Promise<void> {
+  await expect.poll(async () => {
+    if (await webview.locator('#btn-login').isVisible().catch(() => false)) {
+      return true;
+    }
+
+    const button = webview.getByRole('button', { name: /Change Mapping/ });
+    if (await button.isVisible().catch(() => false)) {
+      await button.click({ force: true }).catch(() => undefined);
+    }
+    return webview.locator('#btn-login').isVisible().catch(() => false);
+  }, { timeout: 10_000 }).toBe(true);
+}
+
 async function remapToOrgSelection(webview: Frame): Promise<void> {
-  await webview.locator('#btn-remap').click();
+  await clickChangeMapping(webview);
   await expectRegionScreen(webview);
   await loginFromRegionScreen(webview);
   await expect(webview.getByText('Select CF Org')).toBeVisible();
 }
 
 async function remapToRegionScreen(webview: Frame): Promise<void> {
-  await webview.locator('#btn-remap').click();
+  await clickChangeMapping(webview);
   await expectRegionScreen(webview);
 }
 
@@ -1155,8 +1211,8 @@ async function enableBreakpointSnapshotHandlingFromSettings(webview: Frame): Pro
   await expect(webview.getByText('Settings')).toBeVisible();
   const toggle = webview.locator('#chk-breakpoint-snapshot-handling');
   if (!(await toggle.isChecked())) {
-    await toggle.check({ force: true });
-    await delay(300);
+    await webview.getByText('Breakpoint snapshot handling').click();
+    await expect(toggle).toBeChecked();
   }
   await webview.locator('#btn-back-settings').click();
   await expectReadyScreen(webview);
@@ -1168,7 +1224,7 @@ async function enableBranchPrepFromSettings(webview: Frame): Promise<void> {
   await expect(webview.getByText('Settings')).toBeVisible();
   const toggle = webview.locator('#chk-branch-prep');
   if (!(await toggle.isChecked())) {
-    await toggle.check({ force: true });
+    await webview.getByText('Branch auto-checkout').click();
   }
   await expect(toggle).toBeChecked();
   await webview.locator('#btn-back-settings').click();
@@ -3535,7 +3591,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
-        await webview.locator('#btn-remap').click();
+        await clickChangeMapping(webview);
 
         await expectRegionScreen(webview);
         await captureStepEvidence(workbenchPage, 'change-mapping-region-org');
@@ -3903,32 +3959,45 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await webview.locator('#btn-gear').click();
         await expect(webview.getByText('Settings')).toBeVisible();
+        await expect(webview.locator('.cred-info-email')).toContainText(MOCK_ENV_EMAIL);
 
-        // Inject SYNC_STATUS with isRunning=true and a currentOrg. Background cache
-        // sync can also emit real progress updates in the same session, so this test
-        // only asserts stable "running" UI signals plus generic progress text.
-        await injectMessage(webview, {
-          type: 'SYNC_STATUS',
-          payload: {
-            isRunning: true,
-            lastCompletedAt: null,
-            currentRegion: 'eu10',
-            currentOrg: 'mock-org-alpha',
-            done: 3,
-            total: 14,
-          },
-        });
+        const runningSyncStatus = {
+          isRunning: true,
+          lastCompletedAt: null,
+          currentRegion: 'eu10',
+          currentOrg: 'mock-org-alpha',
+          done: 3,
+          total: 14,
+        };
 
         // Sync running: spinner + progress bar, Sync Now button disabled
         const runningRow = webview.locator('.sync-status-row.running');
-        await expect(runningRow.locator('.spinner')).toBeVisible();
-        await expect(webview.locator('.progress-bar-wrap')).toHaveCount(1);
-        await expect(webview.locator('.progress-bar-fill')).toHaveAttribute('style', /width:\s*21%/);
-        await expect(webview.locator('#btn-trigger-sync')).toBeDisabled();
         await expect.poll(async () => {
+          await injectMessage(webview, {
+            type: 'SYNC_STATUS',
+            payload: runningSyncStatus,
+          });
+          const spinnerVisible = await runningRow.locator('.spinner').isVisible().catch(() => false);
+          const progressBarCount = await webview.locator('.progress-bar-wrap').count();
+          const fillStyle = await webview.locator('.progress-bar-fill').getAttribute('style').catch(() => '');
+          const syncButtonDisabled = await webview.locator('#btn-trigger-sync').isDisabled().catch(() => false);
+          return spinnerVisible
+            && progressBarCount === 1
+            && /width:\s*21%/.test(fillStyle ?? '')
+            && syncButtonDisabled;
+        }, { timeout: 10_000 }).toBe(true);
+        await expect.poll(async () => {
+          await injectMessage(webview, {
+            type: 'SYNC_STATUS',
+            payload: runningSyncStatus,
+          });
           return ((await runningRow.textContent()) ?? '').trim();
         }).toMatch(/(mock-org-alpha|Scanning|Logging into)/);
         await expect.poll(async () => {
+          await injectMessage(webview, {
+            type: 'SYNC_STATUS',
+            payload: runningSyncStatus,
+          });
           return ((await runningRow.textContent()) ?? '').trim();
         }).toMatch(/\(\d+\/\d+.*%\)/);
       });
@@ -4460,6 +4529,44 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         // No mappings → REGION screen
         await expectRegionScreen(webview);
       });
+    });
+  });
+
+  // ─── Shared CF Scope ──────────────────────────────────────────────────────
+
+  test.describe('Shared CF Scope', () => {
+    test('User can sync the current scope through VS Code global settings', async () => {
+      const folderAlpha = await createTempDirectory('cds-debug-e2e-scope-alpha-');
+      const folderBeta = await createTempDirectory('cds-debug-e2e-scope-beta-');
+      const alphaScope = { regionCode: 'eu10', orgName: 'mock-org-alpha', spaceName: 'app' };
+      const betaScope = { regionCode: 'eu10', orgName: 'mock-org-beta', spaceName: 'app' };
+
+      try {
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage, artifacts) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, folderAlpha, 'mock-org-alpha');
+          await expectSapCapCurrentScope(artifacts.userDataDir, alphaScope);
+
+          await remapToOrgSelection(webview);
+          await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
+          await webview.locator('#btn-next-org').click();
+          await expect(webview.getByText('Select Local Folder')).toBeVisible();
+          await injectSelectedFolder(webview, folderBeta);
+          await webview.locator('#btn-save-mapping').click();
+          await expectReadyScreen(webview);
+          await expectReadyTarget(webview, 'mock-org-beta');
+          await expectSapCapCurrentScope(artifacts.userDataDir, betaScope);
+          await captureStepEvidence(workbenchPage, 'scope-sync-beta-setting');
+
+          await writeSapCapCurrentScope(artifacts.userDataDir, alphaScope);
+          await expectReadyTarget(webview, 'mock-org-alpha');
+          await expectSapCapCurrentScope(artifacts.userDataDir, alphaScope);
+          await captureStepEvidence(workbenchPage, 'scope-sync-external-alpha');
+        });
+      } finally {
+        await removeDirWithRetry(folderAlpha);
+        await removeDirWithRetry(folderBeta);
+      }
     });
   });
 

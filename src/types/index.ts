@@ -130,6 +130,12 @@ export interface ExtensionConfig {
   orgGroupMappings: OrgGroupMapping[];
 }
 
+export interface SharedCfScope {
+  regionCode: string;
+  orgName: string;
+  spaceName: string;
+}
+
 export interface CfOrgCache {
   apps: CfApp[];
   cachedAt: number;
@@ -424,6 +430,7 @@ export type ExtensionMessage =
   | { type: 'SPACES_LOADED'; payload: { org: string; spaces: string[] } }
   | { type: 'SPACES_ERROR'; payload: { org: string; message: string } }
   | { type: 'APPS_LOADED'; payload: { apps: CfApp[] } }
+  | { type: 'SCOPE_SYNCED'; payload: { orgName: string; spaceName: string } }
   | { type: 'APPS_ERROR'; payload: { message: string } }
   | { type: 'DEBUG_STARTED'; payload: { count: number } }
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[]; ports: Record<string, number>; unmappedApps?: string[] } }

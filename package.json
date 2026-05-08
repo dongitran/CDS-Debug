@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.62-pre.4",
+  "version": "0.3.62-pre.5",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -67,6 +67,16 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Default regex filter applied to package names in the Packages screen. This acts as an initial value and can be overridden per session via the extension UI. If modified in the UI, the extension will attempt to update the appropriate scope (Workspace or User) if it was previously set there."
+        },
+        "sapCap.currentScope": {
+          "type": "object",
+          "scope": "application",
+          "markdownDescription": "Currently active Cloud Foundry scope managed by CDS Debug.",
+          "properties": {
+            "regionCode": { "type": "string" },
+            "orgName": { "type": "string" },
+            "spaceName": { "type": "string" }
+          }
         },
         "cdsDebug.sharedCapDebugConfig": {
           "type": "object",

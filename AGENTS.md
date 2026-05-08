@@ -154,6 +154,9 @@ pnpm test:report          # Open HTML report
 ### Ready Screen — Actions and Navigation
 1. User can change mapping and return to CF Region / Org.
 
+### Shared CF Scope
+1. User can sync the current scope through VS Code global settings.
+
 ### Org-Folder Caching
 1. User can return to a previous region without selecting its local folder again.
 2. User can restart VS Code and restore the most recently used org in the same region.

@@ -15,6 +15,7 @@ import type {
   LoadedPackageSource,
   PackageSourceLocation,
   OrgGroupMapping,
+  SharedCfScope,
   SyncProgress,
   WebviewMessage,
 } from '../types/index';
@@ -56,6 +57,7 @@ import {
   saveDebugPreferences,
   saveDebugSessionPackagePreferences,
 } from '../storage/cacheStore';
+import { regionCodeFromApiEndpoint, writeScopeIfChanged } from '../storage/scopeSync';
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { getTopologySnapshot, getTopologySnapshotSync } from '../core/cfTopology';
 import { logError, logInfo, logWarn, showLogChannel } from '../core/logger';
@@ -139,6 +141,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   // each Start Debug click. Cleared on Reset Configuration / window reload by definition.
   private readonly notifiedUnmatchedRemoteRoots = new Set<string>();
   private remoteRootWarmupGeneration = 0;
+  private lastWrittenScope: SharedCfScope | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     debugProcessEvents.on('statusChanged', (payload: { appName: string, status: string, message?: string }) => {
@@ -202,6 +205,28 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   public postMessage(message: ExtensionMessage): void {
     void this.view?.webview.postMessage(message);
+  }
+
+  public handleExternalScopeChange(scope: SharedCfScope): void {
+    if (
+      this.lastWrittenScope?.regionCode === scope.regionCode
+      && this.lastWrittenScope.orgName === scope.orgName
+      && this.lastWrittenScope.spaceName === scope.spaceName
+    ) {
+      return;
+    }
+
+    const config = getConfig();
+    if (!config) return;
+
+    const activeRegionCode = regionCodeFromApiEndpoint(config.apiEndpoint);
+    if (activeRegionCode !== scope.regionCode) return;
+    if (!config.orgs.includes(scope.orgName)) return;
+
+    this.postMessage({
+      type: 'SCOPE_SYNCED',
+      payload: { orgName: scope.orgName, spaceName: scope.spaceName },
+    });
   }
 
   private async pushCfTopology(): Promise<void> {
@@ -671,6 +696,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         if (ageMs < ttlMs) {
           logInfo(`Apps served from cache for target: ${org}/${space} (${Math.floor(ageMs / 60_000).toString()}m old).`);
           this.postMessage({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
+          await this.writeScopeAfterAppsLoaded(org, space);
           // Warm up the CF session in the background so that handleStartDebug
           // never hits an expired token when the app list came from cache.
           // Failures are silently retried with a full re-login.
@@ -692,6 +718,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const started = apps.filter((a) => a.state === 'started').length;
       logInfo(`Apps loaded: ${apps.length.toString()} total, ${started.toString()} started.`);
       this.postMessage({ type: 'APPS_LOADED', payload: { apps } });
+      await this.writeScopeAfterAppsLoaded(org, space);
       this.startRemoteRootWarmup(config.apiEndpoint, org, space, mapping.groupFolderPath, workspaceRoot, apps);
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
@@ -700,6 +727,23 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       if (!revoked) {
         this.postMessage({ type: 'APPS_ERROR', payload: { message: msg } });
       }
+    }
+  }
+
+  private async writeScopeAfterAppsLoaded(org: string, space: string): Promise<void> {
+    const config = getConfig();
+    if (!config) return;
+    const regionCode = regionCodeFromApiEndpoint(config.apiEndpoint);
+    if (!regionCode) return;
+
+    const scope: SharedCfScope = { regionCode, orgName: org, spaceName: space };
+    const previousScope = this.lastWrittenScope;
+    this.lastWrittenScope = scope;
+    try {
+      await writeScopeIfChanged(scope);
+    } catch (err: unknown) {
+      this.lastWrittenScope = previousScope;
+      logWarn(`[ScopeSync] Failed to write shared CF scope: ${extractErrorMessage(err)}`);
     }
   }
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.5] — 2026
+
+### Changes
+
+- **Shared CF scope sync** — CDS Debug now writes the verified `regionCode`, org, and space to the VS Code global `sapCap.currentScope` setting after apps load, and compatible same-region updates from external tools automatically reselect the mapped scope in the launcher.
+
+---
+
 ## [0.3.62-pre.4] — 2026
 
 ### Fixes

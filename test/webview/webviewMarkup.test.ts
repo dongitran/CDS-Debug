@@ -1,3 +1,4 @@
+import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 
 import { getPackageBrowserScriptContent } from '../../src/webview/packageBrowserContent';
@@ -29,6 +30,95 @@ function readInjectedRegions(script: string): WebviewRegion[] {
     throw new Error('CF_REGIONS catalog has an unexpected shape');
   }
   return parsed;
+}
+
+interface PostedMessage {
+  readonly type: string;
+  readonly payload?: unknown;
+}
+
+type MessageHandler = (event: { data: unknown }) => void;
+
+function extractInlineScript(script: string): string {
+  const match = /<script nonce="[^"]+">([\s\S]*)<\/script>/.exec(script);
+  if (!match?.[1]) throw new Error('Inline webview script was not found');
+  return match[1];
+}
+
+function createWebviewScriptHarness(): {
+  readonly postedMessages: PostedMessage[];
+  readonly dispatch: (message: PostedMessage) => void;
+} {
+  const postedMessages: PostedMessage[] = [];
+  let messageHandler: MessageHandler | undefined;
+  const appElement = { innerHTML: '' };
+  const documentMock = {
+    body: {},
+    getElementById: (id: string): typeof appElement | null => (id === 'app' ? appElement : null),
+    querySelector: (): null => null,
+    querySelectorAll: (): unknown[] => [],
+  };
+  const windowMock = {
+    addEventListener: (type: string, handler: unknown): void => {
+      if (type === 'message') {
+        messageHandler = handler as MessageHandler;
+      }
+    },
+  };
+  const context = {
+    acquireVsCodeApi: () => ({
+      postMessage: (message: PostedMessage): void => {
+        postedMessages.push(message);
+      },
+    }),
+    clearInterval,
+    document: documentMock,
+    setInterval,
+    window: windowMock,
+  };
+
+  vm.runInNewContext(extractInlineScript(getScript('test-nonce')), context, { timeout: 1000 });
+  if (!messageHandler) throw new Error('Webview message handler was not registered');
+  postedMessages.length = 0;
+
+  return {
+    postedMessages,
+    dispatch: (message: PostedMessage): void => {
+      messageHandler?.({ data: message });
+    },
+  };
+}
+
+function moveHarnessToReadyScreen(
+  harness: ReturnType<typeof createWebviewScriptHarness>,
+  orgName = 'sample-org-alpha',
+  spaceName = 'app',
+): void {
+  harness.dispatch({
+    type: 'CONFIG_LOADED',
+    payload: {
+      config: {
+        apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+        orgs: ['sample-org-alpha', 'sample-org-beta'],
+        orgGroupMappings: [{
+          cfOrg: orgName,
+          cfSpace: spaceName,
+          groupFolderPath: '/tmp/sample-folder',
+        }],
+      },
+      activeSessions: {},
+      credentialStatus: {
+        hasCredentials: true,
+        email: 'sample.user@example.com',
+        source: 'env',
+      },
+    },
+  });
+  harness.dispatch({
+    type: 'APPS_LOADED',
+    payload: { apps: [] },
+  });
+  harness.postedMessages.length = 0;
 }
 
 describe('webview markup contracts', () => {
@@ -145,6 +235,16 @@ describe('webview markup contracts', () => {
     expect(script).toMatch(/case 'PROCEED_CHANGE_MAPPING':\s+state\.screen = SCREENS\.REGION;/);
   });
 
+  it('does not let late config restores override manual mapping flow', () => {
+    const script = getScript('test-nonce');
+
+    expect(script).toContain('suppressConfigAutoRestore: false');
+    expect(script).toMatch(/\$\('btn-save-mapping'\)\?\.addEventListener\('click'[\s\S]*?state\.suppressConfigAutoRestore = true;/);
+    expect(script).toMatch(/\$\('btn-remap'\)\?\.addEventListener\('click'[\s\S]*?state\.suppressConfigAutoRestore = true;/);
+    expect(script).toMatch(/if \(!state\.credentialStatus\.hasCredentials\) \{\s+if \(state\.suppressConfigAutoRestore\) return;/);
+    expect(script).toMatch(/if \(state\.suppressConfigAutoRestore\) return;\s+if \(cfg && state\.mappings\.length > 0\)/);
+  });
+
   it('uses compatible MRU org mappings for webview save and restore flows', () => {
     const script = getScript('test-nonce');
 
@@ -153,6 +253,33 @@ describe('webview markup contracts', () => {
     expect(script).toMatch(/lastUsedAt:\s*Date\.now\(\)/);
     expect(script).toMatch(/state\.mappings\s*=\s*upsertWebviewOrgMapping\(state\.mappings,\s*mapping\)/);
     expect(script).toMatch(/const mapping = selectPreferredOrgMapping\(state\.orgs,\s*state\.mappings\);/);
+  });
+
+  it('does not trigger LOAD_APPS when SCOPE_SYNCED matches the selected org and space', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+
+    harness.dispatch({
+      type: 'SCOPE_SYNCED',
+      payload: { orgName: 'sample-org-alpha', spaceName: 'app' },
+    });
+
+    expect(harness.postedMessages).toEqual([]);
+  });
+
+  it('triggers LOAD_APPS when SCOPE_SYNCED changes org or space', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+
+    harness.dispatch({
+      type: 'SCOPE_SYNCED',
+      payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+    });
+
+    expect(harness.postedMessages).toEqual([{
+      type: 'LOAD_APPS',
+      payload: { org: 'sample-org-beta', space: 'dev' },
+    }]);
   });
 
   it('keeps the package browser screen minimal', () => {
