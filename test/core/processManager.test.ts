@@ -5,6 +5,7 @@ interface MockDebugSession {
   id: string;
   name: string;
   parentSession?: MockDebugSession;
+  customRequest: ReturnType<typeof vi.fn>;
 }
 
 interface MockChildProcess extends EventEmitter {
@@ -34,7 +35,15 @@ interface Deferred<T> {
 
 type DebugSessionListener = (session: MockDebugSession) => void;
 
-const { childProcessMockState, portCleanupMockState, vscodeMockState } = vi.hoisted(() => ({
+const {
+  childProcessMockState,
+  keepaliveMockState,
+  portCleanupMockState,
+  processMockState,
+  remoteCleanupMockState,
+  tunnelRegistryMockState,
+  vscodeMockState,
+} = vi.hoisted(() => ({
   childProcessMockState: {
     calls: [] as SpawnCall[],
     children: [] as MockChildProcess[],
@@ -42,11 +51,27 @@ const { childProcessMockState, portCleanupMockState, vscodeMockState } = vi.hois
     spawn: vi.fn(),
     execFile: vi.fn(),
   },
+  keepaliveMockState: {
+    disposers: [] as ReturnType<typeof vi.fn>[],
+    startTunnelKeepalive: vi.fn(),
+  },
   portCleanupMockState: {
     cleanupPort: vi.fn(),
     killProcessOnPort: vi.fn(),
     waitPortFree: vi.fn(),
     waitPortListening: vi.fn(),
+  },
+  processMockState: {
+    kill: vi.fn(),
+  },
+  remoteCleanupMockState: {
+    clearBreakpointsBeforeStop: vi.fn(),
+    handleRemoteInspectorAfterStop: vi.fn(),
+    scanAndWarnForDebuggerLiterals: vi.fn(),
+  },
+  tunnelRegistryMockState: {
+    registerActiveTunnel: vi.fn(),
+    unregisterActiveTunnel: vi.fn(),
   },
   vscodeMockState: {
     append: vi.fn(),
@@ -59,6 +84,8 @@ const { childProcessMockState, portCleanupMockState, vscodeMockState } = vi.hois
     onDidStartDebugSession: undefined as DebugSessionListener | undefined,
     onDidTerminateDebugSession: undefined as DebugSessionListener | undefined,
     removeLaunchConfigs: vi.fn(),
+    settings: new Map<string, unknown>(),
+    nextSessionId: 1,
   },
 }));
 
@@ -143,6 +170,21 @@ vi.mock('../../src/core/launchConfigurator', () => ({
   removeLaunchConfigs: vscodeMockState.removeLaunchConfigs,
 }));
 
+vi.mock('../../src/core/remoteInspectorCleanup', () => ({
+  clearBreakpointsBeforeStop: remoteCleanupMockState.clearBreakpointsBeforeStop,
+  handleRemoteInspectorAfterStop: remoteCleanupMockState.handleRemoteInspectorAfterStop,
+  scanAndWarnForDebuggerLiterals: remoteCleanupMockState.scanAndWarnForDebuggerLiterals,
+}));
+
+vi.mock('../../src/core/tunnelKeepalive', () => ({
+  startTunnelKeepalive: keepaliveMockState.startTunnelKeepalive,
+}));
+
+vi.mock('../../src/core/orphanTunnelReaper', () => ({
+  registerActiveTunnel: tunnelRegistryMockState.registerActiveTunnel,
+  unregisterActiveTunnel: tunnelRegistryMockState.unregisterActiveTunnel,
+}));
+
 vi.mock('vscode', () => ({
   debug: {
     onDidStartDebugSession: (listener: DebugSessionListener) => {
@@ -167,7 +209,7 @@ vi.mock('vscode', () => ({
   },
   workspace: {
     getConfiguration: () => ({
-      get: (_key: string, fallback: number) => fallback,
+      get: (key: string, fallback: unknown) => vscodeMockState.settings.get(key) ?? fallback,
     }),
     workspaceFolders: [{ uri: { fsPath: '/tmp/sample-workspace' } }],
   },
@@ -204,6 +246,13 @@ beforeEach(() => {
     return child;
   });
   childProcessMockState.execFile.mockImplementation(() => new EventEmitter());
+  keepaliveMockState.disposers.length = 0;
+  keepaliveMockState.startTunnelKeepalive.mockReset();
+  keepaliveMockState.startTunnelKeepalive.mockImplementation(() => {
+    const dispose = vi.fn();
+    keepaliveMockState.disposers.push(dispose);
+    return dispose;
+  });
 
   portCleanupMockState.cleanupPort.mockResolvedValue(true);
   portCleanupMockState.killProcessOnPort.mockResolvedValue(undefined);
@@ -215,11 +264,35 @@ beforeEach(() => {
   vscodeMockState.clear.mockClear();
   vscodeMockState.dispose.mockClear();
   vscodeMockState.showInformationMessage.mockResolvedValue(undefined);
-  vscodeMockState.startDebugging.mockResolvedValue(true);
+  vscodeMockState.startDebugging.mockImplementation((_folder: unknown, launchConfigName: string) => {
+    const session: MockDebugSession = {
+      id: `session-${vscodeMockState.nextSessionId.toString()}`,
+      name: launchConfigName,
+      customRequest: vi.fn().mockResolvedValue(undefined),
+    };
+    vscodeMockState.nextSessionId += 1;
+    vscodeMockState.onDidStartDebugSession?.(session);
+    return Promise.resolve(true);
+  });
   vscodeMockState.stopDebugging.mockResolvedValue(undefined);
   vscodeMockState.removeLaunchConfigs.mockResolvedValue(undefined);
+  vscodeMockState.settings.clear();
+  vscodeMockState.nextSessionId = 1;
 
-  vi.spyOn(process, 'kill').mockImplementation(() => true);
+  remoteCleanupMockState.clearBreakpointsBeforeStop.mockReset();
+  remoteCleanupMockState.handleRemoteInspectorAfterStop.mockReset();
+  remoteCleanupMockState.scanAndWarnForDebuggerLiterals.mockReset();
+  remoteCleanupMockState.clearBreakpointsBeforeStop.mockResolvedValue(undefined);
+  remoteCleanupMockState.handleRemoteInspectorAfterStop.mockResolvedValue(undefined);
+  remoteCleanupMockState.scanAndWarnForDebuggerLiterals.mockResolvedValue(undefined);
+  tunnelRegistryMockState.registerActiveTunnel.mockReset();
+  tunnelRegistryMockState.unregisterActiveTunnel.mockReset();
+  tunnelRegistryMockState.registerActiveTunnel.mockResolvedValue(undefined);
+  tunnelRegistryMockState.unregisterActiveTunnel.mockResolvedValue(undefined);
+
+  processMockState.kill.mockReset();
+  processMockState.kill.mockReturnValue(true);
+  vi.spyOn(process, 'kill').mockImplementation(processMockState.kill);
 });
 
 afterEach(async () => {
@@ -227,6 +300,109 @@ afterEach(async () => {
   debugProcessEvents.removeAllListeners();
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe('processManager remote inspector hardening', () => {
+  it('signals the heuristic main Node process by default instead of every node process', async () => {
+    await startManagedTunnel('demo-app', 20000);
+
+    const signalCall = childProcessMockState.calls.find((call) => call.args.includes('-c'));
+    expect(signalCall?.args[3]).toContain("node.*(server|app|index)\\.js");
+    expect(signalCall?.args[3]).toContain('cds-mtxs');
+    expect(signalCall?.args[3]).not.toBe('kill -s USR1 $(pidof node)');
+  });
+
+  it('keeps the legacy all-node signal command when signalAllNodeProcesses is enabled', async () => {
+    vscodeMockState.settings.set('signalAllNodeProcesses', true);
+
+    await startManagedTunnel('legacy-app', 20001);
+
+    const signalCall = childProcessMockState.calls.find((call) => call.args.includes('-c'));
+    expect(signalCall?.args[3]).toBe('kill -s USR1 $(pidof node)');
+  });
+
+  it('registers the cf ssh tunnel, starts keepalive, and scans for debugger literals after attach', async () => {
+    await startManagedTunnel('demo-app', 20000);
+
+    expect(tunnelRegistryMockState.registerActiveTunnel).toHaveBeenCalledWith({
+      appName: 'demo-app',
+      pid: 42,
+      port: 20000,
+      startedAt: expect.any(Number),
+      ownerPid: process.pid,
+    });
+    expect(keepaliveMockState.startTunnelKeepalive).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Debug: demo-app' }),
+      'demo-app',
+      10,
+      expect.any(Function),
+    );
+    expect(remoteCleanupMockState.scanAndWarnForDebuggerLiterals).toHaveBeenCalledWith(
+      'demo-app',
+      '/tmp/sample-service',
+      expect.any(Number),
+      expect.any(Object),
+    );
+  });
+
+  it('clears remote breakpoints before killing the tunnel and stopping the debug session', async () => {
+    await startManagedTunnel('demo-app', 20000);
+
+    await stopProcess('demo-app');
+
+    expect(remoteCleanupMockState.clearBreakpointsBeforeStop).toHaveBeenCalledWith(
+      'demo-app',
+      expect.objectContaining({ name: 'Debug: demo-app' }),
+    );
+    expect(vscodeMockState.stopDebugging).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Debug: demo-app' }),
+    );
+    const clearOrder = remoteCleanupMockState.clearBreakpointsBeforeStop.mock.invocationCallOrder[0] ?? 0;
+    const killOrder = processMockState.kill.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER;
+    expect(clearOrder).toBeLessThan(killOrder);
+    expect(keepaliveMockState.disposers[0]).toHaveBeenCalledOnce();
+    expect(tunnelRegistryMockState.unregisterActiveTunnel).toHaveBeenCalledWith('demo-app');
+    expect(remoteCleanupMockState.handleRemoteInspectorAfterStop).toHaveBeenCalledWith('demo-app');
+  });
+
+  it('skips post-stop inspector notification during silent stop', async () => {
+    await startManagedTunnel('silent-app', 20000);
+
+    await stopProcess('silent-app', false, true);
+
+    expect(remoteCleanupMockState.handleRemoteInspectorAfterStop).not.toHaveBeenCalled();
+  });
+
+  it('clears old remote breakpoints before an auto-reconnect attempt opens a replacement tunnel', async () => {
+    const tunnelChild = await startManagedTunnel('reconnect-app', 20000);
+    remoteCleanupMockState.clearBreakpointsBeforeStop.mockClear();
+
+    tunnelChild.emit('close', 1);
+    await vi.advanceTimersByTimeAsync(1_500);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(remoteCleanupMockState.clearBreakpointsBeforeStop).toHaveBeenCalledWith(
+      'reconnect-app',
+      expect.objectContaining({ name: 'Debug: reconnect-app' }),
+    );
+    expect(tunnelSpawnCount()).toBe(2);
+  });
+
+  it('schedules reconnect when keepalive reports repeated failure', async () => {
+    await startManagedTunnel('keepalive-app', 20000);
+    const onFailure = keepaliveMockState.startTunnelKeepalive.mock.calls[0]?.[3];
+    if (typeof onFailure !== 'function') throw new Error('keepalive failure callback was not registered.');
+
+    onFailure();
+    await vi.advanceTimersByTimeAsync(1_500);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(tunnelSpawnCount()).toBe(2);
+  });
 });
 
 describe('processManager port cleanup lifecycle', () => {
@@ -241,6 +417,7 @@ describe('processManager port cleanup lifecycle', () => {
     const resolution = stopPromise.then(() => {
       resolved = true;
     });
+    await Promise.resolve();
     await Promise.resolve();
 
     expect(portCleanupMockState.cleanupPort).toHaveBeenCalledWith(20000, 3_000);
@@ -268,6 +445,7 @@ describe('processManager port cleanup lifecycle', () => {
 
     cleanup.resolve(true);
     await stopPromise;
+    await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(300);
     await restartPromise;
 

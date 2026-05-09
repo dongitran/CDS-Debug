@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.62-pre.7] — 2026
+
+### Changes
+
+- **Remote inspector cleanup hardening** — CDS Debug now clears remote breakpoints before stop, warns that the Node inspector may remain open until app restart, offers opt-in auto-restart after stop, detects stale local `cf ssh` inspector tunnels on activation, warns about local `debugger;` statements after attach, and uses an app-level keepalive to recover faster from half-open debug tunnels.
+- **Safer inspector activation** — The default USR1 signal now targets a likely main Node process (`server.js`, `app.js`, or `index.js`) and avoids common sidecars such as `cds-mtxs`. Set `cdsDebug.signalAllNodeProcesses` to `true` to restore the previous all-node behavior.
+
+---
+
 ## [0.3.62-pre.6] — 2026
 
 ### Changes

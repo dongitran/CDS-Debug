@@ -225,6 +225,15 @@ export const DEFAULT_DEBUG_SESSION_PACKAGE_PREFERENCES: DebugSessionPackagePrefe
   packageNameFilterRegex: '',
 };
 
+export interface RemoteInspectorCleanupSettings {
+  warnRemoteInspectorAfterStop: boolean;
+  autoRestartAppAfterStop: boolean;
+  warnDebuggerLiteralOnAttach: boolean;
+  clearRemoteBreakpointsBeforeStop: boolean;
+  tunnelKeepaliveIntervalSeconds: number;
+  signalAllNodeProcesses: boolean;
+}
+
 export type BreakpointStopReason = 'breakpoint';
 
 export interface BreakpointContextVariable {

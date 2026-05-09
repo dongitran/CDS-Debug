@@ -3,7 +3,7 @@ import { initConfigStore, clearConfig } from './storage/configStore';
 import { initCacheStore, getDebugSessionPackagePreferences } from './storage/cacheStore';
 import { initCacheSync, disposeCacheSync } from './core/cacheSync';
 import { DebugLauncherViewProvider } from './webview/debugPanel';
-import { disposeLogger, logWarn } from './core/logger';
+import { disposeLogger, logInfo, logWarn } from './core/logger';
 import { disposeAllProcesses, initializeProcessManager, stopAllProcesses, getActiveAppNames } from './core/processManager';
 import { setSecretStorage, clearCredentialsFromSecretStorage } from './core/shellEnv';
 import { cleanStaleDebugConfigs, removeLaunchConfigs } from './core/launchConfigurator';
@@ -11,12 +11,16 @@ import { disposeBreakpointSnapshotManager, initializeBreakpointSnapshotManager }
 import { disposeBreakpointResolver, initializeBreakpointResolver } from './core/breakpointResolver';
 import { showWhatsNewIfNeeded } from './core/whatsNewManager';
 import { WhatsNewPanel } from './webview/whatsNewPanel';
+import { initializeTunnelRegistry, reapOrphanCfSshTunnels } from './core/orphanTunnelReaper';
+import { incrementLocalTelemetryCounter, initializeLocalTelemetry } from './core/localTelemetry';
 import type { SharedCfScope } from './types/index';
 
 export function activate(context: vscode.ExtensionContext): void {
   initConfigStore(context);
   initCacheStore(context);
   setSecretStorage(context.secrets);
+  initializeLocalTelemetry(context);
+  initializeTunnelRegistry(context.globalStorageUri.fsPath);
   if (process.env.CDS_DEBUG_DISABLE_BACKGROUND_SYNC !== '1') {
     initCacheSync();
   }
@@ -31,15 +35,25 @@ export function activate(context: vscode.ExtensionContext): void {
   // cleanStaleDebugConfigs ensures any subsequent mergeLaunchJson call is serialized
   // after this cleanup completes, preventing a race if the user starts debugging quickly.
   const workspaceFolders = vscode.workspace.workspaceFolders;
+  const staleCleanupTasks: Promise<void>[] = [];
   if (workspaceFolders) {
     for (const folder of workspaceFolders) {
-      void cleanStaleDebugConfigs(folder.uri.fsPath).catch((err: unknown) => {
+      staleCleanupTasks.push(cleanStaleDebugConfigs(folder.uri.fsPath).catch((err: unknown) => {
         logWarn(
           `Failed to clean stale debug configs in ${folder.uri.fsPath}: ${err instanceof Error ? err.message : String(err)}`,
         );
-      });
+      }));
     }
   }
+  void Promise.allSettled(staleCleanupTasks)
+    .then(() => reapOrphanCfSshTunnels({ globalStoragePath: context.globalStorageUri.fsPath, graceMs: 60_000 }))
+    .then((result) => {
+      logInfo(`[TunnelReaper] activation reap killed ${result.killed.length.toString()} pid(s), skipped ${result.skipped.length.toString()}.`);
+      if (result.killed.length > 0) void incrementLocalTelemetryCounter('orphanTunnelReaped');
+    })
+    .catch((err: unknown) => {
+      logWarn(`[TunnelReaper] activation reap failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
 
   const provider = new DebugLauncherViewProvider(context);
   context.subscriptions.push(

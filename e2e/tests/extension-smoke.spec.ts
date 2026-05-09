@@ -291,6 +291,7 @@ OUT
       exit 0
     fi
     if [[ "$ssh_mode" == "-c" ]]; then
+      echo "$ssh_command" > "$script_dir/.last-ssh-command"
       echo "OK"
       exit 0
     fi
@@ -2454,6 +2455,107 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
           const errorBoxEvents = await stopErrorBoxMonitor(webview);
           expect(errorBoxEvents.join('\n')).not.toMatch(/address already in use/i);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
+    });
+
+    test('User can stop an attached session and see the remote inspector reminder', async () => {
+      const workspaceDir = await createWorkspaceForCapConfigTest({});
+
+      try {
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'restart-race' }, async (workbenchPage, artifacts) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+
+          await startDebugForApp(webview, 'mock-service-a');
+          await expectAttachedSessionCard(webview, 'mock-service-a');
+          await stopDebugForApp(webview, 'mock-service-a');
+
+          await expect(workbenchPage.getByText(/Node inspector for mock-service-a may remain open/).first()).toBeVisible({ timeout: 10_000 });
+          await workbenchPage.getByRole('button', { name: "Don't show again" }).click();
+          await expect.poll(async () => {
+            const settings = await readUserSettings(artifacts.userDataDir);
+            return settings['cdsDebug.warnRemoteInspectorAfterStop'];
+          }).toBe(false);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
+    });
+
+    test('User can suppress the remote inspector reminder with settings', async () => {
+      const workspaceDir = await createWorkspaceForCapConfigTest({});
+
+      try {
+        await withVsCodeSession(
+          {
+            credentialMode: 'env',
+            cfScenario: 'restart-race',
+            userSettings: { 'cdsDebug.warnRemoteInspectorAfterStop': false },
+          },
+          async (workbenchPage) => {
+            const webview = await openCdsDebugWebview(workbenchPage);
+            await completeMappingToReadyWithFolder(webview, workspaceDir);
+
+            await startDebugForApp(webview, 'mock-service-a');
+            await expectAttachedSessionCard(webview, 'mock-service-a');
+            await stopDebugForApp(webview, 'mock-service-a');
+
+            await expect(workbenchPage.getByText(/Node inspector for mock-service-a may remain open/)).toHaveCount(0, { timeout: 2_000 });
+          },
+          workspaceDir,
+        );
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
+    });
+
+    test('User can open the first local debugger statement warning match', async () => {
+      const workspaceDir = await createWorkspaceForCapConfigTest({});
+      const sourceDir = join(workspaceDir, 'mock-service-a', 'srv');
+      await mkdir(sourceDir, { recursive: true });
+      await writeFile(join(sourceDir, 'sample-service.js'), [
+        'module.exports = async function sample() {',
+        '  const enabled = true;',
+        '  if (enabled) {',
+        '    const value = 1;',
+        '    debugger;',
+        '  }',
+        '};',
+      ].join('\n'), 'utf8');
+
+      try {
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'restart-race' }, async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+
+          await startDebugForApp(webview, 'mock-service-a');
+          await expectAttachedSessionCard(webview, 'mock-service-a');
+          await expect(workbenchPage.getByText(/local source file line.*debugger;/).first()).toBeVisible({ timeout: 15_000 });
+          await workbenchPage.getByRole('button', { name: 'Open First Match' }).click();
+          await expectEditorCursorPosition(workbenchPage, 5, 1);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
+    });
+
+    test('User can start debug with the default main-process USR1 signal command', async () => {
+      const workspaceDir = await createWorkspaceForCapConfigTest({});
+
+      try {
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'restart-race' }, async (workbenchPage, artifacts) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+
+          await startDebugForApp(webview, 'mock-service-a');
+          await expectAttachedSessionCard(webview, 'mock-service-a');
+
+          await expect.poll(async () => {
+            return readFile(join(artifacts.mockBinDir, '.last-ssh-command'), 'utf8').catch(() => '');
+          }).toContain("node.*(server|app|index)\\.js");
         }, workspaceDir);
       } finally {
         await removeDirWithRetry(workspaceDir);

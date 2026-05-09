@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.62-pre.6",
+  "version": "0.3.62-pre.7",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -50,6 +50,38 @@
           "minimum": 10,
           "maximum": 120,
           "markdownDescription": "How long (in seconds) to wait for the SSH debug tunnel to become ready before reporting a connection error. Increase this value for high-latency CF regions (e.g. `ap10`, `jp10`) or slow app start-ups. Default: `30`."
+        },
+        "cdsDebug.warnRemoteInspectorAfterStop": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a reminder after stopping a debug session that the remote Node inspector can remain open inside the CF app until the app restarts. See `notes/34-remote-inspector-cleanup.md`."
+        },
+        "cdsDebug.autoRestartAppAfterStop": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Automatically run `cf restart <app>` after stopping a debug session to close the remote Node inspector completely. This can reset in-memory app state, so it is opt-in. See `notes/34-remote-inspector-cleanup.md`."
+        },
+        "cdsDebug.warnDebuggerLiteralOnAttach": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Scan local source for `debugger;` statements after attach and warn if found. These statements pause the app whenever any inspector client is connected."
+        },
+        "cdsDebug.clearRemoteBreakpointsBeforeStop": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Send defensive `setBreakpoints([])` requests before stopping a CDS Debug-managed session, reducing reliance on adapter/socket cleanup alone."
+        },
+        "cdsDebug.tunnelKeepaliveIntervalSeconds": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 60,
+          "markdownDescription": "How often CDS Debug sends a lightweight `threads` request to detect a half-open inspector tunnel. Set to `0` to disable keepalive recovery."
+        },
+        "cdsDebug.signalAllNodeProcesses": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Use the legacy `kill -s USR1 $(pidof node)` behavior that signals every Node process in the CF container. By default, CDS Debug targets a likely main process and excludes common sidecars."
         },
         "cdsDebug.pauseOnBreakpoint": {
           "type": "boolean",
