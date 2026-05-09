@@ -159,6 +159,7 @@ pnpm test:report          # Open HTML report
 2. User can receive an external scope from another region and auto-login to it.
 3. User can map a folder after receiving an external same-region scope without a saved mapping.
 4. User can prefill the target region for an external scope when credentials are missing.
+5. User can stop active sessions when receiving an external scope change.
 
 ### Org-Folder Caching
 1. User can return to a previous region without selecting its local folder again.

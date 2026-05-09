@@ -71,6 +71,7 @@ import {
   getDebugSessionById,
   getDebugSessionsForApp,
   getActiveSessions,
+  getActiveAppNames,
   getProcessOutputChannel,
   getSessionParams,
   setBeforeReconnectHook,
@@ -217,6 +218,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    void this.handleScopeChangeInternal(scope).catch((err: unknown) => {
+      logWarn(`[ScopeSync] Scope change handling failed: ${extractErrorMessage(err)}`);
+    });
+  }
+
+  private async handleScopeChangeInternal(scope: SharedCfScope): Promise<void> {
+    await this.stopActiveSessionsForScopeChange();
+
     const config = getConfig();
     const activeRegionCode = config ? regionCodeFromApiEndpoint(config.apiEndpoint) : undefined;
 
@@ -225,9 +234,25 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    void this.handleExternalRegionChange(scope).catch((err: unknown) => {
-      logWarn(`[ScopeSync] Cross-region auto-login failed: ${extractErrorMessage(err)}`);
-    });
+    await this.handleExternalRegionChange(scope);
+  }
+
+  private async stopActiveSessionsForScopeChange(): Promise<void> {
+    const activeApps = getActiveAppNames();
+    if (activeApps.length === 0) return;
+
+    const appList = activeApps.join(', ');
+    logInfo(
+      `[ScopeSync] Stopping ${activeApps.length.toString()} active debug session(s) due to external scope change: ${appList}`,
+    );
+
+    await stopAllProcesses();
+    clearBreakpointSnapshots();
+    this.postMessage({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: [] } });
+
+    void vscode.window.showInformationMessage(
+      `CDS Debug: stopped debug session(s) for ${appList} due to CF scope change.`,
+    );
   }
 
   private async handleExternalRegionChange(scope: SharedCfScope): Promise<void> {

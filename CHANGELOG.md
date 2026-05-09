@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.10] — 2026
+
+### Fixes
+
+- **External CF scope changes stop active sessions first** — CDS Debug now stops active debug sessions, clears breakpoint snapshots, and notifies the user before applying an externally synced org/space change, preventing stale tunnels and cross-region reconnect races.
+
+---
+
 ## [0.3.62-pre.9] — 2026
 
 ### Fixes

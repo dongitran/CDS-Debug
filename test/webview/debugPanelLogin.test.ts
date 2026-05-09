@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as CfClientModule from '../../src/core/cfClient';
+import type * as BreakpointSnapshotManagerModule from '../../src/core/breakpointSnapshotManager';
+import type * as ProcessManagerModule from '../../src/core/processManager';
 import type * as ScopeSyncModule from '../../src/storage/scopeSync';
 import type * as ShellEnvModule from '../../src/core/shellEnv';
 import type { ExtensionConfig, SharedCfScope } from '../../src/types/index';
@@ -26,6 +28,15 @@ const scopeSyncMock = vi.hoisted(() => ({
   ) => Promise<void>>(() => Promise.resolve()),
 }));
 
+const processManagerMock = vi.hoisted(() => ({
+  getActiveAppNames: vi.fn<() => string[]>(() => []),
+  stopAllProcesses: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+}));
+
+const breakpointSnapshotManagerMock = vi.hoisted(() => ({
+  clearBreakpointSnapshots: vi.fn<() => void>(),
+}));
+
 const shellEnvMock = vi.hoisted(() => ({
   clearCredentialsFromSecretStorage: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   getCredentialSource: vi.fn<() => Promise<'env' | 'keychain' | 'none'>>(() => Promise.resolve('none')),
@@ -48,6 +59,9 @@ vi.mock('vscode', () => ({
       show: vi.fn(),
       dispose: vi.fn(),
     }),
+    showInformationMessage: vi.fn<(
+      message: string,
+    ) => Promise<string | undefined>>(() => Promise.resolve(undefined)),
     showWarningMessage: vi.fn(),
   },
   Uri: {
@@ -70,6 +84,23 @@ vi.mock('../../src/core/cfClient', async (importOriginal) => {
     cfLogin: cfClientMock.cfLogin,
     cfLogout: cfClientMock.cfLogout,
     cfOrgs: cfClientMock.cfOrgs,
+  };
+});
+
+vi.mock('../../src/core/processManager', async (importOriginal) => {
+  const actual = await importOriginal<typeof ProcessManagerModule>();
+  return {
+    ...actual,
+    getActiveAppNames: processManagerMock.getActiveAppNames,
+    stopAllProcesses: processManagerMock.stopAllProcesses,
+  };
+});
+
+vi.mock('../../src/core/breakpointSnapshotManager', async (importOriginal) => {
+  const actual = await importOriginal<typeof BreakpointSnapshotManagerModule>();
+  return {
+    ...actual,
+    clearBreakpointSnapshots: breakpointSnapshotManagerMock.clearBreakpointSnapshots,
   };
 });
 
@@ -98,13 +129,20 @@ vi.mock('../../src/storage/scopeSync', async (importOriginal) => {
 import { buildLoginConfig } from '../../src/webview/debugPanel';
 import { DebugLauncherViewProvider } from '../../src/webview/debugPanel';
 import { getConfig, initConfigStore, saveConfig } from '../../src/storage/configStore';
+import * as vscode from 'vscode';
+
+type ShowInformationMessageMock = ReturnType<
+  typeof vi.fn<(message: string) => Promise<string | undefined>>
+>;
 
 interface DebugPanelInternals {
   lastWrittenScope: SharedCfScope | undefined;
   pendingExternalScope: SharedCfScope | undefined;
   applyPendingExternalScopeIfAny(orgs: string[]): void;
   handleLogin(apiEndpoint: string): Promise<void>;
+  handleScopeChangeInternal(scope: SharedCfScope): Promise<void>;
   handleExternalRegionChange(scope: SharedCfScope): Promise<void>;
+  stopActiveSessionsForScopeChange(): Promise<void>;
   writeScopeAfterAppsLoaded(org: string, space: string): Promise<void>;
 }
 
@@ -135,6 +173,10 @@ function makeProvider(): DebugLauncherViewProvider {
 
 function getInternals(provider: DebugLauncherViewProvider): DebugPanelInternals {
   return provider as unknown as DebugPanelInternals;
+}
+
+function getShowInformationMessageMock(): ShowInformationMessageMock {
+  return vscode.window.showInformationMessage as unknown as ShowInformationMessageMock;
 }
 
 async function saveSessionConfig(overrides?: Partial<ExtensionConfig>): Promise<void> {
@@ -204,6 +246,11 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     loggerMock.logInfo.mockClear();
     loggerMock.logWarn.mockClear();
     loggerMock.showLogChannel.mockClear();
+    processManagerMock.getActiveAppNames.mockReset();
+    processManagerMock.getActiveAppNames.mockReturnValue([]);
+    processManagerMock.stopAllProcesses.mockReset();
+    processManagerMock.stopAllProcesses.mockResolvedValue(undefined);
+    breakpointSnapshotManagerMock.clearBreakpointSnapshots.mockReset();
     scopeSyncMock.writeScopeIfChanged.mockReset();
     scopeSyncMock.writeScopeIfChanged.mockResolvedValue(undefined);
     shellEnvMock.clearCredentialsFromSecretStorage.mockReset();
@@ -216,21 +263,26 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     shellEnvMock.maskEmail.mockImplementation((email) => email);
     shellEnvMock.saveCredentialsToSecretStorage.mockReset();
     shellEnvMock.saveCredentialsToSecretStorage.mockResolvedValue(undefined);
+    getShowInformationMessageMock().mockClear();
   });
 
   it('ignores a scope matching the last scope written by this provider', async () => {
     const provider = makeProvider();
     const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    const handleScopeChangeInternal = vi.spyOn(getInternals(provider), 'handleScopeChangeInternal');
     const scope: SharedCfScope = {
       regionCode: 'eu10',
       orgName: 'sample-org-alpha',
       spaceName: 'app',
     };
     getInternals(provider).lastWrittenScope = scope;
+    processManagerMock.getActiveAppNames.mockReturnValue(['sample-service-a']);
     await saveSessionConfig();
 
     provider.handleExternalScopeChange(scope);
 
+    expect(handleScopeChangeInternal).not.toHaveBeenCalled();
+    expect(processManagerMock.stopAllProcesses).not.toHaveBeenCalled();
     expect(postMessage).not.toHaveBeenCalled();
   });
 
@@ -284,7 +336,9 @@ describe('DebugLauncherViewProvider external scope sync', () => {
 
     provider.handleExternalScopeChange(scope);
 
-    expect(handleExternalRegionChange).toHaveBeenCalledWith(scope);
+    await vi.waitFor(() => {
+      expect(handleExternalRegionChange).toHaveBeenCalledWith(scope);
+    });
     expect(postMessage).not.toHaveBeenCalledWith({
       type: 'SCOPE_SYNCED',
       payload: { orgName: 'sample-org-alpha', spaceName: 'app' },
@@ -450,9 +504,216 @@ describe('DebugLauncherViewProvider external scope sync', () => {
 
     await vi.waitFor(() => {
       expect(loggerMock.logWarn).toHaveBeenCalledWith(
-        '[ScopeSync] Cross-region auto-login failed: mock login failed',
+        '[ScopeSync] Scope change handling failed: mock login failed',
       );
     });
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not stop sessions or clear snapshots when an external scope arrives with no active sessions', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-beta',
+        cfSpace: 'dev',
+        groupFolderPath: '/sample/beta-dev',
+      }],
+    });
+
+    provider.handleExternalScopeChange({
+      regionCode: 'eu10',
+      orgName: 'sample-org-beta',
+      spaceName: 'dev',
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'SCOPE_SYNCED',
+        payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+      });
+    });
+    expect(processManagerMock.stopAllProcesses).not.toHaveBeenCalled();
+    expect(breakpointSnapshotManagerMock.clearBreakpointSnapshots).not.toHaveBeenCalled();
+  });
+
+  it('stops active sessions before posting a same-region mapped scope sync', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    processManagerMock.getActiveAppNames.mockReturnValue(['sample-service-a']);
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-beta',
+        cfSpace: 'dev',
+        groupFolderPath: '/sample/beta-dev',
+      }],
+    });
+
+    provider.handleExternalScopeChange({
+      regionCode: 'eu10',
+      orgName: 'sample-org-beta',
+      spaceName: 'dev',
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'SCOPE_SYNCED',
+        payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+      });
+    });
+    expect(processManagerMock.stopAllProcesses).toHaveBeenCalledTimes(1);
+    expect(breakpointSnapshotManagerMock.clearBreakpointSnapshots).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'BREAKPOINT_SNAPSHOTS',
+      payload: { snapshots: [] },
+    });
+    expect(getShowInformationMessageMock().mock.calls[0]?.[0]).toContain('sample-service-a');
+  });
+
+  it('stops active sessions before posting a same-region unmapped scope sync', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    processManagerMock.getActiveAppNames.mockReturnValue(['sample-service-a', 'sample-service-b']);
+    await saveSessionConfig();
+
+    provider.handleExternalScopeChange({
+      regionCode: 'eu10',
+      orgName: 'sample-org-beta',
+      spaceName: 'dev',
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'SCOPE_SYNCED_NO_MAPPING',
+        payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+      });
+    });
+    expect(processManagerMock.stopAllProcesses).toHaveBeenCalledTimes(1);
+    const message = getShowInformationMessageMock().mock.calls[0]?.[0] ?? '';
+    expect(message).toContain('sample-service-a, sample-service-b');
+  });
+
+  it('stops active sessions before cf logout for a cross-region scope with credentials', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    processManagerMock.getActiveAppNames.mockReturnValue(['sample-service-a']);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-beta']);
+    await saveSessionConfig();
+
+    provider.handleExternalScopeChange({
+      regionCode: 'us10',
+      orgName: 'sample-org-beta',
+      spaceName: 'app',
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'LOGIN_SUCCESS',
+        payload: {
+          orgs: ['sample-org-beta'],
+          apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
+        },
+      });
+    });
+    expect(processManagerMock.stopAllProcesses).toHaveBeenCalledTimes(1);
+    expect(processManagerMock.stopAllProcesses.mock.invocationCallOrder[0])
+      .toBeLessThan(cfClientMock.cfLogout.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY);
+  });
+
+  it('stops active sessions before prefilling region when cross-region credentials are missing', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    processManagerMock.getActiveAppNames.mockReturnValue(['sample-service-a']);
+    await saveSessionConfig();
+
+    provider.handleExternalScopeChange({
+      regionCode: 'us10',
+      orgName: 'sample-org-beta',
+      spaceName: 'app',
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'REGION_PREFILL',
+        payload: {
+          regionCode: 'us10',
+          apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
+        },
+      });
+    });
+    expect(processManagerMock.stopAllProcesses).toHaveBeenCalledTimes(1);
+    expect(cfClientMock.cfLogin).not.toHaveBeenCalled();
+  });
+
+  it('returns immediately when stopping sessions for scope change and no sessions are active', async () => {
+    const provider = makeProvider();
+
+    await getInternals(provider).stopActiveSessionsForScopeChange();
+
+    expect(processManagerMock.getActiveAppNames).toHaveBeenCalledTimes(1);
+    expect(processManagerMock.stopAllProcesses).not.toHaveBeenCalled();
+    expect(breakpointSnapshotManagerMock.clearBreakpointSnapshots).not.toHaveBeenCalled();
+    expect(getShowInformationMessageMock()).not.toHaveBeenCalled();
+  });
+
+  it('stops processes then clears snapshots when active sessions exist', async () => {
+    const provider = makeProvider();
+    const callOrder: string[] = [];
+    processManagerMock.getActiveAppNames.mockImplementation(() => {
+      callOrder.push('getActiveAppNames');
+      return ['sample-service-a'];
+    });
+    processManagerMock.stopAllProcesses.mockImplementation(() => {
+      callOrder.push('stopAllProcesses');
+      return Promise.resolve();
+    });
+    breakpointSnapshotManagerMock.clearBreakpointSnapshots.mockImplementation(() => {
+      callOrder.push('clearBreakpointSnapshots');
+    });
+
+    await getInternals(provider).stopActiveSessionsForScopeChange();
+
+    expect(callOrder).toEqual([
+      'getActiveAppNames',
+      'stopAllProcesses',
+      'clearBreakpointSnapshots',
+    ]);
+  });
+
+  it('notifies the user with stopped app names when active sessions are stopped', async () => {
+    const provider = makeProvider();
+    processManagerMock.getActiveAppNames.mockReturnValue(['sample-service-a', 'sample-service-b']);
+
+    await getInternals(provider).stopActiveSessionsForScopeChange();
+
+    const message = getShowInformationMessageMock().mock.calls[0]?.[0] ?? '';
+    expect(message).toContain('sample-service-a');
+    expect(message).toContain('sample-service-b');
+  });
+
+  it('logs a warning when stopping active sessions fails during external scope handling', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    processManagerMock.getActiveAppNames.mockReturnValue(['sample-service-a']);
+    processManagerMock.stopAllProcesses.mockRejectedValue(new Error('mock stop failed'));
+    await saveSessionConfig();
+
+    provider.handleExternalScopeChange({
+      regionCode: 'eu10',
+      orgName: 'sample-org-beta',
+      spaceName: 'dev',
+    });
+
+    await vi.waitFor(() => {
+      expect(loggerMock.logWarn).toHaveBeenCalledWith(
+        '[ScopeSync] Scope change handling failed: mock stop failed',
+      );
+    });
+    expect(breakpointSnapshotManagerMock.clearBreakpointSnapshots).not.toHaveBeenCalled();
     expect(postMessage).not.toHaveBeenCalled();
   });
 
@@ -467,9 +728,11 @@ describe('DebugLauncherViewProvider external scope sync', () => {
       spaceName: 'app',
     });
 
-    expect(postMessage).toHaveBeenCalledWith({
-      type: 'SCOPE_SYNCED_NO_MAPPING',
-      payload: { orgName: 'sample-org-gamma', spaceName: 'app' },
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'SCOPE_SYNCED_NO_MAPPING',
+        payload: { orgName: 'sample-org-gamma', spaceName: 'app' },
+      });
     });
   });
 
@@ -491,9 +754,11 @@ describe('DebugLauncherViewProvider external scope sync', () => {
       spaceName: 'app',
     });
 
-    expect(postMessage).toHaveBeenCalledWith({
-      type: 'SCOPE_SYNCED',
-      payload: { orgName: 'sample-org-gamma', spaceName: 'app' },
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'SCOPE_SYNCED',
+        payload: { orgName: 'sample-org-gamma', spaceName: 'app' },
+      });
     });
   });
 
@@ -514,9 +779,11 @@ describe('DebugLauncherViewProvider external scope sync', () => {
       spaceName: 'dev',
     });
 
-    expect(postMessage).toHaveBeenCalledWith({
-      type: 'SCOPE_SYNCED',
-      payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'SCOPE_SYNCED',
+        payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+      });
     });
   });
 
@@ -531,9 +798,11 @@ describe('DebugLauncherViewProvider external scope sync', () => {
       spaceName: 'dev',
     });
 
-    expect(postMessage).toHaveBeenCalledWith({
-      type: 'SCOPE_SYNCED_NO_MAPPING',
-      payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'SCOPE_SYNCED_NO_MAPPING',
+        payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+      });
     });
   });
 

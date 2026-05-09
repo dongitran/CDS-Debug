@@ -4771,6 +4771,32 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       }
     });
 
+    test('User can stop active sessions when receiving an external scope change', async () => {
+      const folderAlpha = await createWorkspaceForCapConfigTest({});
+      const betaScope = { regionCode: 'eu10', orgName: 'mock-org-beta', spaceName: 'app' };
+
+      try {
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'restart-race' }, async (workbenchPage, artifacts) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, folderAlpha, 'mock-org-alpha');
+          await startDebugForApp(webview, 'mock-service-a');
+          await expectAttachedSessionCard(webview, 'mock-service-a');
+
+          await writeSapCapCurrentScope(artifacts.userDataDir, betaScope);
+
+          await expect(webview.locator('.active-card', { hasText: 'mock-service-a' }))
+            .toHaveCount(0, { timeout: 15_000 });
+          await expect(webview.locator('.step-badge', { hasText: '3/3' })).toBeVisible();
+          await expect(webview.getByText('Select Local Folder')).toBeVisible();
+          await expect(webview.locator('.info-box', { hasText: 'mock-org-beta' })).toBeVisible();
+          await expect(webview.locator('.info-box', { hasText: 'app' })).toBeVisible();
+          await captureStepEvidence(workbenchPage, 'scope-sync-stops-active-session');
+        });
+      } finally {
+        await removeDirWithRetry(folderAlpha);
+      }
+    });
+
     test('User can prefill the target region for an external scope when credentials are missing', async () => {
       const betaScope = { regionCode: 'us10', orgName: 'sample-org-beta', spaceName: 'app' };
 
