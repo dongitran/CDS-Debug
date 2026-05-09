@@ -101,6 +101,9 @@ import { getConfig, initConfigStore, saveConfig } from '../../src/storage/config
 
 interface DebugPanelInternals {
   lastWrittenScope: SharedCfScope | undefined;
+  pendingExternalScope: SharedCfScope | undefined;
+  applyPendingExternalScopeIfAny(orgs: string[]): void;
+  handleLogin(apiEndpoint: string): Promise<void>;
   handleExternalRegionChange(scope: SharedCfScope): Promise<void>;
   writeScopeAfterAppsLoaded(org: string, space: string): Promise<void>;
 }
@@ -288,25 +291,33 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     });
   });
 
-  it('does not login or post messages for a cross-region scope when credentials are missing', async () => {
+  it('prefills region and stores a pending external scope when cross-region credentials are missing', async () => {
     const provider = makeProvider();
     const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
-    await saveSessionConfig();
-
-    provider.handleExternalScopeChange({
+    const scope: SharedCfScope = {
       regionCode: 'us10',
       orgName: 'sample-org-alpha',
       spaceName: 'app',
-    });
+    };
+    await saveSessionConfig();
+
+    provider.handleExternalScopeChange(scope);
 
     await vi.waitFor(() => {
       expect(shellEnvMock.getCredentials).toHaveBeenCalled();
     });
     expect(cfClientMock.cfLogin).not.toHaveBeenCalled();
-    expect(postMessage).not.toHaveBeenCalled();
+    expect(getInternals(provider).pendingExternalScope).toEqual(scope);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'REGION_PREFILL',
+      payload: {
+        regionCode: 'us10',
+        apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
+      },
+    });
   });
 
-  it('posts LOGIN_SUCCESS and SCOPE_SYNCED after a cross-region login when the target org exists', async () => {
+  it('posts LOGIN_SUCCESS and SCOPE_SYNCED after a cross-region login when the target org has a mapping', async () => {
     const provider = makeProvider();
     const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
     shellEnvMock.getCredentials.mockResolvedValue({
@@ -314,7 +325,13 @@ describe('DebugLauncherViewProvider external scope sync', () => {
       password: 'sample-password',
     });
     cfClientMock.cfOrgs.mockResolvedValue(['sample-org-beta', 'sample-org-gamma']);
-    await saveSessionConfig();
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-beta',
+        cfSpace: 'dev',
+        groupFolderPath: '/sample/beta-dev',
+      }],
+    });
 
     provider.handleExternalScopeChange({
       regionCode: 'us10',
@@ -341,6 +358,40 @@ describe('DebugLauncherViewProvider external scope sync', () => {
       },
       {
         type: 'SCOPE_SYNCED',
+        payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+      },
+    ]);
+  });
+
+  it('posts LOGIN_SUCCESS and SCOPE_SYNCED_NO_MAPPING after a cross-region login when the target org has no mapping', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-beta', 'sample-org-gamma']);
+    await saveSessionConfig();
+
+    provider.handleExternalScopeChange({
+      regionCode: 'us10',
+      orgName: 'sample-org-beta',
+      spaceName: 'dev',
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledTimes(2);
+    });
+    expect(postMessage.mock.calls.map((call) => call[0])).toEqual([
+      {
+        type: 'LOGIN_SUCCESS',
+        payload: {
+          orgs: ['sample-org-beta', 'sample-org-gamma'],
+          apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
+        },
+      },
+      {
+        type: 'SCOPE_SYNCED_NO_MAPPING',
         payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
       },
     ]);
@@ -375,6 +426,10 @@ describe('DebugLauncherViewProvider external scope sync', () => {
       type: 'SCOPE_SYNCED',
       payload: { orgName: 'sample-org-beta', spaceName: 'app' },
     });
+    expect(postMessage).not.toHaveBeenCalledWith({
+      type: 'SCOPE_SYNCED_NO_MAPPING',
+      payload: { orgName: 'sample-org-beta', spaceName: 'app' },
+    });
   });
 
   it('does not post messages and logs a warning when cross-region login fails', async () => {
@@ -401,10 +456,10 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     expect(postMessage).not.toHaveBeenCalled();
   });
 
-  it('ignores an external scope for an org outside the active session', async () => {
+  it('sends SCOPE_SYNCED_NO_MAPPING for a same-region external scope absent from stale orgs without a mapping', async () => {
     const provider = makeProvider();
     const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
-    await saveSessionConfig();
+    await saveSessionConfig({ orgs: ['sample-org-alpha'] });
 
     provider.handleExternalScopeChange({
       regionCode: 'eu10',
@@ -412,10 +467,60 @@ describe('DebugLauncherViewProvider external scope sync', () => {
       spaceName: 'app',
     });
 
-    expect(postMessage).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'SCOPE_SYNCED_NO_MAPPING',
+      payload: { orgName: 'sample-org-gamma', spaceName: 'app' },
+    });
   });
 
-  it('sends SCOPE_SYNCED for a compatible external scope', async () => {
+  it('sends SCOPE_SYNCED for a same-region external scope absent from stale orgs with a mapping', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    await saveSessionConfig({
+      orgs: ['sample-org-alpha'],
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-gamma',
+        cfSpace: 'app',
+        groupFolderPath: '/sample/gamma',
+      }],
+    });
+
+    provider.handleExternalScopeChange({
+      regionCode: 'eu10',
+      orgName: 'sample-org-gamma',
+      spaceName: 'app',
+    });
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'SCOPE_SYNCED',
+      payload: { orgName: 'sample-org-gamma', spaceName: 'app' },
+    });
+  });
+
+  it('sends SCOPE_SYNCED for a same-region external scope with a mapping', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-beta',
+        cfSpace: 'dev',
+        groupFolderPath: '/sample/beta-dev',
+      }],
+    });
+
+    provider.handleExternalScopeChange({
+      regionCode: 'eu10',
+      orgName: 'sample-org-beta',
+      spaceName: 'dev',
+    });
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'SCOPE_SYNCED',
+      payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+    });
+  });
+
+  it('sends SCOPE_SYNCED_NO_MAPPING for a same-region external scope without a mapping', async () => {
     const provider = makeProvider();
     const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
     await saveSessionConfig();
@@ -426,6 +531,122 @@ describe('DebugLauncherViewProvider external scope sync', () => {
       spaceName: 'dev',
     });
 
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'SCOPE_SYNCED_NO_MAPPING',
+      payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+    });
+  });
+
+  it('applies a pending external scope with mapping after manual login succeeds', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-beta']);
+    getInternals(provider).pendingExternalScope = {
+      regionCode: 'eu10',
+      orgName: 'sample-org-beta',
+      spaceName: 'dev',
+    };
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-beta',
+        cfSpace: 'dev',
+        groupFolderPath: '/sample/beta-dev',
+      }],
+    });
+
+    await getInternals(provider).handleLogin('https://api.cf.eu10.hana.ondemand.com');
+
+    expect(postMessage.mock.calls.map((call) => call[0])).toEqual([
+      {
+        type: 'LOGIN_SUCCESS',
+        payload: {
+          orgs: ['sample-org-beta'],
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+        },
+      },
+      {
+        type: 'SCOPE_SYNCED',
+        payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+      },
+    ]);
+  });
+
+  it('applies a pending external scope without mapping after manual login succeeds', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-beta']);
+    getInternals(provider).pendingExternalScope = {
+      regionCode: 'eu10',
+      orgName: 'sample-org-beta',
+      spaceName: 'dev',
+    };
+    await saveSessionConfig();
+
+    await getInternals(provider).handleLogin('https://api.cf.eu10.hana.ondemand.com');
+
+    expect(postMessage.mock.calls.map((call) => call[0])).toEqual([
+      {
+        type: 'LOGIN_SUCCESS',
+        payload: {
+          orgs: ['sample-org-beta'],
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+        },
+      },
+      {
+        type: 'SCOPE_SYNCED_NO_MAPPING',
+        payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+      },
+    ]);
+  });
+
+  it('does not post an extra scope message after manual login when no pending external scope exists', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-beta']);
+    await saveSessionConfig();
+
+    await getInternals(provider).handleLogin('https://api.cf.eu10.hana.ondemand.com');
+
+    expect(postMessage.mock.calls.map((call) => call[0])).toEqual([{
+      type: 'LOGIN_SUCCESS',
+      payload: {
+        orgs: ['sample-org-beta'],
+        apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+      },
+    }]);
+  });
+
+  it('clears a pending external scope after applying it', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    getInternals(provider).pendingExternalScope = {
+      regionCode: 'eu10',
+      orgName: 'sample-org-beta',
+      spaceName: 'dev',
+    };
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-beta',
+        cfSpace: 'dev',
+        groupFolderPath: '/sample/beta-dev',
+      }],
+    });
+
+    getInternals(provider).applyPendingExternalScopeIfAny(['sample-org-beta']);
+
+    expect(getInternals(provider).pendingExternalScope).toBeUndefined();
     expect(postMessage).toHaveBeenCalledWith({
       type: 'SCOPE_SYNCED',
       payload: { orgName: 'sample-org-beta', spaceName: 'dev' },

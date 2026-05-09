@@ -302,6 +302,103 @@ describe('webview markup contracts', () => {
     }]);
   });
 
+  it('routes SCOPE_SYNCED_NO_MAPPING to folder selection without loading apps', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+
+    harness.dispatch({
+      type: 'SCOPE_SYNCED_NO_MAPPING',
+      payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+    });
+
+    expect(harness.postedMessages).toEqual([]);
+    expect(harness.getHtml()).toContain('Select Local Folder');
+    expect(harness.getHtml()).toContain('sample-org-beta');
+    expect(harness.getHtml()).toContain('dev');
+    expect(harness.getHtml()).toContain('No folder selected yet.');
+    expect(harness.getHtml()).toMatch(/id="btn-save-mapping" disabled/);
+  });
+
+  it('restores cached folder when SCOPE_SYNCED_NO_MAPPING targets a known folder cache entry', () => {
+    const harness = createWebviewScriptHarness();
+
+    harness.dispatch({
+      type: 'CONFIG_LOADED',
+      payload: {
+        config: {
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgs: ['sample-org-alpha', 'sample-org-beta'],
+          orgGroupMappings: [
+            {
+              cfOrg: 'sample-org-alpha',
+              cfSpace: 'app',
+              groupFolderPath: '/tmp/sample-alpha',
+            },
+            {
+              cfOrg: 'sample-org-beta',
+              cfSpace: 'dev',
+              groupFolderPath: '/tmp/sample-beta-dev',
+            },
+          ],
+        },
+        activeSessions: {},
+        credentialStatus: {
+          hasCredentials: true,
+          email: 'sample.user@example.com',
+          source: 'env',
+        },
+      },
+    });
+    harness.dispatch({ type: 'APPS_LOADED', payload: { apps: [] } });
+    harness.postedMessages.length = 0;
+
+    harness.dispatch({
+      type: 'SCOPE_SYNCED_NO_MAPPING',
+      payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+    });
+
+    expect(harness.postedMessages).toEqual([]);
+    expect(harness.getHtml()).toContain('Select Local Folder');
+    expect(harness.getHtml()).toContain('/tmp/sample-beta-dev');
+    expect(harness.getHtml()).not.toMatch(/id="btn-save-mapping" disabled/);
+  });
+
+  it('prefills a known region without leaving the current screen', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+
+    harness.dispatch({
+      type: 'REGION_PREFILL',
+      payload: {
+        regionCode: 'us10',
+        apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
+      },
+    });
+
+    expect(harness.getHtml()).toContain('Debug Launcher');
+    expect(harness.getHtml()).toContain('us10');
+    expect(harness.getHtml()).toContain('https://api.cf.us10.hana.ondemand.com');
+    expect(harness.getHtml()).not.toContain('Select Local Folder');
+  });
+
+  it('prefills a custom region without leaving the current screen', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+
+    harness.dispatch({
+      type: 'REGION_PREFILL',
+      payload: {
+        regionCode: 'sample-custom',
+        apiEndpoint: 'https://api.cf.sample-custom.hana.ondemand.com',
+      },
+    });
+
+    expect(harness.getHtml()).toContain('Debug Launcher');
+    expect(harness.getHtml()).toContain('sample-custom (custom)');
+    expect(harness.getHtml()).toContain('https://api.cf.sample-custom.hana.ondemand.com');
+    expect(harness.getHtml()).not.toContain('Select Local Folder');
+  });
+
   it('updates the ready region label when LOGIN_SUCCESS includes a new endpoint', () => {
     const harness = createWebviewScriptHarness();
     moveHarnessToReadyScreen(harness);

@@ -4731,6 +4731,68 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await removeDirWithRetry(folderBeta);
       }
     });
+
+    test('User can map a folder after receiving an external same-region scope without a saved mapping', async () => {
+      const folderAlpha = await createTempDirectory('cds-debug-e2e-unmapped-alpha-');
+      const folderBeta = await createTempDirectory('cds-debug-e2e-unmapped-beta-');
+      const alphaScope = { regionCode: 'eu10', orgName: 'mock-org-alpha', spaceName: 'app' };
+      const betaScope = { regionCode: 'eu10', orgName: 'mock-org-beta', spaceName: 'app' };
+
+      try {
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage, artifacts) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, folderAlpha, 'mock-org-alpha');
+          await expectReadyTarget(webview, 'mock-org-alpha');
+          await expectSapCapCurrentScope(artifacts.userDataDir, alphaScope);
+
+          await writeSapCapCurrentScope(artifacts.userDataDir, betaScope);
+
+          await expect(webview.locator('.step-badge', { hasText: '3/3' })).toBeVisible();
+          await expect(webview.getByText('Select Local Folder')).toBeVisible();
+          await expect(webview.locator('.info-box', { hasText: 'mock-org-beta' })).toBeVisible();
+          await expect(webview.locator('.info-box', { hasText: 'app' })).toBeVisible();
+          await expect(webview.getByText('No folder selected yet.')).toBeVisible();
+          await expect(webview.locator('.error-box')).toHaveCount(0);
+          await expect(webview.locator('#search-input')).toHaveCount(0);
+          await expectButtonDisabled(webview.locator('#btn-save-mapping'));
+          await captureStepEvidence(workbenchPage, 'scope-sync-unmapped-folder-step');
+
+          await injectSelectedFolder(webview, folderBeta);
+          await expectButtonEnabled(webview.locator('#btn-save-mapping'));
+          await webview.locator('#btn-save-mapping').click();
+
+          await expectReadyScreen(webview);
+          await expectReadyTarget(webview, 'mock-org-beta');
+          await expectSapCapCurrentScope(artifacts.userDataDir, betaScope);
+        });
+      } finally {
+        await removeDirWithRetry(folderAlpha);
+        await removeDirWithRetry(folderBeta);
+      }
+    });
+
+    test('User can prefill the target region for an external scope when credentials are missing', async () => {
+      const betaScope = { regionCode: 'us10', orgName: 'sample-org-beta', spaceName: 'app' };
+
+      await withVsCodeSession({ credentialMode: 'none', cfScenario: 'multi-region-cache' }, async (workbenchPage, artifacts) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await expectSetupCredentialsScreen(webview);
+
+        await writeSapCapCurrentScope(artifacts.userDataDir, betaScope);
+        await expectSetupCredentialsScreen(webview);
+
+        await injectMessage(webview, {
+          type: 'CREDENTIALS_SAVED',
+          payload: { email: 'sample.user@example.com', source: 'keychain' },
+        });
+
+        await expectRegionScreen(webview);
+        await expect(webview.getByRole('radio', { name: 'us10 US East (VA) - AWS' })).toBeChecked();
+        await expect(webview.getByRole('code')).toContainText('api.cf.us10.hana.ondemand.com');
+        await expect(webview.locator('#api-endpoint-custom')).toHaveCount(0);
+        await captureStepEvidence(workbenchPage, 'scope-sync-prefilled-region-no-credentials');
+      });
+    });
   });
 
   // ─── Org-Folder Caching ────────────────────────────────────────────────────

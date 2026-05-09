@@ -440,6 +440,8 @@ export type ExtensionMessage =
   | { type: 'SPACES_ERROR'; payload: { org: string; message: string } }
   | { type: 'APPS_LOADED'; payload: { apps: CfApp[] } }
   | { type: 'SCOPE_SYNCED'; payload: { orgName: string; spaceName: string } }
+  | { type: 'SCOPE_SYNCED_NO_MAPPING'; payload: { orgName: string; spaceName: string } }
+  | { type: 'REGION_PREFILL'; payload: { regionCode: string; apiEndpoint: string } }
   | { type: 'APPS_ERROR'; payload: { message: string } }
   | { type: 'DEBUG_STARTED'; payload: { count: number } }
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[]; ports: Record<string, number>; unmappedApps?: string[] } }

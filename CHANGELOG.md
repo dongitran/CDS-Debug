@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.9] — 2026
+
+### Fixes
+
+- **Shared CF scope folder mapping recovery** — External scope sync now opens the `3/3 Select Local Folder` step when the target org/space has no saved mapping, and cross-region sync without stored credentials pre-fills the target region for manual login.
+
+---
+
 ## [0.3.62-pre.8] — 2026
 
 ### Fixes

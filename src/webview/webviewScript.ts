@@ -1212,6 +1212,28 @@ export function getScript(nonce: string): string {
           vscode.postMessage({ type: 'LOAD_APPS', payload: { org: orgName, space: spaceName } });
           break;
         }
+        case 'SCOPE_SYNCED_NO_MAPPING': {
+          const { orgName, spaceName } = msg.payload;
+          state.selectedOrg = orgName;
+          state.selectedSpace = spaceName;
+          state.suppressConfigAutoRestore = true;
+          state.error = null;
+          restoreFolderForSelectedTarget();
+          state.screen = SCREENS.SELECT_FOLDER;
+          break;
+        }
+        case 'REGION_PREFILL': {
+          const { regionCode, apiEndpoint } = msg.payload;
+          const isKnownRegion = CF_REGIONS.some(function(r) { return r.code === regionCode; });
+          if (isKnownRegion) {
+            state.selectedRegion = regionCode;
+            state.useCustomEndpoint = false;
+          } else {
+            state.useCustomEndpoint = true;
+          }
+          state.apiEndpoint = apiEndpoint;
+          break;
+        }
       }
       render();
     });

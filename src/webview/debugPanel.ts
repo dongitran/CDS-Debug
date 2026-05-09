@@ -142,6 +142,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   private readonly notifiedUnmatchedRemoteRoots = new Set<string>();
   private remoteRootWarmupGeneration = 0;
   private lastWrittenScope: SharedCfScope | undefined;
+  private pendingExternalScope: SharedCfScope | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     debugProcessEvents.on('statusChanged', (payload: { appName: string, status: string, message?: string }) => {
@@ -219,12 +220,8 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const config = getConfig();
     const activeRegionCode = config ? regionCodeFromApiEndpoint(config.apiEndpoint) : undefined;
 
-    if (activeRegionCode === scope.regionCode) {
-      if (!config?.orgs.includes(scope.orgName)) return;
-      this.postMessage({
-        type: 'SCOPE_SYNCED',
-        payload: { orgName: scope.orgName, spaceName: scope.spaceName },
-      });
+    if (config && activeRegionCode === scope.regionCode) {
+      this.postScopeSyncForMapping(scope);
       return;
     }
 
@@ -237,7 +234,12 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const newApiEndpoint = buildCfApiEndpoint(scope.regionCode);
     const { email, password } = await getCredentials();
     if (!email || !password) {
-      logWarn('[ScopeSync] No stored credentials — cannot auto-login for cross-region scope change.');
+      this.pendingExternalScope = scope;
+      this.postMessage({
+        type: 'REGION_PREFILL',
+        payload: { regionCode: scope.regionCode, apiEndpoint: newApiEndpoint },
+      });
+      logWarn('[ScopeSync] No stored credentials — pre-filled region endpoint for manual login.');
       return;
     }
 
@@ -254,8 +256,24 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs, apiEndpoint: newApiEndpoint } });
 
     if (!orgs.includes(scope.orgName)) return;
+    this.postScopeSyncForMapping(scope);
+  }
+
+  private applyPendingExternalScopeIfAny(orgs: string[]): void {
+    const scope = this.pendingExternalScope;
+    if (!scope) return;
+    this.pendingExternalScope = undefined;
+    if (!orgs.includes(scope.orgName)) return;
+    this.postScopeSyncForMapping(scope);
+  }
+
+  private postScopeSyncForMapping(scope: SharedCfScope): void {
+    const config = getConfig();
+    const hasMapping = config?.orgGroupMappings.some((mapping) => (
+      mappingMatchesTarget(mapping, scope.orgName, scope.spaceName)
+    )) ?? false;
     this.postMessage({
-      type: 'SCOPE_SYNCED',
+      type: hasMapping ? 'SCOPE_SYNCED' : 'SCOPE_SYNCED_NO_MAPPING',
       payload: { orgName: scope.orgName, spaceName: scope.spaceName },
     });
   }
@@ -661,6 +679,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       const existing = getConfig();
       await saveConfig(buildLoginConfig(apiEndpoint, orgs, existing));
       this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs, apiEndpoint } });
+      this.applyPendingExternalScopeIfAny(orgs);
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Login failed: ${msg}`);
