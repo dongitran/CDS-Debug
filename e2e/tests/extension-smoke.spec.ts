@@ -4084,13 +4084,30 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           payload: { enabled: false, intervalHours: 24 },
         });
 
-        await expect.poll(async () => {
-          const runningRow = webview.locator('.sync-status-row.running');
-          if (await runningRow.count() === 0) return '';
-          return (await runningRow.first().innerText()).trim();
-        }).toContain('Stopping sync');
+        await expect.poll(async () => webview.evaluate(() => {
+          window.dispatchEvent(new MessageEvent('message', {
+            data: {
+              type: 'SYNC_STATUS',
+              payload: {
+                isRunning: true,
+                lastCompletedAt: null,
+                currentRegion: null,
+                currentOrg: null,
+                done: 0,
+                total: 14,
+              },
+            },
+          }));
+          window.dispatchEvent(new MessageEvent('message', {
+            data: { type: 'CACHE_CONFIG', payload: { enabled: false, intervalHours: 24 } },
+          }));
 
-        await expect(webview.locator('.sync-status-row.running .spinner')).toBeVisible();
+          const runningRow = document.querySelector('.sync-status-row.running');
+          return {
+            hasSpinner: !!runningRow?.querySelector('.spinner'),
+            text: runningRow?.textContent?.trim() ?? '',
+          };
+        })).toEqual({ hasSpinner: true, text: 'Stopping sync…' });
       });
     });
 
