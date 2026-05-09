@@ -57,7 +57,7 @@ import {
   saveDebugPreferences,
   saveDebugSessionPackagePreferences,
 } from '../storage/cacheStore';
-import { regionCodeFromApiEndpoint, writeScopeIfChanged } from '../storage/scopeSync';
+import { buildCfApiEndpoint, regionCodeFromApiEndpoint, writeScopeIfChanged } from '../storage/scopeSync';
 import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
 import { getTopologySnapshot, getTopologySnapshotSync } from '../core/cfTopology';
 import { logError, logInfo, logWarn, showLogChannel } from '../core/logger';
@@ -217,12 +217,43 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
 
     const config = getConfig();
-    if (!config) return;
+    const activeRegionCode = config ? regionCodeFromApiEndpoint(config.apiEndpoint) : undefined;
 
-    const activeRegionCode = regionCodeFromApiEndpoint(config.apiEndpoint);
-    if (activeRegionCode !== scope.regionCode) return;
-    if (!config.orgs.includes(scope.orgName)) return;
+    if (activeRegionCode === scope.regionCode) {
+      if (!config?.orgs.includes(scope.orgName)) return;
+      this.postMessage({
+        type: 'SCOPE_SYNCED',
+        payload: { orgName: scope.orgName, spaceName: scope.spaceName },
+      });
+      return;
+    }
 
+    void this.handleExternalRegionChange(scope).catch((err: unknown) => {
+      logWarn(`[ScopeSync] Cross-region auto-login failed: ${extractErrorMessage(err)}`);
+    });
+  }
+
+  private async handleExternalRegionChange(scope: SharedCfScope): Promise<void> {
+    const newApiEndpoint = buildCfApiEndpoint(scope.regionCode);
+    const { email, password } = await getCredentials();
+    if (!email || !password) {
+      logWarn('[ScopeSync] No stored credentials — cannot auto-login for cross-region scope change.');
+      return;
+    }
+
+    try {
+      await cfLogout();
+    } catch {
+      // Safe to ignore: logout fails when no prior session exists.
+    }
+
+    await cfLogin(newApiEndpoint, email, password);
+    const orgs = await cfOrgs();
+    const existing = getConfig();
+    await saveConfig(buildLoginConfig(newApiEndpoint, orgs, existing));
+    this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs, apiEndpoint: newApiEndpoint } });
+
+    if (!orgs.includes(scope.orgName)) return;
     this.postMessage({
       type: 'SCOPE_SYNCED',
       payload: { orgName: scope.orgName, spaceName: scope.spaceName },
@@ -629,7 +660,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       const existing = getConfig();
       await saveConfig(buildLoginConfig(apiEndpoint, orgs, existing));
-      this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs } });
+      this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs, apiEndpoint } });
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Login failed: ${msg}`);

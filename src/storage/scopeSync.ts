@@ -9,6 +9,13 @@ export function regionCodeFromApiEndpoint(apiEndpoint: string): string | undefin
   return match?.[1];
 }
 
+export function buildCfApiEndpoint(regionCode: string): string {
+  if (regionCode.startsWith('cn')) {
+    return `https://api.cf.${regionCode}.platform.sapcloud.cn`;
+  }
+  return `https://api.cf.${regionCode}.hana.ondemand.com`;
+}
+
 function isSharedCfScope(value: unknown): value is SharedCfScope {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;

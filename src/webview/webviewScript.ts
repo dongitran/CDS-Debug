@@ -753,6 +753,16 @@ export function getScript(nonce: string): string {
           return;
         case 'LOGIN_SUCCESS': {
           state.orgs = msg.payload.orgs;
+          if (typeof msg.payload.apiEndpoint === 'string' && msg.payload.apiEndpoint.length > 0) {
+            state.apiEndpoint = msg.payload.apiEndpoint;
+            const detectedRegion = endpointToRegion(msg.payload.apiEndpoint);
+            if (detectedRegion && CF_REGIONS.some(r => r.code === detectedRegion)) {
+              state.selectedRegion = detectedRegion;
+              state.useCustomEndpoint = false;
+            } else {
+              state.useCustomEndpoint = true;
+            }
+          }
           state.spacesByOrg = {};
           state.selectedSpace = null;
           state.isReconnecting = false;

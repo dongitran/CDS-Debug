@@ -434,7 +434,7 @@ export type LogsExtensionMessage =
 // Messages from extension → webview
 export type ExtensionMessage =
   | { type: 'GROUP_FOLDER_SELECTED'; payload: { path: string } }
-  | { type: 'LOGIN_SUCCESS'; payload: { orgs: string[] } }
+  | { type: 'LOGIN_SUCCESS'; payload: { orgs: string[]; apiEndpoint?: string } }
   | { type: 'LOGIN_ERROR'; payload: { message: string } }
   | { type: 'SPACES_LOADED'; payload: { org: string; spaces: string[] } }
   | { type: 'SPACES_ERROR'; payload: { org: string; message: string } }

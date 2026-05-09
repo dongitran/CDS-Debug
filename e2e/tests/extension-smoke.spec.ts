@@ -1212,9 +1212,9 @@ async function enableBreakpointSnapshotHandlingFromSettings(webview: Frame): Pro
   await expect(webview.getByText('Settings')).toBeVisible();
   const toggle = webview.locator('#chk-breakpoint-snapshot-handling');
   if (!(await toggle.isChecked())) {
-    await webview.getByText('Breakpoint snapshot handling').click();
-    await expect(toggle).toBeChecked();
+    await toggle.check({ force: true });
   }
+  await expect(toggle).toBeChecked();
   await webview.locator('#btn-back-settings').click();
   await expectReadyScreen(webview);
   await expect(webview.locator('#btn-open-breakpoint-snapshots')).toBeVisible();
@@ -4655,6 +4655,56 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           await expectReadyTarget(webview, 'mock-org-alpha');
           await expectSapCapCurrentScope(artifacts.userDataDir, alphaScope);
           await captureStepEvidence(workbenchPage, 'scope-sync-external-alpha');
+        });
+      } finally {
+        await removeDirWithRetry(folderAlpha);
+        await removeDirWithRetry(folderBeta);
+      }
+    });
+
+    test('User can receive an external scope from another region and auto-login to it', async () => {
+      const folderAlpha = await createTempDirectory('sample-cross-region-alpha-');
+      const folderBeta = await createTempDirectory('sample-cross-region-beta-');
+      const alphaScope = { regionCode: 'eu10', orgName: 'sample-org-alpha', spaceName: 'app' };
+      const betaScope = { regionCode: 'us10', orgName: 'sample-org-beta', spaceName: 'app' };
+
+      try {
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'multi-region-cache' }, async (workbenchPage, artifacts) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, folderAlpha, 'sample-org-alpha');
+          await expectReadyTarget(webview, 'sample-org-alpha');
+
+          await remapToRegionScreen(webview);
+          await selectRegion(webview, 'us10 US East (VA) - AWS');
+          await loginFromRegionScreen(webview);
+          await expect(webview.getByText('Select CF Org')).toBeVisible();
+          await webview.locator('input[name="cf-org"][value="sample-org-beta"]').check({ force: true });
+          await webview.locator('#btn-next-org').click();
+          await expect(webview.getByText('Select Local Folder')).toBeVisible();
+          await injectSelectedFolder(webview, folderBeta);
+          await webview.locator('#btn-save-mapping').click();
+          await expectReadyScreen(webview);
+          await expectReadyTarget(webview, 'sample-org-beta');
+
+          await remapToRegionScreen(webview);
+          await selectRegion(webview, 'eu10 Europe (Frankfurt) - AWS');
+          await loginFromRegionScreen(webview);
+          await expect(webview.getByText('Select CF Org')).toBeVisible();
+          await webview.locator('input[name="cf-org"][value="sample-org-alpha"]').check({ force: true });
+          await webview.locator('#btn-next-org').click();
+          await expect(webview.getByText('Select Local Folder')).toBeVisible();
+          await expect(webview.getByText(folderAlpha)).toBeVisible();
+          await webview.locator('#btn-save-mapping').click();
+          await expectReadyScreen(webview);
+          await expectReadyTarget(webview, 'sample-org-alpha');
+          await expectSapCapCurrentScope(artifacts.userDataDir, alphaScope);
+
+          await writeSapCapCurrentScope(artifacts.userDataDir, betaScope);
+
+          await expectReadyScreen(webview);
+          await expectReadyTarget(webview, 'sample-org-beta');
+          await expectSapCapCurrentScope(artifacts.userDataDir, betaScope);
+          await captureStepEvidence(workbenchPage, 'scope-sync-cross-region-beta');
         });
       } finally {
         await removeDirWithRetry(folderAlpha);

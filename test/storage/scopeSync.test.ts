@@ -33,6 +33,7 @@ vi.mock('vscode', () => ({
 }));
 
 import {
+  buildCfApiEndpoint,
   readCurrentScope,
   regionCodeFromApiEndpoint,
   writeScopeIfChanged,
@@ -60,6 +61,14 @@ describe('scopeSync', () => {
     'https://example.com/api.cf.us10.hana.ondemand.com',
   ])('returns undefined for invalid endpoint %s', (apiEndpoint) => {
     expect(regionCodeFromApiEndpoint(apiEndpoint)).toBeUndefined();
+  });
+
+  it.each([
+    ['us10', 'https://api.cf.us10.hana.ondemand.com'],
+    ['eu10', 'https://api.cf.eu10.hana.ondemand.com'],
+    ['cn40', 'https://api.cf.cn40.platform.sapcloud.cn'],
+  ])('builds %s API endpoint as %s', (regionCode, expected) => {
+    expect(buildCfApiEndpoint(regionCode)).toBe(expected);
   });
 
   it('reads the current shared scope from sapCap.currentScope', () => {

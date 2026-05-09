@@ -156,6 +156,7 @@ pnpm test:report          # Open HTML report
 
 ### Shared CF Scope
 1. User can sync the current scope through VS Code global settings.
+2. User can receive an external scope from another region and auto-login to it.
 
 ### Org-Folder Caching
 1. User can return to a previous region without selecting its local folder again.

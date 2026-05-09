@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.8] — 2026
+
+### Fixes
+
+- **Cross-region shared CF scope sync** — External updates to `sapCap.currentScope` from another CF region now trigger a credential-backed auto-login, preserve saved mappings, and reselect the target org/space when available instead of being silently ignored.
+
+---
+
 ## [0.3.62-pre.7] — 2026
 
 ### Changes

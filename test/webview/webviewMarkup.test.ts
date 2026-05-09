@@ -109,6 +109,7 @@ function extractInlineScript(script: string): string {
 function createWebviewScriptHarness(): {
   readonly postedMessages: PostedMessage[];
   readonly dispatch: (message: PostedMessage) => void;
+  readonly getHtml: () => string;
 } {
   const postedMessages: PostedMessage[] = [];
   let messageHandler: MessageHandler | undefined;
@@ -147,6 +148,7 @@ function createWebviewScriptHarness(): {
     dispatch: (message: PostedMessage): void => {
       messageHandler?.({ data: message });
     },
+    getHtml: (): string => appElement.innerHTML,
   };
 }
 
@@ -298,6 +300,31 @@ describe('webview markup contracts', () => {
       type: 'LOAD_APPS',
       payload: { org: 'sample-org-beta', space: 'dev' },
     }]);
+  });
+
+  it('updates the ready region label when LOGIN_SUCCESS includes a new endpoint', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+
+    harness.dispatch({
+      type: 'LOGIN_SUCCESS',
+      payload: {
+        orgs: ['sample-org-beta'],
+        apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
+      },
+    });
+    harness.dispatch({
+      type: 'SCOPE_SYNCED',
+      payload: { orgName: 'sample-org-beta', spaceName: 'app' },
+    });
+    harness.dispatch({
+      type: 'APPS_LOADED',
+      payload: { apps: [] },
+    });
+
+    expect(harness.getHtml()).toContain('us10');
+    expect(harness.getHtml()).toContain('sample-org-beta');
+    expect(harness.getHtml()).toContain('https://api.cf.us10.hana.ondemand.com');
   });
 
   it('keeps the package browser screen minimal', () => {
