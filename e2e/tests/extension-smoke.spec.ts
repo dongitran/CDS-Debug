@@ -969,6 +969,46 @@ async function injectMessage(webview: Frame, message: Record<string, unknown>): 
   }, message);
 }
 
+interface SyncStatusPayload {
+  isRunning: boolean;
+  lastCompletedAt: number | null;
+  currentRegion: string | null;
+  currentOrg: string | null;
+  done: number;
+  total: number;
+}
+
+interface SettingsSyncDomState {
+  runningText: string;
+  spinnerVisible: boolean;
+  progressBarCount: number;
+  fillStyle: string;
+  syncButtonDisabled: boolean;
+}
+
+async function injectSyncStatusAndReadSettingsState(
+  webview: Frame,
+  payload: SyncStatusPayload,
+): Promise<SettingsSyncDomState> {
+  return webview.evaluate((syncStatus) => {
+    window.dispatchEvent(new MessageEvent('message', {
+      data: { type: 'SYNC_STATUS', payload: syncStatus },
+    }));
+
+    const runningRow = document.querySelector('.sync-status-row.running');
+    const progressFill = document.querySelector('.progress-bar-fill');
+    const syncButton = document.querySelector('#btn-trigger-sync');
+
+    return {
+      runningText: runningRow?.textContent?.trim() ?? '',
+      spinnerVisible: !!runningRow?.querySelector('.spinner'),
+      progressBarCount: document.querySelectorAll('.progress-bar-wrap').length,
+      fillStyle: progressFill instanceof HTMLElement ? progressFill.getAttribute('style') ?? '' : '',
+      syncButtonDisabled: syncButton instanceof HTMLButtonElement ? syncButton.disabled : false,
+    };
+  }, payload);
+}
+
 async function postExtensionMessage(webview: Frame, message: Record<string, unknown>): Promise<void> {
   await webview.evaluate((msg) => {
     type BridgeWindow = Window & {
@@ -1207,15 +1247,15 @@ async function openBreakpointSnapshotsScreen(webview: Frame): Promise<void> {
   await expect(webview.locator('#btn-back-breakpoint-snapshots')).toBeVisible();
 }
 
-async function enableBreakpointSnapshotHandlingFromSettings(webview: Frame): Promise<void> {
-  await webview.locator('#btn-gear').click();
-  await expect(webview.getByText('Settings')).toBeVisible();
-  const toggle = webview.locator('#chk-breakpoint-snapshot-handling');
-  if (!(await toggle.isChecked())) {
-    await toggle.check({ force: true });
-  }
-  await expect(toggle).toBeChecked();
-  await webview.locator('#btn-back-settings').click();
+async function enableBreakpointSnapshotHandlingForTest(webview: Frame): Promise<void> {
+  await injectMessage(webview, {
+    type: 'DEBUG_PREFS',
+    payload: {
+      openBrowserOnAttach: false,
+      enableBreakpointSnapshotHandling: true,
+      enableBranchPrep: false,
+    },
+  });
   await expectReadyScreen(webview);
   await expect(webview.locator('#btn-open-breakpoint-snapshots')).toBeVisible();
 }
@@ -3773,7 +3813,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
-        await enableBreakpointSnapshotHandlingFromSettings(webview);
+        await enableBreakpointSnapshotHandlingForTest(webview);
         await openBreakpointSnapshotsScreen(webview);
         await expect(webview.locator('.bp-section-label')).toContainText('Breakpoint Snapshots');
 
@@ -3786,7 +3826,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
-        await enableBreakpointSnapshotHandlingFromSettings(webview);
+        await enableBreakpointSnapshotHandlingForTest(webview);
         await openBreakpointSnapshotsScreen(webview);
 
         await injectMessage(webview, {
@@ -3874,7 +3914,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
-        await enableBreakpointSnapshotHandlingFromSettings(webview);
+        await enableBreakpointSnapshotHandlingForTest(webview);
         await openBreakpointSnapshotsScreen(webview);
 
         await injectMessage(webview, {
@@ -3910,7 +3950,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
-        await enableBreakpointSnapshotHandlingFromSettings(webview);
+        await enableBreakpointSnapshotHandlingForTest(webview);
         await openBreakpointSnapshotsScreen(webview);
 
         // Panel starts empty
@@ -4073,35 +4113,15 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         };
 
         // Sync running: spinner + progress bar, Sync Now button disabled
-        const runningRow = webview.locator('.sync-status-row.running');
         await expect.poll(async () => {
-          await injectMessage(webview, {
-            type: 'SYNC_STATUS',
-            payload: runningSyncStatus,
-          });
-          const spinnerVisible = await runningRow.locator('.spinner').isVisible().catch(() => false);
-          const progressBarCount = await webview.locator('.progress-bar-wrap').count();
-          const fillStyle = await webview.locator('.progress-bar-fill').getAttribute('style').catch(() => '');
-          const syncButtonDisabled = await webview.locator('#btn-trigger-sync').isDisabled().catch(() => false);
-          return spinnerVisible
-            && progressBarCount === 1
-            && /width:\s*21%/.test(fillStyle ?? '')
-            && syncButtonDisabled;
+          const domState = await injectSyncStatusAndReadSettingsState(webview, runningSyncStatus);
+          return domState.spinnerVisible
+            && domState.progressBarCount === 1
+            && /width:\s*21%/.test(domState.fillStyle)
+            && domState.syncButtonDisabled
+            && /(mock-org-alpha|Scanning|Logging into)/.test(domState.runningText)
+            && /\(\d+\/\d+.*%\)/.test(domState.runningText);
         }, { timeout: 10_000 }).toBe(true);
-        await expect.poll(async () => {
-          await injectMessage(webview, {
-            type: 'SYNC_STATUS',
-            payload: runningSyncStatus,
-          });
-          return ((await runningRow.textContent()) ?? '').trim();
-        }).toMatch(/(mock-org-alpha|Scanning|Logging into)/);
-        await expect.poll(async () => {
-          await injectMessage(webview, {
-            type: 'SYNC_STATUS',
-            payload: runningSyncStatus,
-          });
-          return ((await runningRow.textContent()) ?? '').trim();
-        }).toMatch(/\(\d+\/\d+.*%\)/);
       });
     });
 
