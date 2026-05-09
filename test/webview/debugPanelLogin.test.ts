@@ -486,7 +486,7 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     });
   });
 
-  it('does not post messages and logs a warning when cross-region login fails', async () => {
+  it('posts LOGIN_ERROR and logs an error when cross-region login fails', async () => {
     const provider = makeProvider();
     const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
     shellEnvMock.getCredentials.mockResolvedValue({
@@ -503,11 +503,193 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     });
 
     await vi.waitFor(() => {
-      expect(loggerMock.logWarn).toHaveBeenCalledWith(
-        '[ScopeSync] Scope change handling failed: mock login failed',
-      );
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'LOGIN_ERROR',
+        payload: { message: 'mock login failed' },
+      });
     });
-    expect(postMessage).not.toHaveBeenCalled();
+    expect(loggerMock.logError).toHaveBeenCalledWith(
+      '[ScopeSync] Cross-region auto-login failed: mock login failed',
+    );
+    expect(loggerMock.logWarn).not.toHaveBeenCalledWith(
+      '[ScopeSync] Scope change handling failed: mock login failed',
+    );
+  });
+
+  it('posts LOGIN_ERROR after stopping active sessions when cross-region login fails', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    processManagerMock.getActiveAppNames.mockReturnValue(['sample-service-a']);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfLogin.mockRejectedValue(new Error('mock login failed'));
+    await saveSessionConfig();
+
+    provider.handleExternalScopeChange({
+      regionCode: 'us10',
+      orgName: 'sample-org-beta',
+      spaceName: 'app',
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'LOGIN_ERROR',
+        payload: { message: 'mock login failed' },
+      });
+    });
+    expect(processManagerMock.stopAllProcesses).toHaveBeenCalledTimes(1);
+    expect(processManagerMock.stopAllProcesses.mock.invocationCallOrder[0])
+      .toBeLessThan(cfClientMock.cfLogin.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY);
+    expect(postMessage).not.toHaveBeenCalledWith({
+      type: 'SCOPE_SYNCED',
+      payload: { orgName: 'sample-org-beta', spaceName: 'app' },
+    });
+    expect(postMessage).not.toHaveBeenCalledWith({
+      type: 'SCOPE_SYNCED_NO_MAPPING',
+      payload: { orgName: 'sample-org-beta', spaceName: 'app' },
+    });
+  });
+
+  it('revokes keychain credentials instead of posting LOGIN_ERROR when cross-region auth fails', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    shellEnvMock.getCredentialSource.mockResolvedValue('keychain');
+    cfClientMock.cfLogin.mockRejectedValue(new Error('authentication failed for sample user'));
+    await saveSessionConfig();
+
+    provider.handleExternalScopeChange({
+      regionCode: 'us10',
+      orgName: 'sample-org-beta',
+      spaceName: 'app',
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'CREDENTIALS_REVOKED',
+        payload: { message: 'Credentials rejected by Cloud Foundry. Please enter your updated credentials.' },
+      });
+    });
+    expect(shellEnvMock.clearCredentialsFromSecretStorage).toHaveBeenCalledTimes(1);
+    expect(postMessage).not.toHaveBeenCalledWith({
+      type: 'LOGIN_ERROR',
+      payload: { message: 'authentication failed for sample user' },
+    });
+  });
+
+  it('posts LOGIN_ERROR when cross-region org loading fails after login', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockRejectedValue(new Error('mock org load failed'));
+    await saveSessionConfig();
+
+    provider.handleExternalScopeChange({
+      regionCode: 'us10',
+      orgName: 'sample-org-beta',
+      spaceName: 'app',
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'LOGIN_ERROR',
+        payload: { message: 'mock org load failed' },
+      });
+    });
+    expect(cfClientMock.cfLogin).toHaveBeenCalledTimes(1);
+    expect(postMessage).not.toHaveBeenCalledWith({
+      type: 'LOGIN_SUCCESS',
+      payload: {
+        orgs: expect.any(Array) as string[],
+        apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
+      },
+    });
+  });
+
+  it('clears a stale pending external scope when a newer scope change has credentials', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    const pendingScope: SharedCfScope = {
+      regionCode: 'us10',
+      orgName: 'sample-org-alpha',
+      spaceName: 'app',
+    };
+
+    provider.handleExternalScopeChange(pendingScope);
+
+    await vi.waitFor(() => {
+      expect(getInternals(provider).pendingExternalScope).toEqual(pendingScope);
+    });
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-beta']);
+
+    provider.handleExternalScopeChange({
+      regionCode: 'eu10',
+      orgName: 'sample-org-beta',
+      spaceName: 'app',
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'LOGIN_SUCCESS',
+        payload: {
+          orgs: ['sample-org-beta'],
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+        },
+      });
+    });
+    expect(getInternals(provider).pendingExternalScope).toBeUndefined();
+  });
+
+  it('does not apply a stale pending external scope on later manual login after credential-backed scope change', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    provider.handleExternalScopeChange({
+      regionCode: 'us10',
+      orgName: 'sample-org-alpha',
+      spaceName: 'app',
+    });
+
+    await vi.waitFor(() => {
+      expect(getInternals(provider).pendingExternalScope?.orgName).toBe('sample-org-alpha');
+    });
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-alpha', 'sample-org-beta']);
+
+    provider.handleExternalScopeChange({
+      regionCode: 'eu10',
+      orgName: 'sample-org-beta',
+      spaceName: 'app',
+    });
+
+    await vi.waitFor(() => {
+      expect(getInternals(provider).pendingExternalScope).toBeUndefined();
+    });
+    postMessage.mockClear();
+
+    await getInternals(provider).handleLogin('https://api.cf.eu10.hana.ondemand.com');
+
+    expect(postMessage.mock.calls.map((call) => call[0])).toEqual([{
+      type: 'LOGIN_SUCCESS',
+      payload: {
+        orgs: ['sample-org-alpha', 'sample-org-beta'],
+        apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+      },
+    }]);
   });
 
   it('does not stop sessions or clear snapshots when an external scope arrives with no active sessions', async () => {

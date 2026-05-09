@@ -38,7 +38,8 @@ type CfScenario =
   | 'restart-race'
   | 'reload-changes'
   | 'multi-spaces'
-  | 'multi-region-cache';
+  | 'multi-region-cache'
+  | 'multi-region-auth-fail';
 
 interface SessionOptions {
   credentialMode: CredentialMode;
@@ -136,6 +137,13 @@ case "$cmd" in
       echo "mock auth failed" >&2
       exit 1
     fi
+    if [[ "$SCENARIO" == "multi-region-auth-fail" ]]; then
+      current_api="$(cat "$current_api_file" 2>/dev/null || true)"
+      if [[ "$current_api" == *"us10"* ]]; then
+        echo "mock cross-region auth failed" >&2
+        exit 1
+      fi
+    fi
     if [[ "$SCENARIO" == "slow-auth" ]]; then
       sleep 30
     fi
@@ -150,7 +158,7 @@ case "$cmd" in
       echo "name"
       exit 0
     fi
-    if [[ "$SCENARIO" == "multi-region-cache" ]]; then
+    if [[ "$SCENARIO" == "multi-region-cache" || "$SCENARIO" == "multi-region-auth-fail" ]]; then
       current_api="$(cat "$current_api_file" 2>/dev/null || true)"
       if [[ "$current_api" == *"us10"* ]]; then
         cat <<'OUT'
@@ -189,7 +197,7 @@ OUT
     fi
     ;;
   target)
-    if [[ "$SCENARIO" == "multi-region-cache" ]]; then
+    if [[ "$SCENARIO" == "multi-region-cache" || "$SCENARIO" == "multi-region-auth-fail" ]]; then
       target_org=""
       for ((i = 1; i <= $#; i++)); do
         if [[ "\${!i}" == "-o" ]]; then
@@ -4746,6 +4754,28 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       } finally {
         await removeDirWithRetry(folderAlpha);
         await removeDirWithRetry(folderBeta);
+      }
+    });
+
+    test('User can see an error when external cross-region auto-login fails', async () => {
+      const folderAlpha = await createTempDirectory('sample-cross-region-error-alpha-');
+      const betaScope = { regionCode: 'us10', orgName: 'sample-org-beta', spaceName: 'app' };
+
+      try {
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'multi-region-auth-fail' }, async (workbenchPage, artifacts) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, folderAlpha, 'sample-org-alpha');
+          await expectReadyTarget(webview, 'sample-org-alpha');
+
+          await writeSapCapCurrentScope(artifacts.userDataDir, betaScope);
+
+          await expectRegionScreen(webview);
+          await expect(webview.locator('.error-box')).toContainText(/mock cross-region auth failed|Command failed/i);
+          await expect(webview.locator('.ready-target', { hasText: 'sample-org-beta' })).toHaveCount(0);
+          await captureStepEvidence(workbenchPage, 'scope-sync-cross-region-login-error');
+        });
+      } finally {
+        await removeDirWithRetry(folderAlpha);
       }
     });
 

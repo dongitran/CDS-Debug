@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.11] — 2026
+
+### Fixes
+
+- **Cross-region shared CF scope errors are now visible and safe** — Failed external cross-region auto-login now reports `LOGIN_ERROR` in the launcher, reuses the credential revocation flow for auth failures, clears stale pending external scopes when a newer credential-backed scope arrives, and redacts `cf auth` command arguments from CF CLI errors before they reach logs or UI.
+
+---
+
 ## [0.3.62-pre.10] — 2026
 
 ### Fixes

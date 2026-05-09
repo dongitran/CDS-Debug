@@ -41,10 +41,17 @@ async function runCf(args: string[], cfHome?: string): Promise<string> {
   } catch (err: unknown) {
     const error = err as NodeJS.ErrnoException & { stderr?: string };
     throw new CfCliError(
-      error.message,
+      buildCfCliErrorMessage(error),
       error.stderr?.trim() ?? '',
     );
   }
+}
+
+function buildCfCliErrorMessage(error: NodeJS.ErrnoException & { stderr?: string }): string {
+  const rawMessage = error.message.trim() || 'CF CLI command failed.';
+  const stderr = error.stderr?.trim() ?? '';
+  if (!rawMessage.startsWith('Command failed: cf ')) return rawMessage;
+  return stderr || 'CF CLI command failed.';
 }
 
 const CF_AUTH_RETRIES = 3;

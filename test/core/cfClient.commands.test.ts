@@ -267,6 +267,30 @@ describe('cfClient command wrappers', () => {
     vi.useRealTimers();
   });
 
+  it('redacts cf auth command arguments from login errors', async () => {
+    vi.useFakeTimers();
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockRejectedValue({
+        message: 'Command failed: cf auth user@example.com super-secret\nmock auth failed',
+        stderr: 'mock auth failed',
+      });
+
+    const loginPromise = cfLogin('https://api.cf.eu10.hana.ondemand.com', 'user@example.com', 'super-secret');
+    loginPromise.catch(() => undefined);
+    await vi.runAllTimersAsync();
+
+    try {
+      await loginPromise;
+      throw new Error('Expected cfLogin to reject.');
+    } catch (err: unknown) {
+      expect(err).toMatchObject({ name: 'CfCliError', message: 'mock auth failed' });
+      expect(err instanceof Error ? err.message : String(err)).not.toContain('super-secret');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('wraps CLI failures as CfCliError with trimmed stderr', async () => {
     execFileAsyncMock.mockRejectedValue({
       message: 'cf failed',

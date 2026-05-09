@@ -268,20 +268,31 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    this.pendingExternalScope = undefined;
+
     try {
-      await cfLogout();
-    } catch {
-      // Safe to ignore: logout fails when no prior session exists.
+      try {
+        await cfLogout();
+      } catch {
+        // Safe to ignore: logout fails when no prior session exists.
+      }
+
+      await cfLogin(newApiEndpoint, email, password);
+      const orgs = await cfOrgs();
+      const existing = getConfig();
+      await saveConfig(buildLoginConfig(newApiEndpoint, orgs, existing));
+      this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs, apiEndpoint: newApiEndpoint } });
+
+      if (!orgs.includes(scope.orgName)) return;
+      this.postScopeSyncForMapping(scope);
+    } catch (err: unknown) {
+      const msg = extractErrorMessage(err);
+      logError(`[ScopeSync] Cross-region auto-login failed: ${msg}`);
+      const revoked = await this.handleAuthFailure(err);
+      if (!revoked) {
+        this.postMessage({ type: 'LOGIN_ERROR', payload: { message: msg } });
+      }
     }
-
-    await cfLogin(newApiEndpoint, email, password);
-    const orgs = await cfOrgs();
-    const existing = getConfig();
-    await saveConfig(buildLoginConfig(newApiEndpoint, orgs, existing));
-    this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs, apiEndpoint: newApiEndpoint } });
-
-    if (!orgs.includes(scope.orgName)) return;
-    this.postScopeSyncForMapping(scope);
   }
 
   private applyPendingExternalScopeIfAny(orgs: string[]): void {
