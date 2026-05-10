@@ -24,8 +24,9 @@ import {
   cfEnableSsh,
   cfRestartApp,
   cfFindRemotePackageJsonPaths,
+  CfCliError,
+  isCfAuthError,
 } from '../../src/core/cfClient';
-import type { CfCliError } from '../../src/core/cfClient';
 
 describe('cfClient command wrappers', () => {
   beforeEach(() => {
@@ -231,6 +232,33 @@ describe('cfClient command wrappers', () => {
         env: expect.objectContaining({ CF_HOME: '/tmp/sample-cf-home' }),
       }),
     );
+  });
+
+  it('detects Cloud Foundry credential authentication errors', () => {
+    expect(isCfAuthError(new Error('Authentication failed'))).toBe(true);
+    expect(isCfAuthError(new CfCliError('login failed', 'Credentials were rejected'))).toBe(true);
+    expect(isCfAuthError(new Error('Invalid email or password'))).toBe(true);
+    expect(isCfAuthError(new Error('network unreachable'))).toBe(false);
+    expect(isCfAuthError(new Error('connection refused'))).toBe(false);
+    expect(isCfAuthError(new Error('The token expired'))).toBe(false);
+  });
+
+  it('does not retry cf auth when credentials are rejected', async () => {
+    vi.useFakeTimers();
+    execFileAsyncMock
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockRejectedValue({
+        message: 'Command failed: cf auth sample.user@example.com sample-password',
+        stderr: 'Authentication failed',
+      });
+
+    const loginPromise = cfLogin('https://api.cf.eu10.hana.ondemand.com', 'sample.user@example.com', 'sample-password');
+    loginPromise.catch(() => undefined);
+    await vi.runAllTimersAsync();
+
+    await expect(loginPromise).rejects.toMatchObject({ name: 'CfCliError', message: 'Authentication failed' });
+    expect(execFileAsyncMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 
   it('retries cf auth and succeeds on first retry', async () => {

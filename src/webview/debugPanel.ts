@@ -21,13 +21,13 @@ import type {
 } from '../types/index';
 import { CF_DEFAULT_SPACE, DEFAULT_CACHE_SETTINGS } from '../types/index';
 import {
-  CfCliError,
   cfLogin,
   cfLogout,
   cfOrgs,
   cfTarget,
   cfTargetAndApps,
   cfTargetOrgAndSpaces,
+  isCfAuthError,
 } from '../core/cfClient';
 import { refreshCfSyncSpace } from '../core/cfSpaceRefresh';
 import { findRepoFolder } from '../core/folderScanner';
@@ -866,7 +866,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     try {
       return await cfTargetOrgAndSpaces(org);
     } catch (err: unknown) {
-      if (!isAuthError(err)) throw err;
+      if (!isCfAuthError(err)) throw err;
       logInfo(`cfTargetOrgAndSpaces auth failed — attempting re-login before loading spaces for ${org}.`);
       await this.reLogin(apiEndpoint);
       return await cfTargetOrgAndSpaces(org);
@@ -877,7 +877,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     try {
       return await cfTargetAndApps(org, space);
     } catch (err: unknown) {
-      if (!isAuthError(err)) throw err;
+      if (!isCfAuthError(err)) throw err;
       logInfo(`cfTargetAndApps auth failed — attempting re-login before loading apps for ${org}/${space}.`);
       await this.reLogin(apiEndpoint);
       return await cfTargetAndApps(org, space);
@@ -1560,7 +1560,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
    * as the redirect to SETUP_CREDENTIALS replaces the normal error flow.
    */
   private async handleAuthFailure(err: unknown): Promise<boolean> {
-    if (!isAuthError(err)) return false;
+    if (!isCfAuthError(err)) return false;
     const source = await getCredentialSource();
     if (source !== 'keychain') return false;
     // Only auto-revoke keychain credentials — env-var credentials are managed externally.
@@ -1631,26 +1631,6 @@ function isWebviewMessage(value: unknown): value is WebviewMessage {
 function extractErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
-}
-
-/**
- * Returns true when the error looks like a CF authentication failure
- * (wrong credentials, expired password, etc.) rather than a network or
- * server-side issue.  Checks both the Node.js error message and, when the
- * error is a CfCliError, the raw CF CLI stderr output.
- */
-function isAuthError(err: unknown): boolean {
-  const message = extractErrorMessage(err).toLowerCase();
-  const stderr = err instanceof CfCliError ? err.stderr.toLowerCase() : '';
-  const combined = `${message} ${stderr}`;
-  return (
-    combined.includes('authentication failed') ||
-    combined.includes('credentials were rejected') ||
-    combined.includes('invalid credentials') ||
-    combined.includes('unauthorized') ||
-    combined.includes('not authorized') ||
-    combined.includes('invalid_grant')
-  );
 }
 
 function toSafeHttpUri(rawUrl: string): vscode.Uri | null {

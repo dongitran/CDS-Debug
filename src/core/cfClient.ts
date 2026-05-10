@@ -29,6 +29,23 @@ export class CfCliError extends Error {
   }
 }
 
+export function isCfAuthError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  const stderr = err instanceof CfCliError ? err.stderr.toLowerCase() : '';
+  const combined = `${message} ${stderr}`;
+  return (
+    combined.includes('authentication failed') ||
+    combined.includes('credentials were rejected') ||
+    combined.includes('invalid email or password') ||
+    combined.includes('invalid credentials') ||
+    combined.includes('password has expired') ||
+    combined.includes('account is locked') ||
+    combined.includes('invalid_grant') ||
+    combined.includes('unauthorized') ||
+    combined.includes('not authorized')
+  );
+}
+
 // cfHome: when provided, sets CF_HOME so this invocation uses an isolated config
 // directory instead of the default ~/.cf — used by the background cache sync to
 // avoid clobbering the user's interactive CF session.
@@ -70,6 +87,7 @@ export async function cfLogin(
       return;
     } catch (err: unknown) {
       lastError = err;
+      if (isCfAuthError(err)) throw err;
       if (attempt < CF_AUTH_RETRIES) {
         await new Promise<void>((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
       }
