@@ -51,9 +51,26 @@ vi.mock('@saptools/cf-sync', () => ({
   cfAppDetails: vi.fn().mockResolvedValue([]),
 }));
 
-import { populateCacheFromStructure, getCurrentSyncProgress } from '../../src/core/cacheSync';
-import type { CfStructure } from '@saptools/cf-sync';
-import { saveCachedApps, saveCachedOrgs, getSyncProgress } from '../../src/storage/cacheStore';
+import {
+  populateCacheFromStructure,
+  getCurrentSyncProgress,
+  runCacheSync,
+} from '../../src/core/cacheSync';
+import {
+  completeRuntimeState,
+  initializeRuntimeState,
+  tryAcquireSyncLock,
+} from '@saptools/cf-sync';
+import type { CfStructure, RuntimeSyncState } from '@saptools/cf-sync';
+import { getCredentials } from '../../src/core/shellEnv';
+import {
+  saveCachedApps,
+  saveCachedOrgs,
+  getSyncProgress,
+  saveSyncProgress,
+  getCacheSettings,
+} from '../../src/storage/cacheStore';
+import type { SyncProgress } from '../../src/types/index';
 
 const EU10_ENDPOINT = 'https://api.cf.eu10.hana.ondemand.com';
 const AP11_ENDPOINT = 'https://api.cf.ap11.hana.ondemand.com';
@@ -64,6 +81,31 @@ function makeStructure(overrides: Partial<CfStructure> = {}): CfStructure {
     regions: [],
     ...overrides,
   };
+}
+
+function makeRuntimeState(overrides: Partial<RuntimeSyncState> = {}): RuntimeSyncState {
+  const now = new Date().toISOString();
+  return {
+    syncId: 'sample-sync',
+    status: 'running',
+    startedAt: now,
+    updatedAt: now,
+    requestedRegionKeys: ['eu10', 'ap11', 'us10'],
+    completedRegionKeys: [],
+    structure: makeStructure(),
+    ...overrides,
+  };
+}
+
+function makeLockHandle(): Exclude<Awaited<ReturnType<typeof tryAcquireSyncLock>>, undefined> {
+  return { lockPath: '/tmp/sample-sync.lock' } as unknown as Exclude<
+    Awaited<ReturnType<typeof tryAcquireSyncLock>>,
+    undefined
+  >;
+}
+
+function savedProgressCalls(): SyncProgress[] {
+  return vi.mocked(saveSyncProgress).mock.calls.map(([progress]) => progress);
 }
 
 describe('populateCacheFromStructure', () => {
@@ -361,5 +403,114 @@ describe('getCurrentSyncProgress', () => {
     // This test confirms the type contract is correct.
     const result = getCurrentSyncProgress();
     expect(typeof result.isRunning).toBe('boolean');
+  });
+});
+
+describe('runCacheSync progress status', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getSyncProgress).mockReturnValue(undefined);
+    vi.mocked(getCacheSettings).mockReturnValue({ enabled: true, intervalHours: 24 });
+    vi.mocked(getCredentials).mockResolvedValue({ email: '', password: '' });
+    vi.mocked(tryAcquireSyncLock).mockResolvedValue(undefined);
+    vi.mocked(initializeRuntimeState).mockResolvedValue(makeRuntimeState());
+    vi.mocked(completeRuntimeState).mockResolvedValue(makeRuntimeState({
+      status: 'completed',
+      finishedAt: new Date().toISOString(),
+      structure: makeStructure({ syncedAt: new Date().toISOString() }),
+      completedRegionKeys: [],
+    }));
+  });
+
+  it('preserves lastCompletedAt and records skip reason when credentials are missing', async () => {
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    vi.mocked(getSyncProgress).mockReturnValue({
+      isRunning: false,
+      lastCompletedAt: oneHourAgo,
+      done: 5,
+      total: 5,
+    });
+
+    runCacheSync();
+
+    await vi.waitFor(() => {
+      expect(saveSyncProgress).toHaveBeenCalledWith(expect.objectContaining({
+        lastSkipReason: 'no-credentials',
+      }));
+    });
+    const stored = savedProgressCalls().at(-1);
+    expect(stored).toMatchObject({
+      isRunning: false,
+      done: 0,
+      total: MOCK_REGIONS.length,
+      lastCompletedAt: oneHourAgo,
+      lastSkipReason: 'no-credentials',
+    });
+    expect(stored?.lastAttemptedAt).toEqual(expect.any(Number));
+  });
+
+  it('clears lastSkipReason and updates lastCompletedAt on successful sync', async () => {
+    const yesterday = Date.now() - 24 * 60 * 60 * 1000;
+    vi.mocked(getSyncProgress).mockReturnValue({
+      isRunning: false,
+      lastCompletedAt: yesterday,
+      lastAttemptedAt: Date.now() - 30 * 60 * 1000,
+      lastSkipReason: 'no-credentials',
+      done: 0,
+      total: MOCK_REGIONS.length,
+    });
+    vi.mocked(getCredentials).mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    vi.mocked(tryAcquireSyncLock).mockResolvedValue(makeLockHandle());
+
+    runCacheSync();
+
+    await vi.waitFor(() => {
+      expect(saveSyncProgress).toHaveBeenCalledWith(expect.objectContaining({
+        isRunning: false,
+        done: MOCK_REGIONS.length,
+        total: MOCK_REGIONS.length,
+      }));
+    });
+    const stored = savedProgressCalls().at(-1);
+    expect(stored?.lastSkipReason).toBeUndefined();
+    expect(stored?.lastAttemptedAt).toEqual(expect.any(Number));
+    expect(stored?.lastCompletedAt).toEqual(expect.any(Number));
+    expect(stored?.lastCompletedAt ?? 0).toBeGreaterThan(yesterday);
+  });
+
+  it('preserves lastCompletedAt when sync fails fatally', async () => {
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    vi.mocked(getSyncProgress).mockReturnValue({
+      isRunning: false,
+      lastCompletedAt: oneHourAgo,
+      done: 5,
+      total: 5,
+    });
+    vi.mocked(getCredentials).mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    vi.mocked(tryAcquireSyncLock).mockResolvedValue(makeLockHandle());
+    vi.mocked(initializeRuntimeState).mockRejectedValue(new Error('mock runtime failure'));
+
+    runCacheSync();
+
+    await vi.waitFor(() => {
+      expect(saveSyncProgress).toHaveBeenCalledWith(expect.objectContaining({
+        lastSkipReason: 'fatal-error',
+      }));
+    });
+    const stored = savedProgressCalls().find((progress) => progress.lastSkipReason === 'fatal-error');
+    expect(stored).toMatchObject({
+      isRunning: false,
+      done: 0,
+      total: MOCK_REGIONS.length,
+      lastCompletedAt: oneHourAgo,
+      lastSkipReason: 'fatal-error',
+    });
+    expect(stored?.lastAttemptedAt).toEqual(expect.any(Number));
   });
 });

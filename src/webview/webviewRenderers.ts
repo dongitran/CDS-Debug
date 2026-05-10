@@ -835,6 +835,39 @@ export function getRendererScriptContent(): string {
       return days + ' day' + (days === 1 ? '' : 's') + ' ago';
     }
 
+    function formatSyncSkipReason(reason) {
+      const labels = {
+        'no-credentials': 'credentials not set',
+        'cache-disabled': 'cache is disabled',
+        'lock-contention': 'another sync is running',
+        'fatal-error': 'an error occurred',
+        'aborted': 'sync was canceled',
+      };
+      return labels[reason] || 'an error occurred';
+    }
+
+    function renderCompletedSyncStatus(s) {
+      const completedText = 'Last sync: <strong>' + escape(formatSyncTime(s.lastCompletedAt)) + '</strong>';
+      if (!s.lastSkipReason) {
+        return \`
+          <div class="sync-status-row">
+            <span style="color:var(--vscode-testing-iconPassed);margin-right:4px">&#9679;</span>
+            <span>\${completedText}</span>
+          </div>
+        \`;
+      }
+
+      const attemptText = s.lastAttemptedAt
+        ? ' · Last attempt ' + escape(formatSyncTime(s.lastAttemptedAt)) + ': '
+        : ' · Last attempt: ';
+      return \`
+        <div class="sync-status-row warning">
+          <span style="color:var(--vscode-inputValidation-warningForeground);margin-right:4px">&#9888;</span>
+          <span>\${completedText}\${attemptText}\${escape(formatSyncSkipReason(s.lastSkipReason))}</span>
+        </div>
+      \`;
+    }
+
     function renderSettings() {
       const s = state.syncStatus;
       const c = state.cacheConfig;
@@ -874,12 +907,7 @@ export function getRendererScriptContent(): string {
           </div>
         \`;
       } else {
-        statusRow = \`
-          <div class="sync-status-row">
-            <span style="color:var(--vscode-testing-iconPassed);margin-right:4px">&#9679;</span>
-            <span>Last sync: <strong>\${escape(formatSyncTime(s.lastCompletedAt))}</strong></span>
-          </div>
-        \`;
+        statusRow = renderCompletedSyncStatus(s);
       }
 
       // Credential section — shown differently based on source

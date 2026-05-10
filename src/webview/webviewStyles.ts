@@ -607,6 +607,11 @@ export function getStyles(): string {
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
     }
+    .sync-status-row.warning {
+      border-color: var(--vscode-inputValidation-warningBorder);
+      background: var(--vscode-inputValidation-warningBackground);
+      color: var(--vscode-inputValidation-warningForeground);
+    }
 
     /* ── Org / space lists ── */
     .org-list,

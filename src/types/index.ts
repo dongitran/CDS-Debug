@@ -148,10 +148,19 @@ export interface CfRegionCache {
   lastSyncedAt: number;
 }
 
+export type SyncSkipReason =
+  | 'no-credentials'
+  | 'cache-disabled'
+  | 'lock-contention'
+  | 'fatal-error'
+  | 'aborted';
+
 export interface SyncProgress {
   isRunning: boolean;
   startedAt?: number;
   lastCompletedAt?: number;
+  lastAttemptedAt?: number;
+  lastSkipReason?: SyncSkipReason | undefined;
   // Explicitly allow undefined so spread resets like `{ ...p, currentOrg: undefined }`
   // are valid under exactOptionalPropertyTypes: true.
   currentRegion?: string | undefined;

@@ -100,10 +100,68 @@ interface PostedMessage {
 
 type MessageHandler = (event: { data: unknown }) => void;
 
+interface RenderSettingsOptions {
+  readonly syncStatus: {
+    readonly isRunning: boolean;
+    readonly startedAt?: number;
+    readonly lastCompletedAt?: number;
+    readonly lastAttemptedAt?: number;
+    readonly lastSkipReason?: string;
+    readonly done: number;
+    readonly total: number;
+    readonly currentRegion?: string;
+    readonly currentOrg?: string;
+  };
+  readonly cacheConfig: {
+    readonly enabled: boolean;
+    readonly intervalHours: number;
+  };
+}
+
+interface RendererContext {
+  readonly state: Record<string, unknown>;
+  readonly escape: (value: unknown) => string;
+  renderSettings?: () => string;
+}
+
 function extractInlineScript(script: string): string {
   const match = /<script nonce="[^"]+">([\s\S]*)<\/script>/.exec(script);
   if (!match?.[1]) throw new Error('Inline webview script was not found');
   return match[1];
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderSettingsHtml(options: RenderSettingsOptions): string {
+  const context: RendererContext = {
+    state: {
+      syncStatus: options.syncStatus,
+      cacheConfig: options.cacheConfig,
+      credentialStatus: {
+        hasCredentials: false,
+        email: '',
+        source: 'none',
+      },
+      debugPrefs: {
+        openBrowserOnAttach: false,
+        enableBreakpointSnapshotHandling: false,
+        enableBranchPrep: false,
+      },
+    },
+    escape: escapeHtml,
+  };
+  vm.runInNewContext(getRendererScriptContent(), context, { timeout: 1000 });
+  if (typeof context.renderSettings !== 'function') {
+    throw new Error('renderSettings was not registered');
+  }
+  return context.renderSettings();
 }
 
 function createWebviewScriptHarness(): {
@@ -422,6 +480,26 @@ describe('webview markup contracts', () => {
     expect(harness.getHtml()).toContain('us10');
     expect(harness.getHtml()).toContain('sample-org-beta');
     expect(harness.getHtml()).toContain('https://api.cf.us10.hana.ondemand.com');
+  });
+
+  it('renders both the last successful sync and the skipped attempt reason', () => {
+    const now = Date.now();
+    const html = renderSettingsHtml({
+      syncStatus: {
+        isRunning: false,
+        lastCompletedAt: now - 2 * 24 * 60 * 60 * 1000,
+        lastAttemptedAt: now - 60 * 60 * 1000,
+        lastSkipReason: 'no-credentials',
+        done: 0,
+        total: 5,
+      },
+      cacheConfig: { enabled: true, intervalHours: 24 },
+    });
+
+    expect(html).toContain('Last sync:');
+    expect(html).toContain('2 days ago');
+    expect(html).toContain('Last attempt');
+    expect(html).toContain('credentials not set');
   });
 
   it('keeps the package browser screen minimal', () => {

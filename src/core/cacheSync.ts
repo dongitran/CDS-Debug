@@ -39,7 +39,7 @@ import {
   saveSyncProgress,
   getCacheSettings,
 } from '../storage/cacheStore';
-import type { CfApp, CfAppState, SyncProgress } from '../types/index';
+import type { CfApp, CfAppState, SyncProgress, SyncSkipReason } from '../types/index';
 import { logInfo, logWarn, logError } from './logger';
 
 export const cacheSyncEvents = new EventEmitter();
@@ -57,6 +57,48 @@ function syncIntervalMs(): number {
 
 function pushStatus(progress: SyncProgress): void {
   cacheSyncEvents.emit('progress', progress);
+}
+
+function withLastCompleted(progress: SyncProgress, lastCompletedAt: number | undefined): SyncProgress {
+  return lastCompletedAt === undefined ? progress : { ...progress, lastCompletedAt };
+}
+
+function buildRunningProgress(
+  startedAt: number,
+  lastAttemptedAt: number,
+  done: number,
+  total: number,
+  lastCompletedAt: number | undefined,
+  currentRegion?: string,
+  currentOrg?: string,
+): SyncProgress {
+  return withLastCompleted({
+    isRunning: true,
+    startedAt,
+    lastAttemptedAt,
+    done,
+    total,
+    currentRegion,
+    currentOrg,
+  }, lastCompletedAt);
+}
+
+function buildSkippedProgress(
+  reason: SyncSkipReason,
+  total: number,
+  lastCompletedAt: number | undefined,
+  startedAt?: number,
+  done = 0,
+): SyncProgress {
+  const progress: SyncProgress = {
+    isRunning: false,
+    lastAttemptedAt: Date.now(),
+    lastSkipReason: reason,
+    done,
+    total,
+  };
+  if (startedAt !== undefined) progress.startedAt = startedAt;
+  return withLastCompleted(progress, lastCompletedAt);
 }
 
 // Indirection prevents TypeScript from narrowing _sync.abortRequested as always-false.
@@ -246,12 +288,18 @@ async function doSync(): Promise<void> {
 
   if (!getCacheSettings().enabled) {
     logInfo('[CacheSync] Cache sync disabled — skipping.');
+    const skipped = buildSkippedProgress('cache-disabled', getAllRegions().length, getSyncProgress()?.lastCompletedAt);
+    await saveSyncProgress(skipped);
+    pushStatus(skipped);
     return;
   }
 
   const { email, password } = await getCredentials();
   if (!email || !password) {
     logWarn('[CacheSync] SAP credentials not set — skipping background sync.');
+    const skipped = buildSkippedProgress('no-credentials', getAllRegions().length, getSyncProgress()?.lastCompletedAt);
+    await saveSyncProgress(skipped);
+    pushStatus(skipped);
     return;
   }
 
@@ -261,10 +309,12 @@ async function doSync(): Promise<void> {
   const regions = getAllRegions();
   const total = regions.length;
   const startedAt = Date.now();
+  const lastAttemptedAt = startedAt;
+  const previousLastCompletedAt = getSyncProgress()?.lastCompletedAt;
   const syncId = randomUUID();
   const regionKeys = regions.map((r) => r.key);
 
-  let progress: SyncProgress = { isRunning: true, startedAt, done: 0, total };
+  let progress = buildRunningProgress(startedAt, lastAttemptedAt, 0, total, previousLastCompletedAt);
   await saveSyncProgress(progress);
   pushStatus(progress);
 
@@ -276,7 +326,7 @@ async function doSync(): Promise<void> {
     lockHandle = await tryAcquireSyncLock(syncId);
     if (!lockHandle) {
       logInfo('[CacheSync] Another sync process holds the lock — skipping.');
-      const final: SyncProgress = { isRunning: false, done: 0, total };
+      const final = buildSkippedProgress('lock-contention', total, previousLastCompletedAt, startedAt);
       await saveSyncProgress(final);
       pushStatus(final);
       _sync.isSyncing = false;
@@ -294,32 +344,40 @@ async function doSync(): Promise<void> {
         break;
       }
 
-      progress = { isRunning: true, startedAt, done, total, currentRegion: region.key };
+      progress = buildRunningProgress(
+        startedAt,
+        lastAttemptedAt,
+        done,
+        total,
+        previousLastCompletedAt,
+        region.key,
+      );
       pushStatus(progress);
       logInfo(`[CacheSync] Scanning ${region.key} (${region.label})…`);
 
       const node = await collectRegion(region, email, password, (orgName) => {
-        pushStatus({
-          isRunning: true,
+        pushStatus(buildRunningProgress(
           startedAt,
+          lastAttemptedAt,
           done,
           total,
-          currentRegion: region.key,
-          currentOrg: orgName,
-        });
+          previousLastCompletedAt,
+          region.key,
+          orgName,
+        ));
       });
 
       await mergeRuntimeRegion(syncId, regionKeys, node);
 
       done++;
-      progress = { isRunning: true, startedAt, done, total };
+      progress = buildRunningProgress(startedAt, lastAttemptedAt, done, total, previousLastCompletedAt);
       await saveSyncProgress(progress);
       pushStatus(progress);
     }
 
     if (aborted) {
       await failRuntimeState(syncId, 'aborted').catch(() => undefined);
-      const final: SyncProgress = { isRunning: false, startedAt, done, total };
+      const final = buildSkippedProgress('aborted', total, previousLastCompletedAt, startedAt, done);
       await saveSyncProgress(final);
       pushStatus(final);
       logInfo('[CacheSync] Sync aborted.');
@@ -332,6 +390,7 @@ async function doSync(): Promise<void> {
         isRunning: false,
         startedAt,
         lastCompletedAt: Date.now(),
+        lastAttemptedAt,
         done,
         total,
       };
@@ -342,7 +401,7 @@ async function doSync(): Promise<void> {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await failRuntimeState(syncId, message).catch(() => undefined);
-    const final: SyncProgress = { isRunning: false, done: 0, total };
+    const final = buildSkippedProgress('fatal-error', total, previousLastCompletedAt, startedAt);
     await saveSyncProgress(final);
     pushStatus(final);
     throw err;
@@ -360,8 +419,9 @@ export function runCacheSync(): void {
     const message = err instanceof Error ? err.message : String(err);
     logError(`[CacheSync] Fatal error: ${message}`);
     const total = getAllRegions().length;
-    void saveSyncProgress({ isRunning: false, done: 0, total });
-    pushStatus({ isRunning: false, done: 0, total });
+    const final = buildSkippedProgress('fatal-error', total, getSyncProgress()?.lastCompletedAt);
+    void saveSyncProgress(final);
+    pushStatus(final);
   });
 }
 
