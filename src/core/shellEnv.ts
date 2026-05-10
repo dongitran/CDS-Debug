@@ -93,7 +93,6 @@ async function readLoginShellEnv(): Promise<NodeJS.ProcessEnv> {
     return parsed;
   } catch (err: unknown) {
     logWarn(`[ShellEnv] Could not read login-shell env: ${err instanceof Error ? err.message : String(err)}`);
-    _cachedShellEnv = {};
     return {};
   }
 }

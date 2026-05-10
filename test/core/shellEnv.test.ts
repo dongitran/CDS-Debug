@@ -93,6 +93,29 @@ describe('getCredentials', () => {
     const result = await getCredentials();
 
     expect(result).toEqual({ email: '', password: '' });
+    expect(execFileAsyncMock).toHaveBeenCalledOnce();
+  });
+
+  it('retries the shell spawn on subsequent calls after a failed read', async () => {
+    execFileAsyncMock.mockRejectedValue(new Error('spawn ENOENT'));
+
+    await getCredentials();
+    await getCredentials();
+
+    expect(execFileAsyncMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('finds shell-env credentials on retry after an initial spawn failure', async () => {
+    execFileAsyncMock
+      .mockRejectedValueOnce(new Error('spawn ENOENT'))
+      .mockResolvedValueOnce({ stdout: 'SAP_EMAIL=retry@example.com\nSAP_PASSWORD=retry-pw\n' });
+
+    const first = await getCredentials();
+    const second = await getCredentials();
+
+    expect(first).toEqual({ email: '', password: '' });
+    expect(second).toEqual({ email: 'retry@example.com', password: 'retry-pw' });
+    expect(execFileAsyncMock).toHaveBeenCalledTimes(2);
   });
 
   it('returns empty strings when process.env has email but no password', async () => {
