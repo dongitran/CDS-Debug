@@ -142,6 +142,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   // each Start Debug click. Cleared on Reset Configuration / window reload by definition.
   private readonly notifiedUnmatchedRemoteRoots = new Set<string>();
   private remoteRootWarmupGeneration = 0;
+  private scopeChangeQueue: Promise<void> = Promise.resolve();
   private lastWrittenScope: SharedCfScope | undefined;
   private pendingExternalScope: SharedCfScope | undefined;
 
@@ -210,17 +211,25 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   }
 
   public handleExternalScopeChange(scope: SharedCfScope): void {
-    if (
-      this.lastWrittenScope?.regionCode === scope.regionCode
-      && this.lastWrittenScope.orgName === scope.orgName
-      && this.lastWrittenScope.spaceName === scope.spaceName
-    ) {
+    if (this.isLastWrittenScope(scope)) {
       return;
     }
 
-    void this.handleScopeChangeInternal(scope).catch((err: unknown) => {
-      logWarn(`[ScopeSync] Scope change handling failed: ${extractErrorMessage(err)}`);
-    });
+    this.scopeChangeQueue = this.scopeChangeQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (this.isLastWrittenScope(scope)) return;
+        await this.handleScopeChangeInternal(scope);
+      })
+      .catch((err: unknown) => {
+        logWarn(`[ScopeSync] Scope change handling failed: ${extractErrorMessage(err)}`);
+      });
+  }
+
+  private isLastWrittenScope(scope: SharedCfScope): boolean {
+    return this.lastWrittenScope?.regionCode === scope.regionCode
+      && this.lastWrittenScope.orgName === scope.orgName
+      && this.lastWrittenScope.spaceName === scope.spaceName;
   }
 
   private async handleScopeChangeInternal(scope: SharedCfScope): Promise<void> {

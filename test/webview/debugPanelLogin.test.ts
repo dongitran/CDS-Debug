@@ -138,6 +138,7 @@ type ShowInformationMessageMock = ReturnType<
 interface DebugPanelInternals {
   lastWrittenScope: SharedCfScope | undefined;
   pendingExternalScope: SharedCfScope | undefined;
+  scopeChangeQueue: Promise<void>;
   applyPendingExternalScopeIfAny(orgs: string[]): void;
   handleLogin(apiEndpoint: string): Promise<void>;
   handleScopeChangeInternal(scope: SharedCfScope): Promise<void>;
@@ -284,6 +285,86 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     expect(handleScopeChangeInternal).not.toHaveBeenCalled();
     expect(processManagerMock.stopAllProcesses).not.toHaveBeenCalled();
     expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it('serializes rapid external scope changes before cross-region login', async () => {
+    const provider = makeProvider();
+    vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    let resolveFirstLogin: (() => void) | undefined;
+    cfClientMock.cfLogin
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveFirstLogin = resolve;
+      }))
+      .mockResolvedValue(undefined);
+    cfClientMock.cfOrgs
+      .mockResolvedValueOnce(['sample-org-us'])
+      .mockResolvedValueOnce(['sample-org-eu']);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    await saveSessionConfig({
+      orgs: ['sample-org-eu'],
+    });
+
+    provider.handleExternalScopeChange({
+      regionCode: 'us10',
+      orgName: 'sample-org-us',
+      spaceName: 'app',
+    });
+    provider.handleExternalScopeChange({
+      regionCode: 'eu10',
+      orgName: 'sample-org-eu',
+      spaceName: 'app',
+    });
+
+    await vi.waitFor(() => {
+      expect(cfClientMock.cfLogin).toHaveBeenCalledTimes(1);
+    });
+    expect(cfClientMock.cfLogin).toHaveBeenLastCalledWith(
+      'https://api.cf.us10.hana.ondemand.com',
+      'sample.user@example.com',
+      'sample-password',
+    );
+
+    if (!resolveFirstLogin) throw new Error('First login was not started.');
+    resolveFirstLogin();
+
+    await vi.waitFor(() => {
+      expect(cfClientMock.cfLogin).toHaveBeenCalledTimes(2);
+    });
+    expect(cfClientMock.cfLogin).toHaveBeenLastCalledWith(
+      'https://api.cf.eu10.hana.ondemand.com',
+      'sample.user@example.com',
+      'sample-password',
+    );
+  });
+
+  it('continues processing queued external scopes after a handler throws', async () => {
+    const provider = makeProvider();
+    vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    const handleScopeChangeInternal = vi
+      .spyOn(getInternals(provider), 'handleScopeChangeInternal')
+      .mockRejectedValueOnce(new Error('mock scope failure'))
+      .mockResolvedValue(undefined);
+
+    provider.handleExternalScopeChange({
+      regionCode: 'us10',
+      orgName: 'sample-org-us',
+      spaceName: 'app',
+    });
+    provider.handleExternalScopeChange({
+      regionCode: 'eu10',
+      orgName: 'sample-org-eu',
+      spaceName: 'app',
+    });
+
+    await vi.waitFor(() => {
+      expect(handleScopeChangeInternal).toHaveBeenCalledTimes(2);
+    });
+    expect(loggerMock.logWarn).toHaveBeenCalledWith(
+      '[ScopeSync] Scope change handling failed: mock scope failure',
+    );
   });
 
   it('auto-logins for an external scope when no session config exists', async () => {
