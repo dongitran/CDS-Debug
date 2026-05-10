@@ -1205,37 +1205,25 @@ export function getRendererScriptContent(): string {
       $('chk-open-browser')?.addEventListener('change', function(e) {
         const openBrowserOnAttach = !!e.target.checked;
         state.debugPrefs = { ...state.debugPrefs, openBrowserOnAttach };
-        var toggle = $('chk-open-browser')?.closest('.toggle-switch');
-        if (toggle) toggle.classList.toggle('on', openBrowserOnAttach);
-        // Update badge text and state class in-place to avoid a full render()
-        var badge = $('chk-open-browser')?.closest('.pref-row')?.querySelector('.pref-state-badge');
-        if (badge) {
-          badge.textContent = openBrowserOnAttach ? 'enabled' : 'off by default';
-          badge.classList.toggle('pref-state-on', openBrowserOnAttach);
-          badge.classList.toggle('pref-state-off', !openBrowserOnAttach);
-        }
+        updatePreferenceToggle('chk-open-browser', openBrowserOnAttach, openBrowserOnAttach ? 'enabled' : 'off by default');
         vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: state.debugPrefs });
       });
 
       $('chk-breakpoint-snapshot-handling')?.addEventListener('change', function(e) {
         const enableBreakpointSnapshotHandling = !!e.target.checked;
         state.debugPrefs = { ...state.debugPrefs, enableBreakpointSnapshotHandling };
-        var toggle = $('chk-breakpoint-snapshot-handling')?.closest('.toggle-switch');
-        if (toggle) toggle.classList.toggle('on', enableBreakpointSnapshotHandling);
-        var badge = $('chk-breakpoint-snapshot-handling')?.closest('.pref-row')?.querySelector('.pref-state-badge');
-        if (badge) {
-          badge.textContent = enableBreakpointSnapshotHandling ? 'enabled' : 'off by default';
-          badge.classList.toggle('pref-state-on', enableBreakpointSnapshotHandling);
-          badge.classList.toggle('pref-state-off', !enableBreakpointSnapshotHandling);
-        }
+        updatePreferenceToggle(
+          'chk-breakpoint-snapshot-handling',
+          enableBreakpointSnapshotHandling,
+          enableBreakpointSnapshotHandling ? 'enabled' : 'off by default',
+        );
         vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: state.debugPrefs });
       });
 
       $('chk-branch-prep')?.addEventListener('change', function(e) {
         const enableBranchPrep = !!e.target.checked;
         state.debugPrefs = { ...state.debugPrefs, enableBranchPrep };
-        var toggle = $('chk-branch-prep')?.closest('.toggle-switch');
-        if (toggle) toggle.classList.toggle('on', enableBranchPrep);
+        updatePreferenceToggle('chk-branch-prep', enableBranchPrep, '');
         vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: state.debugPrefs });
       });
 

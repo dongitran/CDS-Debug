@@ -4238,6 +4238,10 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await openBrowserToggle.check({ force: true });
         await expect(openBrowserToggle).toBeChecked();
+        await expect.poll(async () => {
+          await postExtensionMessage(webview, { type: 'GET_DEBUG_PREFS' });
+          return (await webview.locator('label.pref-row:has(#chk-open-browser) .pref-state-badge').textContent()) ?? '';
+        }).toContain('enabled');
         await expect(webview.locator('label.pref-row:has(#chk-open-browser) .toggle-switch')).toHaveClass(/on/);
         await expect(webview.locator('label.pref-row:has(#chk-open-browser) .pref-state-badge.pref-state-on')).toContainText('enabled');
         await expect.poll(async () => {

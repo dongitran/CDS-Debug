@@ -382,6 +382,36 @@ export function getScript(nonce: string): string {
       attachListeners();
     }
 
+    function updatePreferenceToggle(inputId, enabled, badgeText) {
+      const input = document.getElementById(inputId);
+      if (!input) return;
+      input.checked = enabled;
+
+      const toggle = input.closest('.toggle-switch');
+      if (toggle) toggle.classList.toggle('on', enabled);
+
+      if (!badgeText) return;
+      const badge = input.closest('.pref-row')?.querySelector('.pref-state-badge');
+      if (!badge) return;
+      badge.textContent = badgeText;
+      badge.classList.toggle('pref-state-on', enabled);
+      badge.classList.toggle('pref-state-off', !enabled);
+    }
+
+    function syncDebugPreferenceControls() {
+      updatePreferenceToggle(
+        'chk-open-browser',
+        !!state.debugPrefs.openBrowserOnAttach,
+        state.debugPrefs.openBrowserOnAttach ? 'enabled' : 'off by default',
+      );
+      updatePreferenceToggle(
+        'chk-breakpoint-snapshot-handling',
+        !!state.debugPrefs.enableBreakpointSnapshotHandling,
+        state.debugPrefs.enableBreakpointSnapshotHandling ? 'enabled' : 'off by default',
+      );
+      updatePreferenceToggle('chk-branch-prep', !!state.debugPrefs.enableBranchPrep, '');
+    }
+
     function renderScreen() {
       switch (state.screen) {
         case SCREENS.SETUP_CREDENTIALS:   return renderSetupCredentials();
@@ -981,6 +1011,10 @@ export function getScript(nonce: string): string {
           return;
         case 'DEBUG_PREFS':
           state.debugPrefs = msg.payload;
+          if (state.screen === SCREENS.SETTINGS) {
+            syncDebugPreferenceControls();
+            return;
+          }
           if (state.screen === SCREENS.READY) {
             render();
             return;

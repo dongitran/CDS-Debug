@@ -5,6 +5,7 @@
 ### Fixes
 
 - **Login-shell environment lookup now retries after spawn failures** — A failed login-shell environment read no longer caches an empty result for the whole VS Code session, so credentials from shell dotfiles can be found on a later user-triggered retry.
+- **Settings preference toggles stay visually in sync** — Late preference refresh messages now update the Settings toggle DOM in place, preventing CI-visible races where a saved debug preference could look disabled until reopening Settings.
 
 ---
 
