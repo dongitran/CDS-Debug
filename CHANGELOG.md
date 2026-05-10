@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.62-pre.14] — 2026
+
+### Fixes
+
+- **External CF scope changes are serialized** — Rapid external updates to `sapCap.currentScope` now queue through one handler, preventing overlapping cross-region auto-logins from leaving the launcher and CF CLI on different targets.
+- **CF auth failures return faster** — `cfLogin` now skips retry backoff for clear credential/auth failures while still retrying transient network errors.
+- **Remote root warmup is parallelized safely** — Started apps now warm regex remote roots in bounded batches of four instead of one at a time.
+- **Cache sync skipped attempts are visible** — Settings now preserves the last successful sync time and shows the latest skipped/failed attempt reason, such as missing credentials.
+
+---
+
 ## [0.3.62-pre.13] — 2026
 
 ### Fixes
