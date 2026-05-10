@@ -150,6 +150,7 @@ pnpm test:report          # Open HTML report
 ### CF Region / Org
 1. User can switch to region catalog fallback and filter `cf-sync` supplemental SAP endpoints plus the local `us10-004` fallback and China region endpoints after synced topology is ready.
 2. User can open custom endpoint without losing Region/Org context, keeping the header, tabs, and login footer position stable.
+3. User can reach Ready from synced topology without live org, space, or app CF CLI commands.
 
 ### Ready Screen — Actions and Navigation
 1. User can change mapping and return to CF Region / Org.

@@ -10,6 +10,7 @@ import {
   mergeRuntimeRegion,
   completeRuntimeState,
   failRuntimeState,
+  persistRegion,
   tryAcquireSyncLock,
   releaseSyncLock,
   cfApi,
@@ -28,6 +29,7 @@ import type {
   CfStructure,
   OrgNode,
   Region,
+  RegionKey,
   RegionNode,
   SpaceNode,
 } from '@saptools/cf-sync';
@@ -39,7 +41,8 @@ import {
   saveSyncProgress,
   getCacheSettings,
 } from '../storage/cacheStore';
-import type { CfApp, CfAppState, SyncProgress, SyncSkipReason } from '../types/index';
+import type { SyncProgress, SyncSkipReason } from '../types/index';
+import { toCachedApp } from './appNodeMapping';
 import { logInfo, logWarn, logError } from './logger';
 
 export const cacheSyncEvents = new EventEmitter();
@@ -247,19 +250,6 @@ async function collectRegion(
   });
 }
 
-function toCachedAppState(app: AppNode): CfAppState {
-  if (app.requestedState !== 'started') return 'stopped';
-  return (app.runningInstances ?? 0) > 0 ? 'started' : 'empty';
-}
-
-function toCachedApp(app: AppNode): CfApp {
-  return {
-    name: app.name,
-    state: toCachedAppState(app),
-    urls: [...(app.routes ?? [])],
-  };
-}
-
 // Converts a completed cf-sync CfStructure into VS Code globalState app cache entries.
 // Each space is cached independently because app names and states can differ by space.
 export async function populateCacheFromStructure(structure: CfStructure): Promise<void> {
@@ -277,6 +267,39 @@ export async function populateCacheFromStructure(structure: CfStructure): Promis
         await saveCachedApps(region.apiEndpoint, org.name, space.apps.map(toCachedApp), space.name);
       }
     }
+  }
+}
+
+export type SingleRegionSyncResult =
+  | { status: 'synced' }
+  | { status: 'failed'; error: string }
+  | { status: 'skipped' };
+
+export async function syncSingleRegion(
+  regionKey: RegionKey,
+  email: string,
+  password: string,
+): Promise<SingleRegionSyncResult> {
+  if (_sync.isSyncing) {
+    logInfo(`[CacheSync] Single-region warmup skipped for ${regionKey}: full sync is running.`);
+    return { status: 'skipped' };
+  }
+
+  const region = getAllRegions().find((candidate) => candidate.key === regionKey);
+  if (!region) return { status: 'failed', error: 'unknown-region' };
+
+  try {
+    logInfo(`[CacheSync] Single-region warmup: ${regionKey}…`);
+    const node = await collectRegion(region, email, password, () => undefined);
+    await persistRegion(node);
+    await populateCacheFromStructure({ syncedAt: new Date().toISOString(), regions: [node] });
+    logInfo(`[CacheSync] ${regionKey} warmed up — ${node.orgs.length.toString()} org(s).`);
+    cacheSyncEvents.emit('regionWarmed', { regionKey });
+    return { status: 'synced' };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    logWarn(`[CacheSync] Single-region warmup failed for ${regionKey}: ${message}`);
+    return { status: 'failed', error: message };
   }
 }
 

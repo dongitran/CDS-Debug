@@ -221,6 +221,95 @@ export function getScript(nonce: string): string {
       return state.selectedOrg ? (state.spacesByOrg[state.selectedOrg] || []) : [];
     }
 
+    function normalizeTopologySpace(space) {
+      if (typeof space === 'string') return { name: space, apps: [] };
+      if (!space || typeof space !== 'object' || typeof space.name !== 'string') return null;
+      return {
+        name: space.name,
+        apps: Array.isArray(space.apps) ? space.apps : [],
+        error: typeof space.error === 'string' ? space.error : undefined,
+      };
+    }
+
+    function findTopologyAccountForNavigation(regionKey, orgName) {
+      if (!state.cfTopology || !state.cfTopology.ready || !Array.isArray(state.cfTopology.accounts)) return null;
+      const resolvedKey = regionKey || endpointToRegion(state.apiEndpoint);
+      const endpoint = normalizeEndpointValue(state.apiEndpoint);
+      return state.cfTopology.accounts.find(account => {
+        if (account.orgName !== orgName) return false;
+        if (resolvedKey && account.regionKey === resolvedKey) return true;
+        return endpoint && normalizeEndpointValue(account.apiEndpoint) === endpoint;
+      }) || null;
+    }
+
+    function getSpacesFromTopology(regionKey, orgName) {
+      const account = findTopologyAccountForNavigation(regionKey, orgName);
+      if (!account || !Array.isArray(account.spaces)) return null;
+      return account.spaces.map(normalizeTopologySpace).filter(Boolean);
+    }
+
+    function getAppsFromTopology(regionKey, orgName, spaceName) {
+      const spaces = getSpacesFromTopology(regionKey, orgName);
+      if (!spaces) return null;
+      const space = spaces.find(candidate => candidate.name === spaceName);
+      if (!space || space.error) return null;
+      return space.apps;
+    }
+
+    function hasAppsChanged(currentApps, nextApps) {
+      return JSON.stringify(currentApps || []) !== JSON.stringify(nextApps || []);
+    }
+
+    function pruneSelectedAppsTo(apps) {
+      const validNames = new Set(apps.map(app => app.name));
+      state.selectedApps = new Set([...state.selectedApps].filter(name => validNames.has(name)));
+    }
+
+    function enterReadyWithTopologyApps(org, space, apps) {
+      state.apps = apps;
+      state.selectedApps = new Set();
+      state.isRestoringSession = false;
+      state.screen = SCREENS.READY;
+      state.error = null;
+      render();
+      vscode.postMessage({ type: 'WARMUP_CF_SESSION', payload: { org, space } });
+    }
+
+    function loadAppsViaTopologyFirst(org, space, opts) {
+      const apps = getAppsFromTopology(state.selectedRegion, org, space);
+      if (apps) {
+        enterReadyWithTopologyApps(org, space, apps);
+        return true;
+      }
+      state.screen = SCREENS.LOADING_APPS;
+      render();
+      vscode.postMessage({ type: 'LOAD_APPS', payload: { org, space, ...(opts || {}) } });
+      return false;
+    }
+
+    function loadSpacesViaTopologyFirst(org) {
+      const spaces = getSpacesFromTopology(state.selectedRegion, org);
+      if (!spaces) {
+        state.screen = SCREENS.LOADING_SPACES;
+        render();
+        vscode.postMessage({ type: 'LOAD_SPACES', payload: { org } });
+        return false;
+      }
+
+      const spaceNames = spaces.map(space => space.name);
+      state.spacesByOrg[org] = spaceNames;
+      if (spaceNames.length === 1) {
+        state.selectedSpace = spaceNames[0];
+        restoreFolderForSelectedTarget();
+        state.screen = SCREENS.SELECT_FOLDER;
+      } else {
+        if (!spaceNames.includes(state.selectedSpace)) state.selectedSpace = null;
+        state.screen = SCREENS.SELECT_SPACE;
+      }
+      render();
+      return true;
+    }
+
     function restoreFolderForSelectedTarget() {
       const key = selectedTargetKey();
       state.selectedFolder = key ? (state.foldersByTarget[key] || null) : null;
@@ -544,9 +633,7 @@ export function getScript(nonce: string): string {
         if (!state.selectedOrg) return;
         state.suppressConfigAutoRestore = true;
         state.error = null;
-        state.screen = SCREENS.LOADING_SPACES;
-        render();
-        vscode.postMessage({ type: 'LOAD_SPACES', payload: { org: state.selectedOrg } });
+        loadSpacesViaTopologyFirst(state.selectedOrg);
       });
 
       document.querySelectorAll('input[name="cf-space"]').forEach(el => {
@@ -594,10 +681,8 @@ export function getScript(nonce: string): string {
         const mappings = [mapping];
         state.mappings = upsertWebviewOrgMapping(state.mappings, mapping);
         state.error = null;
-        state.screen = SCREENS.LOADING_APPS;
-        render();
         vscode.postMessage({ type: 'SAVE_MAPPINGS', payload: { mappings } });
-        vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, space: state.selectedSpace } });
+        loadAppsViaTopologyFirst(state.selectedOrg, state.selectedSpace);
       });
 
       $('btn-back-region')?.addEventListener('click', () => {
@@ -807,9 +892,7 @@ export function getScript(nonce: string): string {
             state.pendingTopologyOrg = null;
             if (Array.isArray(state.orgs) && state.orgs.indexOf(expectedOrg) !== -1) {
               state.selectedOrg = expectedOrg;
-              state.screen = SCREENS.LOADING_SPACES;
-              render();
-              vscode.postMessage({ type: 'LOAD_SPACES', payload: { org: expectedOrg } });
+              loadSpacesViaTopologyFirst(expectedOrg);
               return;
             }
             state.error = 'Org "' + expectedOrg + '" is no longer available in this region. Please refresh cf-sync or pick a different org.';
@@ -1003,6 +1086,19 @@ export function getScript(nonce: string): string {
               refreshRegionFooterButton();
             }
           }
+          if (state.screen === SCREENS.READY && state.selectedOrg && state.selectedSpace) {
+            const updatedApps = getAppsFromTopology(state.selectedRegion, state.selectedOrg, state.selectedSpace);
+            if (updatedApps && hasAppsChanged(state.apps, updatedApps)) {
+              state.apps = updatedApps;
+              pruneSelectedAppsTo(updatedApps);
+              if (document.querySelector('.app-list')) {
+                refreshActiveSessionsPanel();
+                refreshAppListSection();
+              } else {
+                render();
+              }
+            }
+          }
           return;
         }
         case 'CACHE_CONFIG':
@@ -1168,9 +1264,7 @@ export function getScript(nonce: string): string {
               // Mark as restoring so APPS_ERROR can trigger auto-reconnect instead
               // of leaving the user stuck on a broken READY screen.
               state.isRestoringSession = true;
-              state.screen = SCREENS.LOADING_APPS;
-              render();
-              vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, space: state.selectedSpace } });
+              loadAppsViaTopologyFirst(state.selectedOrg, state.selectedSpace);
               return;
             }
           }
@@ -1196,9 +1290,7 @@ export function getScript(nonce: string): string {
                 state.selectedSpace = mappingSpace(mapping);
                 state.selectedFolder = mapping.groupFolderPath;
                 state.isRestoringSession = true;
-                state.screen = SCREENS.LOADING_APPS;
-                render();
-                vscode.postMessage({ type: 'LOAD_APPS', payload: { org: state.selectedOrg, space: state.selectedSpace } });
+                loadAppsViaTopologyFirst(state.selectedOrg, state.selectedSpace);
                 return;
               }
             }
@@ -1243,7 +1335,8 @@ export function getScript(nonce: string): string {
           if (state.selectedOrg === orgName && state.selectedSpace === spaceName) break;
           state.selectedOrg = orgName;
           state.selectedSpace = spaceName;
-          vscode.postMessage({ type: 'LOAD_APPS', payload: { org: orgName, space: spaceName } });
+          restoreFolderForSelectedTarget();
+          loadAppsViaTopologyFirst(orgName, spaceName);
           break;
         }
         case 'SCOPE_SYNCED_NO_MAPPING': {

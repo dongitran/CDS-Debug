@@ -13,6 +13,37 @@ const cfClientMock = vi.hoisted(() => ({
   ),
   cfLogout: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   cfOrgs: vi.fn<() => Promise<string[]>>(() => Promise.resolve([])),
+  cfTarget: vi.fn<(org: string, space?: string) => Promise<void>>(() => Promise.resolve()),
+  cfTargetAndApps: vi.fn<(org: string, space?: string) => Promise<CfApp[]>>(() => Promise.resolve([])),
+}));
+
+const cacheSyncMock = vi.hoisted(() => {
+  const listeners = new Map<string, ((payload: unknown) => void)[]>();
+  const cacheSyncEvents = {
+    on: vi.fn((event: string, listener: (payload: unknown) => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+      return cacheSyncEvents;
+    }),
+    emit: vi.fn((event: string, payload: unknown) => {
+      for (const listener of listeners.get(event) ?? []) listener(payload);
+      return true;
+    }),
+  };
+  return {
+    cacheSyncEvents,
+    getCurrentSyncProgress: vi.fn(() => ({ isRunning: false, done: 0, total: 0 })),
+    restartCacheSyncTimer: vi.fn<() => void>(),
+    runCacheSync: vi.fn<() => void>(),
+    syncSingleRegion: vi.fn<() => Promise<{ status: 'synced' | 'failed' | 'skipped'; error?: string }>>(
+      () => Promise.resolve({ status: 'synced' }),
+    ),
+  };
+});
+
+const cfTopologyMock = vi.hoisted(() => ({
+  getAppsFromTopologySync: vi.fn<() => CfApp[] | undefined>(() => undefined),
+  getTopologySnapshot: vi.fn(() => Promise.resolve({ ready: false, accounts: [] })),
+  getTopologySnapshotSync: vi.fn(() => ({ ready: false, accounts: [] })),
 }));
 
 const loggerMock = vi.hoisted(() => ({
@@ -87,8 +118,14 @@ vi.mock('../../src/core/cfClient', async (importOriginal) => {
     cfLogin: cfClientMock.cfLogin,
     cfLogout: cfClientMock.cfLogout,
     cfOrgs: cfClientMock.cfOrgs,
+    cfTarget: cfClientMock.cfTarget,
+    cfTargetAndApps: cfClientMock.cfTargetAndApps,
   };
 });
+
+vi.mock('../../src/core/cacheSync', () => cacheSyncMock);
+
+vi.mock('../../src/core/cfTopology', () => cfTopologyMock);
 
 vi.mock('../../src/core/processManager', async (importOriginal) => {
   const actual = await importOriginal<typeof ProcessManagerModule>();
@@ -131,6 +168,7 @@ vi.mock('../../src/storage/scopeSync', async (importOriginal) => {
 
 import { buildLoginConfig } from '../../src/webview/debugPanel';
 import { DebugLauncherViewProvider } from '../../src/webview/debugPanel';
+import { getCacheSettings, initCacheStore, saveCacheSettings } from '../../src/storage/cacheStore';
 import { getConfig, initConfigStore, saveConfig } from '../../src/storage/configStore';
 import * as vscode from 'vscode';
 
@@ -144,7 +182,9 @@ interface DebugPanelInternals {
   scopeChangeQueue: Promise<void>;
   remoteRootWarmupGeneration: number;
   applyPendingExternalScopeIfAny(orgs: string[]): void;
+  handleSaveCredentials(email: string, password: string): Promise<void>;
   handleLogin(apiEndpoint: string): Promise<void>;
+  handleWarmupCfSession(org: string, space: string): Promise<void>;
   handleScopeChangeInternal(scope: SharedCfScope): Promise<void>;
   handleExternalRegionChange(scope: SharedCfScope): Promise<void>;
   stopActiveSessionsForScopeChange(): Promise<void>;
@@ -167,6 +207,23 @@ interface DebugPanelInternals {
     appName: string,
     fallbackConfig: CapDebugConfig | null,
   ): Promise<void>;
+  startRemoteRootWarmupAfterSession(
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    workspaceRoot: string,
+    apps: readonly CfApp[],
+  ): Promise<void>;
+  startRemoteRootWarmupAfterSessionTracked(
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    workspaceRoot: string,
+    apps: readonly CfApp[],
+  ): Promise<void>;
+  awaitWarmupIfRunning(apiEndpoint: string, org: string, space: string): Promise<void>;
 }
 
 function makeContext() {
@@ -257,14 +314,29 @@ describe('DebugLauncherViewProvider login config', () => {
 });
 
 describe('DebugLauncherViewProvider external scope sync', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     initConfigStore(makeContext() as unknown as Parameters<typeof initConfigStore>[0]);
+    initCacheStore(makeContext() as unknown as Parameters<typeof initCacheStore>[0]);
+    await saveCacheSettings({ enabled: true, intervalHours: 24 });
     cfClientMock.cfLogin.mockReset();
     cfClientMock.cfLogin.mockResolvedValue(undefined);
     cfClientMock.cfLogout.mockReset();
     cfClientMock.cfLogout.mockResolvedValue(undefined);
     cfClientMock.cfOrgs.mockReset();
     cfClientMock.cfOrgs.mockResolvedValue([]);
+    cfClientMock.cfTarget.mockReset();
+    cfClientMock.cfTarget.mockResolvedValue(undefined);
+    cfClientMock.cfTargetAndApps.mockReset();
+    cfClientMock.cfTargetAndApps.mockResolvedValue([]);
+    cacheSyncMock.getCurrentSyncProgress.mockClear();
+    cacheSyncMock.restartCacheSyncTimer.mockClear();
+    cacheSyncMock.runCacheSync.mockClear();
+    cacheSyncMock.syncSingleRegion.mockReset();
+    cacheSyncMock.syncSingleRegion.mockResolvedValue({ status: 'synced' });
+    cfTopologyMock.getAppsFromTopologySync.mockReset();
+    cfTopologyMock.getAppsFromTopologySync.mockReturnValue(undefined);
+    cfTopologyMock.getTopologySnapshot.mockClear();
+    cfTopologyMock.getTopologySnapshotSync.mockClear();
     loggerMock.logError.mockClear();
     loggerMock.logInfo.mockClear();
     loggerMock.logWarn.mockClear();
@@ -1180,6 +1252,200 @@ describe('DebugLauncherViewProvider external scope sync', () => {
         apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
       },
     }]);
+  });
+
+  it('triggers immediate cache sync after saving keychain credentials', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+
+    await getInternals(provider).handleSaveCredentials(' sample.user@example.com ', 'sample-password');
+
+    expect(shellEnvMock.saveCredentialsToSecretStorage).toHaveBeenCalledWith(
+      'sample.user@example.com',
+      'sample-password',
+    );
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'CREDENTIALS_SAVED',
+      payload: { email: 'sample.user@example.com', source: 'keychain' },
+    });
+    expect(cacheSyncMock.runCacheSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts a single-region topology sync after login when cache sync is enabled', async () => {
+    const provider = makeProvider();
+    vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-alpha']);
+
+    await getInternals(provider).handleLogin('https://api.cf.eu10.hana.ondemand.com');
+
+    await vi.waitFor(() => {
+      expect(cacheSyncMock.syncSingleRegion).toHaveBeenCalledWith(
+        'eu10',
+        'sample.user@example.com',
+        'sample-password',
+      );
+    });
+  });
+
+  it('does not start single-region sync after login when background sync is disabled by environment', async () => {
+    const previous = process.env.CDS_DEBUG_DISABLE_BACKGROUND_SYNC;
+    process.env.CDS_DEBUG_DISABLE_BACKGROUND_SYNC = '1';
+    const provider = makeProvider();
+    vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-alpha']);
+
+    try {
+      await getInternals(provider).handleLogin('https://api.cf.eu10.hana.ondemand.com');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.CDS_DEBUG_DISABLE_BACKGROUND_SYNC;
+      } else {
+        process.env.CDS_DEBUG_DISABLE_BACKGROUND_SYNC = previous;
+      }
+    }
+
+    expect(cacheSyncMock.syncSingleRegion).not.toHaveBeenCalled();
+  });
+
+  it('does not start single-region sync after login when cache sync is disabled', async () => {
+    const provider = makeProvider();
+    vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-alpha']);
+    await saveCacheSettings({ enabled: false, intervalHours: 24 });
+
+    await getInternals(provider).handleLogin('https://api.cf.eu10.hana.ondemand.com');
+
+    expect(getCacheSettings()).toEqual({ enabled: false, intervalHours: 24 });
+    expect(cacheSyncMock.syncSingleRegion).not.toHaveBeenCalled();
+  });
+
+  it('handles topology warmup without loading live apps', async () => {
+    const provider = makeProvider();
+    const internals = getInternals(provider);
+    const apps: CfApp[] = [{ name: 'sample-service-a', state: 'started', urls: [] }];
+    const writeScope = vi.spyOn(internals, 'writeScopeAfterAppsLoaded').mockResolvedValue(undefined);
+    const startWarmup = vi.spyOn(internals, 'startRemoteRootWarmupAfterSession').mockResolvedValue(undefined);
+    cfTopologyMock.getAppsFromTopologySync.mockReturnValue(apps);
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-alpha',
+        cfSpace: 'app',
+        groupFolderPath: '/sample/group',
+      }],
+    });
+
+    await internals.handleWarmupCfSession('sample-org-alpha', 'app');
+
+    expect(writeScope).toHaveBeenCalledWith('sample-org-alpha', 'app');
+    expect(startWarmup).toHaveBeenCalledWith(
+      'https://api.cf.eu10.hana.ondemand.com',
+      'sample-org-alpha',
+      'app',
+      '/sample/group',
+      '/sample/group',
+      apps,
+    );
+    expect(cfClientMock.cfTargetAndApps).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates concurrent topology warmups for the same target', async () => {
+    const provider = makeProvider();
+    const internals = getInternals(provider);
+    const apps: CfApp[] = [{ name: 'sample-service-a', state: 'started', urls: [] }];
+    let resolveScope: (() => void) | undefined;
+    const writeScope = vi.spyOn(internals, 'writeScopeAfterAppsLoaded').mockImplementation(
+      () => new Promise<void>((resolve) => {
+        resolveScope = resolve;
+      }),
+    );
+    const startWarmup = vi.spyOn(internals, 'startRemoteRootWarmupAfterSession').mockResolvedValue(undefined);
+    cfTopologyMock.getAppsFromTopologySync.mockReturnValue(apps);
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-alpha',
+        cfSpace: 'app',
+        groupFolderPath: '/sample/group',
+      }],
+    });
+
+    const first = internals.handleWarmupCfSession('sample-org-alpha', 'app');
+    const second = internals.handleWarmupCfSession('sample-org-alpha', 'app');
+
+    await vi.waitFor(() => {
+      expect(writeScope).toHaveBeenCalledTimes(1);
+    });
+    resolveScope?.();
+    await Promise.all([first, second]);
+
+    expect(startWarmup).toHaveBeenCalledTimes(1);
+  });
+
+  it('tracks extension-started warmups so Start Debug can wait for them', async () => {
+    const provider = makeProvider();
+    const internals = getInternals(provider);
+    const apps: CfApp[] = [{ name: 'sample-service-a', state: 'started', urls: [] }];
+    let resolveWarmup: (() => void) | undefined;
+    const startWarmup = vi.spyOn(internals, 'startRemoteRootWarmupAfterSession').mockImplementation(
+      () => new Promise<void>((resolve) => {
+        resolveWarmup = resolve;
+      }),
+    );
+
+    const tracked = internals.startRemoteRootWarmupAfterSessionTracked(
+      'https://api.cf.eu10.hana.ondemand.com',
+      'sample-org-alpha',
+      'app',
+      '/sample/group',
+      '/sample/group',
+      apps,
+    );
+    let waitFinished = false;
+    const wait = internals.awaitWarmupIfRunning(
+      'https://api.cf.eu10.hana.ondemand.com',
+      'sample-org-alpha',
+      'app',
+    ).then(() => {
+      waitFinished = true;
+    });
+
+    await Promise.resolve();
+    expect(waitFinished).toBe(false);
+    expect(startWarmup).toHaveBeenCalledTimes(1);
+
+    resolveWarmup?.();
+    await Promise.all([tracked, wait]);
+
+    expect(waitFinished).toBe(true);
+  });
+
+  it('pushes a fresh topology snapshot after a single-region warmup event', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    cfTopologyMock.getTopologySnapshot.mockResolvedValue({
+      ready: true,
+      accounts: [],
+    });
+
+    cacheSyncMock.cacheSyncEvents.emit('regionWarmed', { regionKey: 'eu10' });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith({
+        type: 'CF_TOPOLOGY',
+        payload: { ready: true, accounts: [] },
+      });
+    });
   });
 
   it('clears a pending external scope after applying it', async () => {

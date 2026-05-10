@@ -29,7 +29,7 @@ import {
   cfTargetOrgAndSpaces,
   isCfAuthError,
 } from '../core/cfClient';
-import { refreshCfSyncSpace } from '../core/cfSpaceRefresh';
+import { refreshCfSyncSpace, resolveRegionKeyForEndpoint } from '../core/cfSpaceRefresh';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, buildFallbackTargets, getFolderNameCandidates } from '../core/appMapper';
 import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig } from '../core/launchConfigurator';
@@ -52,14 +52,16 @@ import {
   getCacheSettings,
   getDebugPreferences,
   getDebugSessionPackagePreferences,
+  getLastSpaceRefreshAt,
   saveCachedApps,
   saveCacheSettings,
   saveDebugPreferences,
   saveDebugSessionPackagePreferences,
+  saveLastSpaceRefreshAt,
 } from '../storage/cacheStore';
 import { buildCfApiEndpoint, regionCodeFromApiEndpoint, writeScopeIfChanged } from '../storage/scopeSync';
-import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer } from '../core/cacheSync';
-import { getTopologySnapshot, getTopologySnapshotSync } from '../core/cfTopology';
+import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer, syncSingleRegion } from '../core/cacheSync';
+import { getAppsFromTopologySync, getTopologySnapshot, getTopologySnapshotSync } from '../core/cfTopology';
 import { logError, logInfo, logWarn, showLogChannel } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
 import {
@@ -144,6 +146,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   // each Start Debug click. Cleared on Reset Configuration / window reload by definition.
   private readonly notifiedUnmatchedRemoteRoots = new Set<string>();
   private remoteRootWarmupGeneration = 0;
+  private readonly warmupPromises = new Map<string, Promise<void>>();
   private scopeChangeQueue: Promise<void> = Promise.resolve();
   private lastWrittenScope: SharedCfScope | undefined;
   private pendingExternalScope: SharedCfScope | undefined;
@@ -159,6 +162,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       if (!payload.isRunning && payload.lastCompletedAt !== undefined) {
         void this.pushCfTopology();
       }
+    });
+    cacheSyncEvents.on('regionWarmed', () => {
+      void this.pushCfTopology();
     });
     breakpointSnapshotEvents.on('snapshotAdded', (snapshot: unknown) => {
       if (!isBreakpointSnapshot(snapshot)) return;
@@ -341,6 +347,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       case 'LOAD_CONFIG': {
         const config = getConfig();
         const credentialStatus = await this.buildCredentialStatus();
+        this.postMessage({ type: 'CF_TOPOLOGY', payload: getTopologySnapshotSync() });
         this.postMessage({
           type: 'CONFIG_LOADED',
           payload: {
@@ -355,9 +362,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
         this.postMessage({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
         this.postMessage({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
-        // Synchronous best-effort first so the CF Region step can render the org
-        // search input on the very first paint when cf-sync has data on disk.
-        this.postMessage({ type: 'CF_TOPOLOGY', payload: getTopologySnapshotSync() });
+        this.bootstrapCacheSyncForExistingCredentials(credentialStatus);
         void this.pushCfTopology();
         break;
       }
@@ -402,6 +407,13 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
           raw.payload.org,
           raw.payload.space ?? CF_DEFAULT_SPACE,
           raw.payload.forceRefresh === true,
+        );
+        break;
+
+      case 'WARMUP_CF_SESSION':
+        await this.handleWarmupCfSession(
+          raw.payload.org,
+          raw.payload.space ?? CF_DEFAULT_SPACE,
         );
         break;
 
@@ -720,13 +732,19 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       }
 
       await cfLogin(apiEndpoint, email, password);
-      const orgs = await cfOrgs();
-      logInfo(`Login successful. Found ${orgs.length.toString()} org(s): ${orgs.join(', ')}`);
+      const topologyOrgs = this.getTopologyOrgsForEndpoint(apiEndpoint);
+      const orgs = topologyOrgs ?? await cfOrgs();
+      if (topologyOrgs) {
+        logInfo(`[Topology] Skipped live cf orgs for ${apiEndpoint} — using ${orgs.length.toString()} synced org(s).`);
+      } else {
+        logInfo(`Login successful. Found ${orgs.length.toString()} org(s): ${orgs.join(', ')}`);
+      }
 
       const existing = getConfig();
       await saveConfig(buildLoginConfig(apiEndpoint, orgs, existing));
       this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs, apiEndpoint } });
       this.applyPendingExternalScopeIfAny(orgs);
+      this.startSingleRegionSyncAfterLogin(apiEndpoint, email, password, topologyOrgs !== undefined);
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Login failed: ${msg}`);
@@ -738,6 +756,31 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: 'LOGIN_ERROR', payload: { message: msg } });
       }
     }
+  }
+
+  private getTopologyOrgsForEndpoint(apiEndpoint: string): string[] | undefined {
+    const normalized = normalizeEndpoint(apiEndpoint);
+    const orgs = getTopologySnapshotSync().accounts
+      .filter((account) => normalizeEndpoint(account.apiEndpoint) === normalized)
+      .map((account) => account.orgName);
+    return orgs.length > 0 ? [...new Set(orgs)] : undefined;
+  }
+
+  private startSingleRegionSyncAfterLogin(
+    apiEndpoint: string,
+    email: string,
+    password: string,
+    topologyAlreadyAvailable: boolean,
+  ): void {
+    if (topologyAlreadyAvailable) return;
+    if (process.env.CDS_DEBUG_DISABLE_BACKGROUND_SYNC === '1') return;
+    if (!getCacheSettings().enabled) return;
+    const regionKey = resolveRegionKeyForEndpoint(apiEndpoint);
+    if (regionKey === undefined) return;
+
+    void syncSingleRegion(regionKey, email, password).catch((err: unknown) => {
+      logWarn(`[Bootstrap] Single-region sync failed: ${extractErrorMessage(err)}`);
+    });
   }
 
   private async handleSaveMappings(mappings: OrgGroupMapping[]): Promise<void> {
@@ -782,9 +825,22 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Serve from background cache when enabled and fresh (within configured interval).
     const cacheSettings = getCacheSettings();
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? mapping.groupFolderPath;
+    if (forceRefresh) {
+      const credentialsRevoked = await this.refreshCfSyncSpaceCache(config.apiEndpoint, org, space);
+      if (credentialsRevoked) return;
+      const served = await this.tryServeTopologyApps(config.apiEndpoint, org, space, mapping.groupFolderPath, workspaceRoot);
+      if (served) {
+        void this.pushCfTopology();
+        return;
+      }
+    }
+
+    const topologyServed = !forceRefresh
+      && await this.tryServeTopologyApps(config.apiEndpoint, org, space, mapping.groupFolderPath, workspaceRoot);
+    if (topologyServed) return;
+
     if (!forceRefresh && cacheSettings.enabled) {
       const cached = getCachedApps(config.apiEndpoint, org, space);
       if (cached) {
@@ -797,15 +853,17 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
           // Warm up the CF session in the background so that handleStartDebug
           // never hits an expired token when the app list came from cache.
           // Failures are silently retried with a full re-login.
-          this.startRemoteRootWarmupAfterSession(config.apiEndpoint, org, space, mapping.groupFolderPath, workspaceRoot, cached.apps);
+          void this.startRemoteRootWarmupAfterSessionTracked(
+            config.apiEndpoint,
+            org,
+            space,
+            mapping.groupFolderPath,
+            workspaceRoot,
+            cached.apps,
+          );
           return;
         }
       }
-    }
-
-    if (forceRefresh) {
-      const credentialsRevoked = await this.refreshCfSyncSpaceCache(config.apiEndpoint, org, space);
-      if (credentialsRevoked) return;
     }
 
     logInfo(`Loading apps for target: ${org}/${space} …`);
@@ -850,6 +908,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     if (result.status === 'refreshed') {
       logInfo(`[Reload] cf-sync refreshed ${result.regionKey}/${org}/${space} (${result.appCount.toString()} app(s)).`);
+      await saveLastSpaceRefreshAt(apiEndpoint, org, space);
       return false;
     }
 
@@ -862,6 +921,42 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     if (revoked) return true;
     logWarn(`[Reload] cf-sync space refresh failed: ${extractErrorMessage(result.error)}`);
     return false;
+  }
+
+  private async tryServeTopologyApps(
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    workspaceRoot: string,
+  ): Promise<boolean> {
+    const apps = getAppsFromTopologySync(apiEndpoint, org, space);
+    if (apps === undefined) return false;
+
+    logInfo(`[Topology] Skipped live cf apps for ${org}/${space} — using topology cache.`);
+    await saveCachedApps(apiEndpoint, org, apps, space);
+    this.postMessage({ type: 'APPS_LOADED', payload: { apps } });
+    await this.writeScopeAfterAppsLoaded(org, space);
+    void this.startRemoteRootWarmupAfterSessionTracked(apiEndpoint, org, space, groupPath, workspaceRoot, apps);
+    this.refreshStaleTopologySpaceInBackground(apiEndpoint, org, space);
+    return true;
+  }
+
+  private refreshStaleTopologySpaceInBackground(apiEndpoint: string, org: string, space: string): void {
+    const settings = getCacheSettings();
+    if (!settings.enabled) return;
+
+    const lastRefresh = getLastSpaceRefreshAt(apiEndpoint, org, space) ?? 0;
+    const ttlMs = settings.intervalHours * 60 * 60 * 1000;
+    if (Date.now() - lastRefresh <= ttlMs) return;
+
+    void this.refreshSingleSpaceInBackground(apiEndpoint, org, space);
+  }
+
+  private async refreshSingleSpaceInBackground(apiEndpoint: string, org: string, space: string): Promise<void> {
+    const credentialsRevoked = await this.refreshCfSyncSpaceCache(apiEndpoint, org, space);
+    if (credentialsRevoked) return;
+    void this.pushCfTopology();
   }
 
   private async loadLiveSpaces(apiEndpoint: string, org: string): Promise<string[]> {
@@ -913,10 +1008,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     groupPath: string,
     workspaceRoot: string,
     apps: readonly CfApp[],
-  ): void {
+  ): Promise<void> {
     const generation = this.nextRemoteRootWarmupGeneration();
-    void this.ensureCfSession(apiEndpoint, org, space)
-      .then(() => {
+    return this.ensureCfSession(apiEndpoint, org, space)
+      .then((): void => {
         if (generation !== this.remoteRootWarmupGeneration) return;
         this.runRemoteRootWarmupInBackground(generation, apiEndpoint, org, space, groupPath, workspaceRoot, apps);
       });
@@ -1119,6 +1214,71 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     return JSON.stringify([apiEndpoint, org, space, appName, configuredRemoteRoot]);
   }
 
+  private warmupKey(apiEndpoint: string, org: string, space: string): string {
+    return JSON.stringify([apiEndpoint, org, space]);
+  }
+
+  private startRemoteRootWarmupAfterSessionTracked(
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    workspaceRoot: string,
+    apps: readonly CfApp[],
+  ): Promise<void> {
+    const key = this.warmupKey(apiEndpoint, org, space);
+    const existing = this.warmupPromises.get(key);
+    if (existing) return existing;
+
+    const warmup = this.startRemoteRootWarmupAfterSession(apiEndpoint, org, space, groupPath, workspaceRoot, apps)
+      .finally(() => {
+        this.warmupPromises.delete(key);
+      });
+    this.warmupPromises.set(key, warmup);
+    return warmup;
+  }
+
+  private async handleWarmupCfSession(org: string, space: string): Promise<void> {
+    const config = getConfig();
+    if (!config) return;
+
+    const key = this.warmupKey(config.apiEndpoint, org, space);
+    const existing = this.warmupPromises.get(key);
+    if (existing) return existing;
+
+    const warmup = this.doWarmupCfSession(config, org, space)
+      .finally(() => {
+        this.warmupPromises.delete(key);
+      });
+    this.warmupPromises.set(key, warmup);
+    await warmup;
+  }
+
+  private async doWarmupCfSession(config: ExtensionConfig, org: string, space: string): Promise<void> {
+    const mapping = config.orgGroupMappings.find((m) => mappingMatchesTarget(m, org, space));
+    if (!mapping) return;
+
+    const apps = getAppsFromTopologySync(config.apiEndpoint, org, space);
+    if (apps === undefined) return;
+
+    await this.writeScopeAfterAppsLoaded(org, space);
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? mapping.groupFolderPath;
+    await this.startRemoteRootWarmupAfterSession(
+      config.apiEndpoint,
+      org,
+      space,
+      mapping.groupFolderPath,
+      workspaceRoot,
+      apps,
+    );
+    this.refreshStaleTopologySpaceInBackground(config.apiEndpoint, org, space);
+  }
+
+  private async awaitWarmupIfRunning(apiEndpoint: string, org: string, space: string): Promise<void> {
+    const warmup = this.warmupPromises.get(this.warmupKey(apiEndpoint, org, space));
+    if (warmup) await warmup;
+  }
+
   private async handleStartDebug(appNames: string[], org: string, space: string): Promise<void> {
     const config = getConfig();
     if (!config) return;
@@ -1136,6 +1296,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     // Always target the org before opening the cf ssh tunnel. handleLoadApps may have
     // served apps from cache without calling cfTarget, leaving ~/.cf untargeted.
     // If the token has expired in the meantime, re-login automatically.
+    await this.awaitWarmupIfRunning(config.apiEndpoint, org, space);
     logInfo(`[StartDebug] Targeting CF org/space: ${org}/${space}…`);
     try {
       await cfTarget(org, space);
@@ -1541,11 +1702,24 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         type: 'CREDENTIALS_SAVED',
         payload: { email: trimmedEmail, source: 'keychain' },
       });
+      this.triggerCacheSync('[CacheSync] Triggered immediate sync after credentials saved.');
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`[Credentials] Failed to save credentials: ${msg}`);
       this.postMessage({ type: 'CREDENTIALS_ERROR', payload: { message: `Could not save credentials: ${msg}` } });
     }
+  }
+
+  private bootstrapCacheSyncForExistingCredentials(status: CredentialStatus): void {
+    if (!status.hasCredentials) return;
+    if (getCurrentSyncProgress().lastCompletedAt !== undefined) return;
+    this.triggerCacheSync('[CacheSync] Triggered initial sync for existing credentials.');
+  }
+
+  private triggerCacheSync(message: string): void {
+    if (process.env.CDS_DEBUG_DISABLE_BACKGROUND_SYNC === '1') return;
+    runCacheSync();
+    logInfo(message);
   }
 
   private async handleClearCredentials(): Promise<void> {
@@ -1637,6 +1811,10 @@ function isWebviewMessage(value: unknown): value is WebviewMessage {
 function extractErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function normalizeEndpoint(value: string): string {
+  return value.trim().replace(/\/+$/, '').toLowerCase();
 }
 
 function toSafeHttpUri(rawUrl: string): vscode.Uri | null {

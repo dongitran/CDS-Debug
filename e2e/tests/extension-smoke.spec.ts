@@ -39,7 +39,8 @@ type CfScenario =
   | 'reload-changes'
   | 'multi-spaces'
   | 'multi-region-cache'
-  | 'multi-region-auth-fail';
+  | 'multi-region-auth-fail'
+  | 'topology-cache-only';
 
 interface SessionOptions {
   credentialMode: CredentialMode;
@@ -125,6 +126,11 @@ slow_target_after_apps_used="$script_dir/.slow-target-after-apps-used"
 remote_root_lookup_lock="$script_dir/.remote-root-lookup-lock"
 reload_apps_count="$script_dir/.reload-apps-count"
 current_api_file="$script_dir/.current-api"
+commands_file="$script_dir/.commands"
+
+if [[ -n "$cmd" ]]; then
+  echo "$cmd" >> "$commands_file"
+fi
 
 case "$cmd" in
   api)
@@ -154,6 +160,10 @@ case "$cmd" in
     echo "OK"
     ;;
   orgs)
+    if [[ "$SCENARIO" == "topology-cache-only" ]]; then
+      echo "unexpected live orgs command in topology-cache-only scenario" >&2
+      exit 23
+    fi
     if [[ "$SCENARIO" == "no-orgs" ]]; then
       echo "name"
       exit 0
@@ -183,6 +193,10 @@ mock-org-beta
 OUT
     ;;
   spaces)
+    if [[ "$SCENARIO" == "topology-cache-only" ]]; then
+      echo "unexpected live spaces command in topology-cache-only scenario" >&2
+      exit 23
+    fi
     if [[ "$SCENARIO" == "multi-spaces" ]]; then
       cat <<'OUT'
 name
@@ -227,6 +241,10 @@ OUT
     echo "OK"
     ;;
   apps)
+    if [[ "$SCENARIO" == "topology-cache-only" ]]; then
+      echo "unexpected live apps command in topology-cache-only scenario" >&2
+      exit 23
+    fi
     if [[ "$SCENARIO" == "apps-fail" ]]; then
       echo "mock apps load failed" >&2
       exit 1
@@ -383,6 +401,48 @@ async function writeSapCapCurrentScope(
     ...settings,
     'sapCap.currentScope': scope,
   });
+}
+
+async function writeCfTopologyStructure(userDataDir: string): Promise<void> {
+  const saptoolsDir = join(userDataDir, '.saptools');
+  await mkdir(saptoolsDir, { recursive: true });
+  await writeFile(
+    join(saptoolsDir, 'cf-structure.json'),
+    JSON.stringify({
+      syncedAt: new Date().toISOString(),
+      regions: [{
+        key: 'eu10',
+        label: 'Europe (Frankfurt) - AWS (eu10)',
+        apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+        accessible: true,
+        orgs: [{
+          name: 'sample-org-alpha',
+          spaces: [
+            {
+              name: 'app',
+              apps: [{ name: 'sample-service-app', requestedState: 'started', runningInstances: 1, routes: [] }],
+            },
+            {
+              name: 'dev',
+              apps: [{
+                name: 'sample-service-topology',
+                requestedState: 'started',
+                runningInstances: 1,
+                routes: ['sample-service-topology.cfapps.example.com'],
+              }],
+            },
+          ],
+        }],
+      }],
+    }, null, 2) + '\n',
+    'utf8',
+  );
+}
+
+async function readMockCfCommands(mockBinDir: string): Promise<string[]> {
+  const commandsPath = join(mockBinDir, '.commands');
+  if (!(await pathExists(commandsPath))) return [];
+  return (await readFile(commandsPath, 'utf8')).split('\n').map((line) => line.trim()).filter(Boolean);
 }
 
 async function expectSapCapCurrentScope(
@@ -1901,14 +1961,14 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
               regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
               apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
               orgName: 'mock-org-alpha',
-              spaces: ['app'],
+              spaces: [{ name: 'app', apps: [] }],
             },
             {
               regionKey: 'us10',
               regionLabel: 'US East (VA) - AWS (us10)',
               apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
               orgName: 'mock-org-beta',
-              spaces: ['app'],
+              spaces: [{ name: 'app', apps: [] }],
             },
           ],
         },
@@ -1943,6 +2003,43 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
     });
   });
 
+  test('User can reach Ready from synced topology without live org space or app commands', async () => {
+    const options: SessionOptions = { credentialMode: 'env', cfScenario: 'topology-cache-only' };
+    const artifacts = await createSessionArtifacts(options);
+
+    try {
+      await writeCfTopologyStructure(artifacts.userDataDir);
+      await runVsCodeSessionWithArtifacts(options, artifacts, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await expect(webview.getByText('Search org (across regions)')).toBeVisible();
+
+        await webview.locator('#org-search-input').fill('sample-org-alpha');
+        await webview.getByRole('button', { name: /sample-org-alpha/ }).click();
+        await webview.locator('#btn-login').click();
+
+        await expect(webview.getByText('Select CF Space')).toBeVisible({ timeout: 15_000 });
+        await webview.locator('input[name="cf-space"][value="dev"]').check({ force: true });
+        await webview.locator('#btn-next-space').click();
+        await expect(webview.getByText('Select Local Folder')).toBeVisible();
+
+        await injectSelectedFolder(webview, MOCK_GROUP_FOLDER);
+        await webview.locator('#btn-save-mapping').click();
+        await expectReadyScreen(webview);
+        await expect(webview.getByText('sample-service-topology')).toBeVisible();
+        await captureStepEvidence(workbenchPage, 'topology-first-ready');
+
+        const commands = await readMockCfCommands(artifacts.mockBinDir);
+        expect(commands).toContain('api');
+        expect(commands).toContain('auth');
+        expect(commands).not.toContain('orgs');
+        expect(commands).not.toContain('spaces');
+        expect(commands).not.toContain('apps');
+      });
+    } finally {
+      await disposeSessionArtifacts(artifacts);
+    }
+  });
+
   test('User can switch to region catalog and filter cf-sync regions plus local fallback after synced topology is ready', async () => {
     await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
       const webview = await openCdsDebugWebview(workbenchPage);
@@ -1955,7 +2052,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
             regionLabel: 'US East (VA) - AWS (us10)',
             apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
             orgName: 'mock-org-beta',
-            spaces: ['app'],
+            spaces: [{ name: 'app', apps: [] }],
           }],
         },
       });
@@ -2013,7 +2110,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
             regionLabel: 'US East (VA) - AWS (us10)',
             apiEndpoint: 'https://api.cf.us10.hana.ondemand.com',
             orgName: 'mock-org-beta',
-            spaces: ['app'],
+            spaces: [{ name: 'app', apps: [] }],
           }],
         },
       });

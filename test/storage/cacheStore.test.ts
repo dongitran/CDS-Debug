@@ -16,11 +16,13 @@ import {
   getSyncProgress,
   saveSyncProgress,
   getCacheSettings,
+  getLastSpaceRefreshAt,
   saveCacheSettings,
   getDebugPreferences,
   getDebugSessionPackagePreferences,
   saveDebugPreferences,
   saveDebugSessionPackagePreferences,
+  saveLastSpaceRefreshAt,
 } from '../../src/storage/cacheStore';
 import type {
   CacheSettings,
@@ -181,6 +183,27 @@ describe('cacheStore', () => {
     await saveCacheSettings({ enabled: false, intervalHours: 1 });
 
     expect(getCacheSettings()).toEqual({ enabled: false, intervalHours: 1 });
+  });
+
+  // ── per-space refresh timestamps ──────────────────────────────────────────
+
+  it('getLastSpaceRefreshAt returns undefined before a space is refreshed', () => {
+    expect(getLastSpaceRefreshAt(
+      'https://api.cf.eu10.hana.ondemand.com',
+      'sample-org-alpha',
+      'app',
+    )).toBeUndefined();
+  });
+
+  it('saveLastSpaceRefreshAt stores timestamps independently per target', async () => {
+    const endpoint = 'https://api.cf.eu10.hana.ondemand.com';
+
+    await saveLastSpaceRefreshAt(endpoint, 'sample-org-alpha', 'app');
+    await saveLastSpaceRefreshAt(endpoint, 'sample-org-alpha', 'dev');
+
+    expect(getLastSpaceRefreshAt(endpoint, 'sample-org-alpha', 'app')).toEqual(expect.any(Number));
+    expect(getLastSpaceRefreshAt(endpoint, 'sample-org-alpha', 'dev')).toEqual(expect.any(Number));
+    expect(getLastSpaceRefreshAt(endpoint, 'sample-org-beta', 'app')).toBeUndefined();
   });
 
   // ── debug preferences ──────────────────────────────────────────────────────

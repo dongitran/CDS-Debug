@@ -178,7 +178,14 @@ export interface CfTopologyOrg {
   regionLabel: string;
   apiEndpoint: string;
   orgName: string;
-  spaces: string[];
+  spaces: CfTopologySpace[];
+}
+
+export interface CfTopologySpace {
+  name: string;
+  apps: CfApp[];
+  /** Optional error reported by cf-sync while collecting this space. */
+  error?: string;
 }
 
 export interface CfTopology {
@@ -393,6 +400,7 @@ export type WebviewMessage =
   | { type: 'LOGIN'; payload: { apiEndpoint: string } }
   | { type: 'LOAD_SPACES'; payload: { org: string } }
   | { type: 'LOAD_APPS'; payload: { org: string; space?: string; forceRefresh?: boolean } }
+  | { type: 'WARMUP_CF_SESSION'; payload: { org: string; space?: string } }
   | { type: 'START_DEBUG'; payload: { appNames: string[]; org: string; space?: string } }
   | { type: 'STOP_DEBUG'; payload: { appName: string } }
   | { type: 'STOP_ALL_DEBUG' }

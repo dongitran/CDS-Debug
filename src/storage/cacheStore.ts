@@ -18,6 +18,7 @@ const SYNC_KEY = 'cds-debug.syncProgress';
 const SETTINGS_KEY = 'cds-debug.cacheSettings';
 const DEBUG_PREFS_KEY = 'cds-debug.debugPrefs';
 const DEBUG_SESSION_PACKAGE_PREFS_KEY = 'cds-debug.debugSessionPackagePrefs';
+const SPACE_REFRESH_KEY = 'cds-debug.lastSpaceRefreshAt';
 
 let _context: vscode.ExtensionContext | undefined;
 
@@ -31,6 +32,7 @@ function ctx(): vscode.ExtensionContext {
 }
 
 type CacheMap = Record<string, CfRegionCache>;
+type SpaceRefreshMap = Record<string, number>;
 
 function readCacheMap(): CacheMap {
   return ctx().globalState.get<CacheMap>(CACHE_KEY) ?? {};
@@ -61,6 +63,10 @@ function cacheTargetKey(org: string, space: string | undefined): string {
   return space === undefined ? org : JSON.stringify([org, space]);
 }
 
+function spaceRefreshKey(apiEndpoint: string, org: string, space: string): string {
+  return JSON.stringify([apiEndpoint, org, space]);
+}
+
 export async function saveCachedOrgs(apiEndpoint: string, orgs: string[]): Promise<void> {
   const map = readCacheMap();
   const entry = map[apiEndpoint] ?? { apiEndpoint, orgs: [], appsByOrg: {}, lastSyncedAt: 0 };
@@ -83,6 +89,25 @@ export function getCacheSettings(): CacheSettings {
 
 export async function saveCacheSettings(settings: CacheSettings): Promise<void> {
   await ctx().globalState.update(SETTINGS_KEY, settings);
+}
+
+export function getLastSpaceRefreshAt(
+  apiEndpoint: string,
+  org: string,
+  space: string,
+): number | undefined {
+  const map = ctx().globalState.get<SpaceRefreshMap>(SPACE_REFRESH_KEY) ?? {};
+  return map[spaceRefreshKey(apiEndpoint, org, space)];
+}
+
+export async function saveLastSpaceRefreshAt(
+  apiEndpoint: string,
+  org: string,
+  space: string,
+): Promise<void> {
+  const map = ctx().globalState.get<SpaceRefreshMap>(SPACE_REFRESH_KEY) ?? {};
+  map[spaceRefreshKey(apiEndpoint, org, space)] = Date.now();
+  await ctx().globalState.update(SPACE_REFRESH_KEY, map);
 }
 
 function readDebugPreferences(value: unknown): Partial<DebugPreferences> {

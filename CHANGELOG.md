@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.62-pre.15] — 2026
+
+### Changes
+
+- **Topology-first CF navigation** — Synced cf-sync topology now carries spaces and apps, letting the launcher skip live `cf orgs`, `cf spaces`, and `cf apps` round-trips on the cached happy path while keeping live fallbacks for misses and space sync errors.
+- **Background CF session warmup** — Apps loaded from topology render immediately while the extension warms the CF target/session in the background and serializes warmup with Start Debug.
+- **First-run cache bootstrap** — Saving credentials triggers an immediate background sync, and first login warms the selected cf-sync region when topology is not already available.
+
+---
+
 ## [0.3.62-pre.14] — 2026
 
 ### Fixes

@@ -1,8 +1,9 @@
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
 import { cfStructurePath } from '@saptools/cf-sync';
-import type { CfStructure, RegionNode, OrgNode } from '@saptools/cf-sync';
-import type { CfTopology, CfTopologyOrg } from '../types/index';
+import type { CfStructure, RegionNode, OrgNode, SpaceNode } from '@saptools/cf-sync';
+import type { CfApp, CfTopology, CfTopologyOrg, CfTopologySpace } from '../types/index';
+import { toCachedApp } from './appNodeMapping';
 
 const CF_STRUCTURE_PATH_ENV = 'CDS_DEBUG_CF_STRUCTURE_PATH';
 
@@ -63,14 +64,25 @@ function buildOrgEntries(structure: CfStructure): CfTopologyOrg[] {
 }
 
 function buildOrgEntry(region: RegionNode, org: OrgNode): CfTopologyOrg {
-  const spaces = org.spaces.map((space) => space.name);
   return {
     regionKey: region.key,
     regionLabel: region.label,
     apiEndpoint: region.apiEndpoint,
     orgName: org.name,
-    spaces,
+    spaces: org.spaces.map(buildSpaceEntry),
   };
+}
+
+function buildSpaceEntry(space: SpaceNode): CfTopologySpace {
+  return {
+    name: space.name,
+    apps: space.apps.map(toCachedApp),
+    ...(space.error !== undefined ? { error: space.error } : {}),
+  };
+}
+
+function normalizeEndpoint(value: string): string {
+  return value.trim().replace(/\/+$/, '').toLowerCase();
 }
 
 function readStructureSync(): CfStructure | undefined {
@@ -113,4 +125,24 @@ export async function getTopologySnapshot(): Promise<CfTopology> {
     ready: accounts.length > 0,
     accounts,
   };
+}
+
+export function getAppsFromTopologySync(
+  apiEndpoint: string,
+  orgName: string,
+  spaceName: string,
+): CfApp[] | undefined {
+  const structure = readStructureSync();
+  if (!structure) return undefined;
+  const endpoint = normalizeEndpoint(apiEndpoint);
+
+  for (const region of structure.regions) {
+    if (!region.accessible || normalizeEndpoint(region.apiEndpoint) !== endpoint) continue;
+    const org = region.orgs.find((candidate) => candidate.name === orgName);
+    const space = org?.spaces.find((candidate) => candidate.name === spaceName);
+    if (!space || space.error !== undefined) return undefined;
+    return space.apps.map(toCachedApp);
+  }
+
+  return undefined;
 }

@@ -35,6 +35,7 @@ vi.mock('@saptools/cf-sync', () => ({
   writeStructure: vi.fn().mockResolvedValue(undefined),
   initializeRuntimeState: vi.fn().mockResolvedValue({}),
   mergeRuntimeRegion: vi.fn().mockResolvedValue(undefined),
+  persistRegion: vi.fn().mockResolvedValue(undefined),
   completeRuntimeState: vi.fn().mockResolvedValue({
     structure: { regions: [], syncedAt: new Date().toISOString() },
     completedRegionKeys: [],
@@ -52,13 +53,23 @@ vi.mock('@saptools/cf-sync', () => ({
 }));
 
 import {
+  cacheSyncEvents,
   populateCacheFromStructure,
   getCurrentSyncProgress,
   runCacheSync,
+  syncSingleRegion,
 } from '../../src/core/cacheSync';
 import {
+  cfApi,
+  cfAppDetails,
+  cfAuth,
+  cfOrgs,
+  cfSpaces,
+  cfTargetOrg,
+  cfTargetSpace,
   completeRuntimeState,
   initializeRuntimeState,
+  persistRegion,
   tryAcquireSyncLock,
 } from '@saptools/cf-sync';
 import type { CfStructure, RuntimeSyncState } from '@saptools/cf-sync';
@@ -512,5 +523,123 @@ describe('runCacheSync progress status', () => {
       lastSkipReason: 'fatal-error',
     });
     expect(stored?.lastAttemptedAt).toEqual(expect.any(Number));
+  });
+});
+
+describe('syncSingleRegion', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getSyncProgress).mockReturnValue(undefined);
+    vi.mocked(getCacheSettings).mockReturnValue({ enabled: true, intervalHours: 24 });
+    vi.mocked(cfApi).mockResolvedValue(undefined);
+    vi.mocked(cfAuth).mockResolvedValue(undefined);
+    vi.mocked(cfOrgs).mockResolvedValue(['demo-org']);
+    vi.mocked(cfTargetOrg).mockResolvedValue(undefined);
+    vi.mocked(cfSpaces).mockResolvedValue(['app']);
+    vi.mocked(cfTargetSpace).mockResolvedValue(undefined);
+    vi.mocked(cfAppDetails).mockResolvedValue([{
+      name: 'sample-service-a',
+      requestedState: 'started',
+      runningInstances: 1,
+      totalInstances: 1,
+      routes: ['sample-service-a.cfapps.example.com'],
+    }]);
+    vi.mocked(persistRegion).mockResolvedValue(undefined);
+  });
+
+  it('returns failed for an unknown region key', async () => {
+    await expect(syncSingleRegion(
+      'missing' as Parameters<typeof syncSingleRegion>[0],
+      'sample.user@example.com',
+      'sample-password',
+    )).resolves.toEqual({ status: 'failed', error: 'unknown-region' });
+
+    expect(persistRegion).not.toHaveBeenCalled();
+  });
+
+  it('collects and persists one region then emits regionWarmed', async () => {
+    const warmed: string[] = [];
+    cacheSyncEvents.once('regionWarmed', (payload: { regionKey: string }) => {
+      warmed.push(payload.regionKey);
+    });
+
+    await expect(syncSingleRegion(
+      'eu10',
+      'sample.user@example.com',
+      'sample-password',
+    )).resolves.toEqual({ status: 'synced' });
+
+    expect(cfApi).toHaveBeenCalledWith(EU10_ENDPOINT, expect.objectContaining({
+      env: expect.objectContaining({ CF_HOME: expect.any(String) as string }),
+    }));
+    expect(cfAuth).toHaveBeenCalledWith(
+      'sample.user@example.com',
+      'sample-password',
+      expect.any(Object),
+    );
+    expect(persistRegion).toHaveBeenCalledWith({
+      key: 'eu10',
+      label: 'Europe (Frankfurt) - AWS (eu10)',
+      apiEndpoint: EU10_ENDPOINT,
+      accessible: true,
+      orgs: [{
+        name: 'demo-org',
+        spaces: [{
+          name: 'app',
+          apps: [{
+            name: 'sample-service-a',
+            requestedState: 'started',
+            runningInstances: 1,
+            totalInstances: 1,
+            routes: ['sample-service-a.cfapps.example.com'],
+          }],
+        }],
+      }],
+    });
+    expect(warmed).toEqual(['eu10']);
+  });
+
+  it('returns failed and does not emit when collection throws', async () => {
+    const warmed: string[] = [];
+    cacheSyncEvents.once('regionWarmed', (payload: { regionKey: string }) => {
+      warmed.push(payload.regionKey);
+    });
+    vi.mocked(persistRegion).mockRejectedValue(new Error('mock persist failed'));
+
+    const result = await syncSingleRegion('eu10', 'sample.user@example.com', 'sample-password');
+
+    expect(result).toEqual({ status: 'failed', error: 'mock persist failed' });
+    expect(warmed).toEqual([]);
+  });
+
+  it('skips when the full sync loop is already running', async () => {
+    vi.mocked(getCredentials).mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    let resolveLock: ((handle: Exclude<Awaited<ReturnType<typeof tryAcquireSyncLock>>, undefined>) => void) | undefined;
+    vi.mocked(tryAcquireSyncLock).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveLock = resolve;
+    }));
+
+    runCacheSync();
+
+    await vi.waitFor(() => {
+      expect(tryAcquireSyncLock).toHaveBeenCalled();
+    });
+
+    await expect(syncSingleRegion(
+      'eu10',
+      'sample.user@example.com',
+      'sample-password',
+    )).resolves.toEqual({ status: 'skipped' });
+
+    expect(resolveLock).toBeDefined();
+    resolveLock?.(makeLockHandle());
+    await vi.waitFor(() => {
+      expect(saveSyncProgress).toHaveBeenCalledWith(expect.objectContaining({
+        isRunning: false,
+      }));
+    });
   });
 });

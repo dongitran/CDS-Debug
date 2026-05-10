@@ -9,7 +9,7 @@ vi.mock('@saptools/cf-sync', () => ({
   cfStructurePath: cfStructurePathMock,
 }));
 
-import { getTopologySnapshot, getTopologySnapshotSync } from '../../src/core/cfTopology';
+import { getAppsFromTopologySync, getTopologySnapshot, getTopologySnapshotSync } from '../../src/core/cfTopology';
 import type { CfStructure } from '@saptools/cf-sync';
 
 let tempDir: string | undefined;
@@ -81,17 +81,147 @@ describe('cfTopology', () => {
           regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
           apiEndpoint: EU10_ENDPOINT,
           orgName: 'demo-org-a',
-          spaces: ['app', 'dev'],
+          spaces: [
+            { name: 'app', apps: [] },
+            { name: 'dev', apps: [] },
+          ],
         },
         {
           regionKey: 'us10',
           regionLabel: 'US East (VA) - AWS (us10)',
           apiEndpoint: US10_ENDPOINT,
           orgName: 'sample-org-z',
-          spaces: ['app'],
+          spaces: [{ name: 'app', apps: [] }],
         },
       ],
     });
+  });
+
+  it('maps cf-sync apps into topology spaces using debuggable app states', async () => {
+    await writeFile(
+      structurePath,
+      JSON.stringify(makeStructure([
+        {
+          key: 'eu10',
+          label: 'Europe (Frankfurt) - AWS (eu10)',
+          apiEndpoint: EU10_ENDPOINT,
+          accessible: true,
+          orgs: [{
+            name: 'demo-org-a',
+            spaces: [{
+              name: 'app',
+              apps: [
+                {
+                  name: 'sample-service-started',
+                  requestedState: 'started',
+                  runningInstances: 1,
+                  totalInstances: 1,
+                  routes: ['sample-service-started.cfapps.example.com'],
+                },
+                {
+                  name: 'sample-service-empty',
+                  requestedState: 'started',
+                  runningInstances: 0,
+                  totalInstances: 1,
+                  routes: [],
+                },
+                {
+                  name: 'sample-service-stopped',
+                  requestedState: 'stopped',
+                  runningInstances: 0,
+                  totalInstances: 1,
+                  routes: ['sample-service-stopped.cfapps.example.com'],
+                },
+              ],
+            }],
+          }],
+        },
+      ])),
+      'utf8',
+    );
+
+    await expect(getTopologySnapshot()).resolves.toEqual({
+      ready: true,
+      accounts: [{
+        regionKey: 'eu10',
+        regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
+        apiEndpoint: EU10_ENDPOINT,
+        orgName: 'demo-org-a',
+        spaces: [{
+          name: 'app',
+          apps: [
+            {
+              name: 'sample-service-started',
+              state: 'started',
+              urls: ['sample-service-started.cfapps.example.com'],
+            },
+            { name: 'sample-service-empty', state: 'empty', urls: [] },
+            {
+              name: 'sample-service-stopped',
+              state: 'stopped',
+              urls: ['sample-service-stopped.cfapps.example.com'],
+            },
+          ],
+        }],
+      }],
+    });
+  });
+
+  it('preserves per-space sync errors instead of hiding the space', async () => {
+    await writeFile(
+      structurePath,
+      JSON.stringify(makeStructure([
+        {
+          key: 'eu10',
+          label: 'Europe (Frankfurt) - AWS (eu10)',
+          apiEndpoint: EU10_ENDPOINT,
+          accessible: true,
+          orgs: [{
+            name: 'demo-org-a',
+            spaces: [{ name: 'app', apps: [], error: 'mock space sync failed' }],
+          }],
+        },
+      ])),
+      'utf8',
+    );
+
+    await expect(getTopologySnapshot()).resolves.toEqual({
+      ready: true,
+      accounts: [{
+        regionKey: 'eu10',
+        regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
+        apiEndpoint: EU10_ENDPOINT,
+        orgName: 'demo-org-a',
+        spaces: [{ name: 'app', apps: [], error: 'mock space sync failed' }],
+      }],
+    });
+  });
+
+  it('finds apps synchronously for an endpoint org and space', async () => {
+    await writeFile(
+      structurePath,
+      JSON.stringify(makeStructure([
+        {
+          key: 'eu10',
+          label: 'Europe (Frankfurt) - AWS (eu10)',
+          apiEndpoint: EU10_ENDPOINT,
+          accessible: true,
+          orgs: [{
+            name: 'demo-org-a',
+            spaces: [{
+              name: 'app',
+              apps: [{ name: 'sample-service-started', requestedState: 'started', runningInstances: 1 }],
+            }],
+          }],
+        },
+      ])),
+      'utf8',
+    );
+
+    expect(getAppsFromTopologySync(EU10_ENDPOINT, 'demo-org-a', 'app')).toEqual([
+      { name: 'sample-service-started', state: 'started', urls: [] },
+    ]);
+    expect(getAppsFromTopologySync(EU10_ENDPOINT, 'demo-org-a', 'missing')).toBeUndefined();
   });
 
   it('does not mark malformed stable structure data as ready', async () => {
@@ -127,7 +257,7 @@ describe('cfTopology', () => {
           regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
           apiEndpoint: EU10_ENDPOINT,
           orgName: 'demo-org-a',
-          spaces: ['app'],
+          spaces: [{ name: 'app', apps: [] }],
         },
       ],
     });

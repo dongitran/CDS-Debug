@@ -345,7 +345,7 @@ describe('webview markup contracts', () => {
     expect(harness.postedMessages).toEqual([]);
   });
 
-  it('triggers LOAD_APPS when SCOPE_SYNCED changes org or space', () => {
+  it('triggers LOAD_APPS when SCOPE_SYNCED changes org or space and topology misses', () => {
     const harness = createWebviewScriptHarness();
     moveHarnessToReadyScreen(harness);
 
@@ -358,6 +358,200 @@ describe('webview markup contracts', () => {
       type: 'LOAD_APPS',
       payload: { org: 'sample-org-beta', space: 'dev' },
     }]);
+  });
+
+  it('uses topology apps for SCOPE_SYNCED without triggering LOAD_APPS', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+    harness.dispatch({
+      type: 'CF_TOPOLOGY',
+      payload: {
+        ready: true,
+        accounts: [{
+          regionKey: 'eu10',
+          regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgName: 'sample-org-beta',
+          spaces: [{
+            name: 'dev',
+            apps: [{ name: 'sample-service-beta', state: 'started', urls: [] }],
+          }],
+        }],
+      },
+    });
+    harness.postedMessages.length = 0;
+
+    harness.dispatch({
+      type: 'SCOPE_SYNCED',
+      payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+    });
+
+    expect(harness.postedMessages).toEqual([{
+      type: 'WARMUP_CF_SESSION',
+      payload: { org: 'sample-org-beta', space: 'dev' },
+    }]);
+    expect(harness.getHtml()).toContain('sample-service-beta');
+  });
+
+  it('falls back to LOAD_APPS when topology has a space error', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+    harness.dispatch({
+      type: 'CF_TOPOLOGY',
+      payload: {
+        ready: true,
+        accounts: [{
+          regionKey: 'eu10',
+          regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgName: 'sample-org-beta',
+          spaces: [{ name: 'dev', apps: [], error: 'mock sync failed' }],
+        }],
+      },
+    });
+    harness.postedMessages.length = 0;
+
+    harness.dispatch({
+      type: 'SCOPE_SYNCED',
+      payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+    });
+
+    expect(harness.postedMessages).toEqual([{
+      type: 'LOAD_APPS',
+      payload: { org: 'sample-org-beta', space: 'dev' },
+    }]);
+  });
+
+  it('restores a mapped session from topology without triggering LOAD_APPS', () => {
+    const harness = createWebviewScriptHarness();
+    harness.dispatch({
+      type: 'CF_TOPOLOGY',
+      payload: {
+        ready: true,
+        accounts: [{
+          regionKey: 'eu10',
+          regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgName: 'sample-org-alpha',
+          spaces: [{
+            name: 'app',
+            apps: [{ name: 'sample-service-alpha', state: 'started', urls: [] }],
+          }],
+        }],
+      },
+    });
+    harness.postedMessages.length = 0;
+
+    harness.dispatch({
+      type: 'CONFIG_LOADED',
+      payload: {
+        config: {
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgs: ['sample-org-alpha'],
+          orgGroupMappings: [{
+            cfOrg: 'sample-org-alpha',
+            cfSpace: 'app',
+            groupFolderPath: '/tmp/sample-folder',
+          }],
+        },
+        activeSessions: {},
+        credentialStatus: {
+          hasCredentials: true,
+          email: 'sample.user@example.com',
+          source: 'env',
+        },
+      },
+    });
+
+    expect(harness.postedMessages).toEqual([{
+      type: 'WARMUP_CF_SESSION',
+      payload: { org: 'sample-org-alpha', space: 'app' },
+    }]);
+    expect(harness.getHtml()).toContain('sample-service-alpha');
+    expect(harness.getHtml()).not.toContain('Loading apps for');
+  });
+
+  it('restores after credentials are saved from topology without triggering LOAD_APPS', () => {
+    const harness = createWebviewScriptHarness();
+    harness.dispatch({
+      type: 'CF_TOPOLOGY',
+      payload: {
+        ready: true,
+        accounts: [{
+          regionKey: 'eu10',
+          regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgName: 'sample-org-alpha',
+          spaces: [{
+            name: 'app',
+            apps: [{ name: 'sample-service-alpha', state: 'started', urls: [] }],
+          }],
+        }],
+      },
+    });
+    harness.dispatch({
+      type: 'CONFIG_LOADED',
+      payload: {
+        config: {
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgs: ['sample-org-alpha'],
+          orgGroupMappings: [{
+            cfOrg: 'sample-org-alpha',
+            cfSpace: 'app',
+            groupFolderPath: '/tmp/sample-folder',
+          }],
+        },
+        activeSessions: {},
+        credentialStatus: {
+          hasCredentials: false,
+          email: '',
+          source: 'none',
+        },
+      },
+    });
+    harness.postedMessages.length = 0;
+
+    harness.dispatch({
+      type: 'CREDENTIALS_SAVED',
+      payload: { email: 'sample.user@example.com', source: 'keychain' },
+    });
+
+    expect(harness.postedMessages).toEqual([{
+      type: 'WARMUP_CF_SESSION',
+      payload: { org: 'sample-org-alpha', space: 'app' },
+    }]);
+    expect(harness.getHtml()).toContain('sample-service-alpha');
+  });
+
+  it('updates Ready apps when a fresher topology arrives for the current target', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+    harness.dispatch({
+      type: 'APPS_LOADED',
+      payload: {
+        apps: [{ name: 'sample-service-old', state: 'started', urls: [] }],
+      },
+    });
+
+    harness.dispatch({
+      type: 'CF_TOPOLOGY',
+      payload: {
+        ready: true,
+        accounts: [{
+          regionKey: 'eu10',
+          regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgName: 'sample-org-alpha',
+          spaces: [{
+            name: 'app',
+            apps: [{ name: 'sample-service-new', state: 'started', urls: [] }],
+          }],
+        }],
+      },
+    });
+
+    expect(harness.getHtml()).toContain('sample-service-new');
+    expect(harness.getHtml()).not.toContain('sample-service-old');
   });
 
   it('routes SCOPE_SYNCED_NO_MAPPING to folder selection without loading apps', () => {
