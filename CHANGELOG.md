@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.12] — 2026
+
+### Changes
+
+- **Remote inspector stop reminder is now opt-in** — Stopping debug no longer shows the Node inspector restart reminder by default. Teams that still want the reminder can enable `cdsDebug.warnRemoteInspectorAfterStop`, while automatic app restart remains opt-in via `cdsDebug.autoRestartAppAfterStop`.
+
+---
+
 ## [0.3.62-pre.11] — 2026
 
 ### Fixes

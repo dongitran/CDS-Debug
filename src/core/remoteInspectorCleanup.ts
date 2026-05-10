@@ -21,7 +21,7 @@ const debuggerWarningsByLifecycle = new Set<string>();
 
 export async function handleRemoteInspectorAfterStop(appName: string): Promise<void> {
   const settings = getRemoteInspectorCleanupSettings();
-  // Node cannot close an inspector listener from outside the process; see notes/34-remote-inspector-cleanup.md.
+  // Node cannot close an inspector listener from outside the process.
   if (settings.autoRestartAppAfterStop) {
     await restartAppAfterStop(appName);
     return;

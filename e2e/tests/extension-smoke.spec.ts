@@ -2509,11 +2509,11 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       }
     });
 
-    test('User can stop an attached session and see the remote inspector reminder', async () => {
+    test('User can stop an attached session without seeing the remote inspector reminder by default', async () => {
       const workspaceDir = await createWorkspaceForCapConfigTest({});
 
       try {
-        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'restart-race' }, async (workbenchPage, artifacts) => {
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'restart-race' }, async (workbenchPage) => {
           const webview = await openCdsDebugWebview(workbenchPage);
           await completeMappingToReadyWithFolder(webview, workspaceDir);
 
@@ -2521,19 +2521,14 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           await expectAttachedSessionCard(webview, 'mock-service-a');
           await stopDebugForApp(webview, 'mock-service-a');
 
-          await expect(workbenchPage.getByText(/Node inspector for mock-service-a may remain open/).first()).toBeVisible({ timeout: 10_000 });
-          await workbenchPage.getByRole('button', { name: "Don't show again" }).click();
-          await expect.poll(async () => {
-            const settings = await readUserSettings(artifacts.userDataDir);
-            return settings['cdsDebug.warnRemoteInspectorAfterStop'];
-          }).toBe(false);
+          await expect(workbenchPage.getByText(/Node inspector for mock-service-a may remain open/)).toHaveCount(0, { timeout: 2_000 });
         }, workspaceDir);
       } finally {
         await removeDirWithRetry(workspaceDir);
       }
     });
 
-    test('User can suppress the remote inspector reminder with settings', async () => {
+    test('User can opt into the remote inspector reminder with settings', async () => {
       const workspaceDir = await createWorkspaceForCapConfigTest({});
 
       try {
@@ -2541,9 +2536,9 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           {
             credentialMode: 'env',
             cfScenario: 'restart-race',
-            userSettings: { 'cdsDebug.warnRemoteInspectorAfterStop': false },
+            userSettings: { 'cdsDebug.warnRemoteInspectorAfterStop': true },
           },
-          async (workbenchPage) => {
+          async (workbenchPage, artifacts) => {
             const webview = await openCdsDebugWebview(workbenchPage);
             await completeMappingToReadyWithFolder(webview, workspaceDir);
 
@@ -2551,7 +2546,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
             await expectAttachedSessionCard(webview, 'mock-service-a');
             await stopDebugForApp(webview, 'mock-service-a');
 
-            await expect(workbenchPage.getByText(/Node inspector for mock-service-a may remain open/)).toHaveCount(0, { timeout: 2_000 });
+            await expect(workbenchPage.getByText(/Node inspector for mock-service-a may remain open/).first()).toBeVisible({ timeout: 10_000 });
+            await workbenchPage.getByRole('button', { name: "Don't show again" }).click();
+            await expect.poll(async () => {
+              const settings = await readUserSettings(artifacts.userDataDir);
+              return settings['cdsDebug.warnRemoteInspectorAfterStop'];
+            }).toBe(false);
           },
           workspaceDir,
         );

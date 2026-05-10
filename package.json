@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.62-pre.11",
+  "version": "0.3.62-pre.12",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -53,13 +53,13 @@
         },
         "cdsDebug.warnRemoteInspectorAfterStop": {
           "type": "boolean",
-          "default": true,
-          "markdownDescription": "Show a reminder after stopping a debug session that the remote Node inspector can remain open inside the CF app until the app restarts. See `notes/34-remote-inspector-cleanup.md`."
+          "default": false,
+          "markdownDescription": "Opt in to a reminder after stopping a debug session that the remote Node inspector can remain open inside the CF app until the app restarts. Disabled by default because restarting Cloud Foundry apps can be slow or disruptive."
         },
         "cdsDebug.autoRestartAppAfterStop": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Automatically run `cf restart <app>` after stopping a debug session to close the remote Node inspector completely. This can reset in-memory app state, so it is opt-in. See `notes/34-remote-inspector-cleanup.md`."
+          "markdownDescription": "Automatically run `cf restart <app>` after stopping a debug session to close the remote Node inspector completely. This can reset in-memory app state and take time, so it is opt-in."
         },
         "cdsDebug.warnDebuggerLiteralOnAttach": {
           "type": "boolean",

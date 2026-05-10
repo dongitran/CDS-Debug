@@ -168,14 +168,14 @@ pnpm test:report          # Open HTML report
 
 ### Debug Session Process Lifecycle
 1. User can stop and restart the same attached session without port reuse errors.
-2. User can stop an attached session and see the remote inspector reminder.
-3. User can suppress the remote inspector reminder with settings.
+2. User can stop an attached session without seeing the remote inspector reminder by default.
+3. User can opt into the remote inspector reminder with settings.
 4. User can open the first local debugger statement warning match.
 5. User can start debug with the default main-process USR1 signal command.
 
 ## Debug Cleanup Workflow
 
-CDS Debug opens the remote Node inspector with `SIGUSR1` and attaches through a local `cf ssh -L` tunnel. Stopping a session closes the local tunnel and clears remote breakpoints defensively, but the Node inspector listener can remain open inside the CF container until the app restarts. Keep the default reminder enabled unless a workflow has another explicit inspector reset step. Use `cdsDebug.autoRestartAppAfterStop` only when an automatic `cf restart <app>` is acceptable for that space.
+CDS Debug opens the remote Node inspector with `SIGUSR1` and attaches through a local `cf ssh -L` tunnel. Stopping a session closes the local tunnel and clears remote breakpoints defensively, but the Node inspector listener can remain open inside the CF container until the app restarts. The reminder is opt-in via `cdsDebug.warnRemoteInspectorAfterStop` because restarting CF apps can be slow or disruptive. Use `cdsDebug.autoRestartAppAfterStop` only when an automatic `cf restart <app>` is acceptable for that space.
 
 ## What's New Workflow
 

@@ -134,7 +134,14 @@ afterEach(() => {
 });
 
 describe('remoteInspectorCleanup notifications', () => {
+  it('does not show the remote inspector reminder by default', async () => {
+    await notifyRemoteInspectorStillOpen('default-quiet-app');
+
+    expect(vscodeMockState.showInformationMessage).not.toHaveBeenCalled();
+  });
+
   it('shows the remote inspector reminder when the setting is enabled', async () => {
+    vscodeMockState.settings.set('warnRemoteInspectorAfterStop', true);
     vscodeMockState.showInformationMessage.mockResolvedValue(undefined);
 
     await notifyRemoteInspectorStillOpen('demo-app');
@@ -155,6 +162,7 @@ describe('remoteInspectorCleanup notifications', () => {
   });
 
   it('debounces the reminder per app for one minute', async () => {
+    vscodeMockState.settings.set('warnRemoteInspectorAfterStop', true);
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-09T10:00:00.000Z'));
 
@@ -167,6 +175,7 @@ describe('remoteInspectorCleanup notifications', () => {
   });
 
   it('restarts the app when the reminder action is selected', async () => {
+    vscodeMockState.settings.set('warnRemoteInspectorAfterStop', true);
     vscodeMockState.showInformationMessage.mockResolvedValue('Restart App');
 
     await notifyRemoteInspectorStillOpen('restartable-app');
@@ -176,6 +185,7 @@ describe('remoteInspectorCleanup notifications', () => {
   });
 
   it('writes the user-scope opt-out when the user disables future reminders', async () => {
+    vscodeMockState.settings.set('warnRemoteInspectorAfterStop', true);
     vscodeMockState.showInformationMessage.mockResolvedValue("Don't show again");
 
     await notifyRemoteInspectorStillOpen('opt-out-app');
@@ -197,6 +207,7 @@ describe('remoteInspectorCleanup notifications', () => {
   });
 
   it('surfaces a warning when restart from the reminder fails', async () => {
+    vscodeMockState.settings.set('warnRemoteInspectorAfterStop', true);
     vscodeMockState.showInformationMessage.mockResolvedValue('Restart App');
     cfClientMockState.cfRestartApp.mockRejectedValue(new Error('restart failed'));
 

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { RemoteInspectorCleanupSettings } from '../types/index';
 
 export const DEFAULT_REMOTE_INSPECTOR_CLEANUP_SETTINGS: RemoteInspectorCleanupSettings = {
-  warnRemoteInspectorAfterStop: true,
+  warnRemoteInspectorAfterStop: false,
   autoRestartAppAfterStop: false,
   warnDebuggerLiteralOnAttach: true,
   clearRemoteBreakpointsBeforeStop: true,
