@@ -106,6 +106,8 @@ import {
   stashChanges,
 } from '../core/gitOperations';
 
+const REMOTE_ROOT_WARMUP_CONCURRENCY = 4;
+
 interface ServiceBranchInfo {
   appName: string;
   folderPath: string;
@@ -951,10 +953,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     apps: readonly CfApp[],
   ): Promise<void> {
     const fallbackConfig = await resolveSharedCapDebugConfig(workspaceRoot);
-    for (const app of apps) {
+    const startedApps = apps.filter((app) => app.state === 'started');
+
+    for (let index = 0; index < startedApps.length; index += REMOTE_ROOT_WARMUP_CONCURRENCY) {
       if (generation !== this.remoteRootWarmupGeneration) return;
-      if (app.state !== 'started') continue;
-      await this.warmRemoteRootForApp(generation, apiEndpoint, org, space, groupPath, app.name, fallbackConfig);
+      const batch = startedApps.slice(index, index + REMOTE_ROOT_WARMUP_CONCURRENCY);
+      await Promise.allSettled(batch.map((app) => (
+        this.warmRemoteRootForApp(generation, apiEndpoint, org, space, groupPath, app.name, fallbackConfig)
+      )));
     }
   }
 

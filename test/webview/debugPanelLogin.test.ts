@@ -5,7 +5,7 @@ import type * as BreakpointSnapshotManagerModule from '../../src/core/breakpoint
 import type * as ProcessManagerModule from '../../src/core/processManager';
 import type * as ScopeSyncModule from '../../src/storage/scopeSync';
 import type * as ShellEnvModule from '../../src/core/shellEnv';
-import type { ExtensionConfig, SharedCfScope } from '../../src/types/index';
+import type { CapDebugConfig, CfApp, ExtensionConfig, SharedCfScope } from '../../src/types/index';
 
 const cfClientMock = vi.hoisted(() => ({
   cfLogin: vi.fn<(apiEndpoint: string, email: string, password: string) => Promise<void>>(
@@ -52,6 +52,9 @@ const shellEnvMock = vi.hoisted(() => ({
 vi.mock('vscode', () => ({
   workspace: {
     workspaceFolders: [],
+    getConfiguration: vi.fn(() => ({
+      inspect: vi.fn(() => undefined),
+    })),
   },
   window: {
     createOutputChannel: () => ({
@@ -139,12 +142,31 @@ interface DebugPanelInternals {
   lastWrittenScope: SharedCfScope | undefined;
   pendingExternalScope: SharedCfScope | undefined;
   scopeChangeQueue: Promise<void>;
+  remoteRootWarmupGeneration: number;
   applyPendingExternalScopeIfAny(orgs: string[]): void;
   handleLogin(apiEndpoint: string): Promise<void>;
   handleScopeChangeInternal(scope: SharedCfScope): Promise<void>;
   handleExternalRegionChange(scope: SharedCfScope): Promise<void>;
   stopActiveSessionsForScopeChange(): Promise<void>;
   writeScopeAfterAppsLoaded(org: string, space: string): Promise<void>;
+  runRemoteRootWarmup(
+    generation: number,
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    workspaceRoot: string,
+    apps: readonly CfApp[],
+  ): Promise<void>;
+  warmRemoteRootForApp(
+    generation: number,
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    groupPath: string,
+    appName: string,
+    fallbackConfig: CapDebugConfig | null,
+  ): Promise<void>;
 }
 
 function makeContext() {
@@ -1228,5 +1250,52 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     expect(loggerMock.logWarn).toHaveBeenCalledWith(
       '[ScopeSync] Failed to write shared CF scope: mock write failed',
     );
+  });
+
+  it('warms remote roots in bounded parallel batches', async () => {
+    const provider = makeProvider();
+    const internals = getInternals(provider);
+    const startedApps: CfApp[] = Array.from({ length: 9 }, (_, index) => ({
+      name: `sample-service-${(index + 1).toString()}`,
+      state: 'started',
+      urls: [],
+    }));
+    const apps: CfApp[] = [
+      ...startedApps,
+      { name: 'sample-service-stopped', state: 'stopped', urls: [] },
+    ];
+    let activeWarmups = 0;
+    let maxActiveWarmups = 0;
+    const warmedApps: string[] = [];
+    internals.remoteRootWarmupGeneration = 1;
+    vi.spyOn(internals, 'warmRemoteRootForApp').mockImplementation(async (
+      _generation,
+      _apiEndpoint,
+      _org,
+      _space,
+      _groupPath,
+      appName,
+    ) => {
+      activeWarmups++;
+      maxActiveWarmups = Math.max(maxActiveWarmups, activeWarmups);
+      warmedApps.push(appName);
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 5);
+      });
+      activeWarmups--;
+    });
+
+    await internals.runRemoteRootWarmup(
+      1,
+      'https://api.cf.eu10.hana.ondemand.com',
+      'sample-org',
+      'app',
+      '/tmp/sample-group',
+      '/tmp/sample-workspace',
+      apps,
+    );
+
+    expect(maxActiveWarmups).toBe(4);
+    expect(warmedApps).toEqual(startedApps.map((app) => app.name));
   });
 });
