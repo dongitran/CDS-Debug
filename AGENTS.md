@@ -154,6 +154,7 @@ pnpm test:report          # Open HTML report
 
 ### Ready Screen — Actions and Navigation
 1. User can change mapping and return to CF Region / Org.
+2. User can change mapping while Sync Now is still running.
 
 ### Shared CF Scope
 1. User can sync the current scope through VS Code global settings.

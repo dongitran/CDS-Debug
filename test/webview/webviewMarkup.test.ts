@@ -310,6 +310,7 @@ describe('webview markup contracts', () => {
     const script = getScript('test-nonce');
 
     expect(script).toMatch(/\$\('btn-remap'\)\?\.addEventListener\('click'[\s\S]*?else \{\s+state\.screen = SCREENS\.REGION;/);
+    expect(script).toMatch(/\$\('btn-remap'\)\?\.addEventListener\('click'[\s\S]*?else \{[\s\S]*?vscode\.postMessage\(\{ type: 'REQUEST_CHANGE_MAPPING' \}\);/);
     expect(script).toMatch(/case 'PROCEED_CHANGE_MAPPING':\s+state\.screen = SCREENS\.REGION;/);
   });
 

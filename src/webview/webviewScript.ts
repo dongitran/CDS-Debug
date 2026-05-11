@@ -808,6 +808,7 @@ export function getScript(nonce: string): string {
           state.orgSearchQuery = '';
           state.regionSearchQuery = '';
           render();
+          vscode.postMessage({ type: 'REQUEST_CHANGE_MAPPING' });
         }
       });
 

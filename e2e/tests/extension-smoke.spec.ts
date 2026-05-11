@@ -32,6 +32,7 @@ type CfScenario =
   | 'apps-fail'
   | 'slow-auth'
   | 'slow-apps'
+  | 'slow-sync'
   | 'slow-target'
   | 'slow-target-after-apps'
   | 'remote-root-race'
@@ -251,6 +252,9 @@ OUT
     fi
     if [[ "$SCENARIO" == "slow-apps" ]]; then
       sleep 30
+    fi
+    if [[ "$SCENARIO" == "slow-sync" && "\${CF_HOME:-}" == *"cds-debug-cf-"* ]]; then
+      sleep 3
     fi
     if [[ "$SCENARIO" == "slow-target-after-apps" ]]; then
       touch "$slow_target_after_apps_ready"
@@ -3842,6 +3846,33 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         await expectRegionScreen(webview);
         await captureStepEvidence(workbenchPage, 'change-mapping-region-org');
+      });
+    });
+
+    test('User can change mapping while Sync Now is still running', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-sync' }, async (workbenchPage, artifacts) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await webview.locator('#btn-gear').click();
+        await expect(webview.getByText('Settings')).toBeVisible();
+        await webview.locator('#btn-trigger-sync').click();
+        await expect(webview.locator('.sync-status-row.running')).toBeVisible({ timeout: 10_000 });
+
+        await webview.locator('#btn-back-settings').click();
+        await expectReadyScreen(webview);
+        await clickChangeMapping(webview);
+        await expectRegionScreen(webview);
+        await captureStepEvidence(workbenchPage, 'change-mapping-while-sync-running');
+
+        const observedAt = Date.now();
+        await expect.poll(async () => {
+          const apiCount = (await readMockCfCommands(artifacts.mockBinDir))
+            .filter((command) => command === 'api')
+            .length;
+          if (apiCount > 2) return 'continued';
+          return Date.now() - observedAt > 5_500 ? 'stopped' : 'waiting';
+        }, { timeout: 8_000 }).toBe('stopped');
       });
     });
 

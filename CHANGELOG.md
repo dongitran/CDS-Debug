@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.16] — 2026
+
+### Fixes
+
+- **Cache sync no longer strands Change Mapping** — Change Mapping now asks the extension host to stop an in-flight cache sync, background CF sync commands use the extension's timeout-backed CF client, and stale cf-sync locks are recovered before a new manual Sync Now attempt.
+
+---
+
 ## [0.3.62-pre.15] — 2026
 
 ### Changes

@@ -60,7 +60,14 @@ import {
   saveLastSpaceRefreshAt,
 } from '../storage/cacheStore';
 import { buildCfApiEndpoint, regionCodeFromApiEndpoint, writeScopeIfChanged } from '../storage/scopeSync';
-import { cacheSyncEvents, runCacheSync, getCurrentSyncProgress, restartCacheSyncTimer, syncSingleRegion } from '../core/cacheSync';
+import {
+  cacheSyncEvents,
+  getCurrentSyncProgress,
+  requestCacheSyncStop,
+  restartCacheSyncTimer,
+  runCacheSync,
+  syncSingleRegion,
+} from '../core/cacheSync';
 import { getAppsFromTopologySync, getTopologySnapshot, getTopologySnapshotSync } from '../core/cfTopology';
 import { logError, logInfo, logWarn, showLogChannel } from '../core/logger';
 import { getWebviewContent } from './getWebviewContent';
@@ -485,6 +492,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'REQUEST_CHANGE_MAPPING': {
+        requestCacheSyncStop();
         await stopAllProcesses();
         this.postMessage({ type: 'PROCEED_CHANGE_MAPPING' });
         break;

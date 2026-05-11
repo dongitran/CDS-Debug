@@ -31,10 +31,11 @@ const cacheSyncMock = vi.hoisted(() => {
   };
   return {
     cacheSyncEvents,
-    getCurrentSyncProgress: vi.fn(() => ({ isRunning: false, done: 0, total: 0 })),
-    restartCacheSyncTimer: vi.fn<() => void>(),
-    runCacheSync: vi.fn<() => void>(),
-    syncSingleRegion: vi.fn<() => Promise<{ status: 'synced' | 'failed' | 'skipped'; error?: string }>>(
+  getCurrentSyncProgress: vi.fn(() => ({ isRunning: false, done: 0, total: 0 })),
+  requestCacheSyncStop: vi.fn<() => void>(),
+  restartCacheSyncTimer: vi.fn<() => void>(),
+  runCacheSync: vi.fn<() => void>(),
+  syncSingleRegion: vi.fn<() => Promise<{ status: 'synced' | 'failed' | 'skipped'; error?: string }>>(
       () => Promise.resolve({ status: 'synced' }),
     ),
   };
@@ -183,6 +184,7 @@ interface DebugPanelInternals {
   remoteRootWarmupGeneration: number;
   applyPendingExternalScopeIfAny(orgs: string[]): void;
   handleSaveCredentials(email: string, password: string): Promise<void>;
+  handleMessage(raw: unknown): Promise<void>;
   handleLogin(apiEndpoint: string): Promise<void>;
   handleWarmupCfSession(org: string, space: string): Promise<void>;
   handleScopeChangeInternal(scope: SharedCfScope): Promise<void>;
@@ -1269,6 +1271,17 @@ describe('DebugLauncherViewProvider external scope sync', () => {
       payload: { email: 'sample.user@example.com', source: 'keychain' },
     });
     expect(cacheSyncMock.runCacheSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('requests cache sync stop when changing mapping', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+
+    await getInternals(provider).handleMessage({ type: 'REQUEST_CHANGE_MAPPING' });
+
+    expect(cacheSyncMock.requestCacheSyncStop).toHaveBeenCalledTimes(1);
+    expect(processManagerMock.stopAllProcesses).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ type: 'PROCEED_CHANGE_MAPPING' });
   });
 
   it('starts a single-region topology sync after login when cache sync is enabled', async () => {
