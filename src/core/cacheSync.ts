@@ -5,6 +5,13 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
+  cfApi,
+  cfAppDetails,
+  cfAuth,
+  cfOrgs,
+  cfSpaces,
+  cfTargetOrg,
+  cfTargetSpace,
   writeStructure,
   initializeRuntimeState,
   mergeRuntimeRegion,
@@ -15,12 +22,11 @@ import {
   releaseSyncLock,
   getAllRegions,
   cfStructurePath,
-  cfSyncLockPath,
-  readRuntimeState,
 } from '@saptools/cf-sync';
 import type {
   AppNode,
   CfStructure,
+  CfExecContext,
   OrgNode,
   Region,
   RegionKey,
@@ -35,20 +41,13 @@ import {
   saveSyncProgress,
   getCacheSettings,
 } from '../storage/cacheStore';
-import type { CfApp, SyncProgress, SyncSkipReason } from '../types/index';
+import type { SyncProgress, SyncSkipReason } from '../types/index';
 import { toCachedApp } from './appNodeMapping';
-import {
-  cfLogin,
-  cfOrgs,
-  cfTargetAndApps,
-  cfTargetOrgAndSpaces,
-} from './cfClient';
 import { logInfo, logWarn, logError } from './logger';
 
 export const cacheSyncEvents = new EventEmitter();
 
 const INITIAL_DELAY_MS = 5_000;
-const STALE_SYNC_LOCK_MS = 15 * 60 * 1000;
 
 // Tracks in-process sync state. Object wrapper prevents TypeScript control-flow
 // narrowing from treating the booleans as literal false after assignment.
@@ -110,77 +109,6 @@ function shouldAbort(): boolean {
   return _sync.abortRequested;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function errorCode(error: unknown): string | undefined {
-  if (!isRecord(error)) return undefined;
-  const code = error.code;
-  return typeof code === 'string' ? code : undefined;
-}
-
-function parseIsoMs(value: string | undefined): number | undefined {
-  if (value === undefined) return undefined;
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? undefined : timestamp;
-}
-
-function isOlderThanStaleLockWindow(value: string | undefined): boolean {
-  const timestamp = parseIsoMs(value);
-  if (timestamp === undefined) return false;
-  return Date.now() - timestamp > STALE_SYNC_LOCK_MS;
-}
-
-function parseSyncLockStartedAt(raw: string): { syncId: string; startedAt: string } | undefined {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed)) return undefined;
-    if (typeof parsed.syncId !== 'string') return undefined;
-    if (typeof parsed.startedAt !== 'string') return undefined;
-    return { syncId: parsed.syncId, startedAt: parsed.startedAt };
-  } catch {
-    return undefined;
-  }
-}
-
-async function readSyncLockStartedAt(): Promise<{ syncId: string; startedAt: string } | undefined> {
-  try {
-    const raw = await fsPromises.readFile(cfSyncLockPath(), 'utf8');
-    return parseSyncLockStartedAt(raw);
-  } catch (err: unknown) {
-    if (errorCode(err) === 'ENOENT') return undefined;
-    logWarn(`[CacheSync] Failed to inspect sync lock: ${err instanceof Error ? err.message : String(err)}`);
-    return undefined;
-  }
-}
-
-async function removeSyncLockFile(): Promise<void> {
-  await fsPromises.unlink(cfSyncLockPath()).catch((err: unknown) => {
-    if (errorCode(err) !== 'ENOENT') {
-      logWarn(`[CacheSync] Failed to remove stale sync lock: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  });
-}
-
-async function recoverStaleFullSyncLock(): Promise<void> {
-  const lock = await readSyncLockStartedAt();
-  if (lock === undefined) return;
-
-  const runtimeState = await readRuntimeState().catch((err: unknown) => {
-    logWarn(`[CacheSync] Failed to inspect sync runtime state: ${err instanceof Error ? err.message : String(err)}`);
-    return undefined;
-  });
-  const staleTimestamp = runtimeState?.status === 'running' ? runtimeState.updatedAt : lock.startedAt;
-  if (!isOlderThanStaleLockWindow(staleTimestamp)) return;
-
-  if (runtimeState?.status === 'running') {
-    await failRuntimeState(runtimeState.syncId, 'stale sync lock recovered by CDS Debug').catch(() => undefined);
-  }
-  await removeSyncLockFile();
-  logWarn(`[CacheSync] Recovered stale sync lock for ${lock.syncId}.`);
-}
-
 // Read the cf-sync stable structure file synchronously (used at init time to avoid
 // an async gap before the timer is wired up).
 function readStructureSync(): CfStructure | undefined {
@@ -194,10 +122,11 @@ function readStructureSync(): CfStructure | undefined {
 
 // Creates a fresh isolated CF home directory per sync session so background syncs
 // never clobber the user's interactive ~/.cf session.
-async function withCfSession<T>(work: (cfHome: string) => Promise<T>): Promise<T> {
-  const cfHome = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'cds-debug-cf-'));
+async function withCfSession<T>(work: (context: CfExecContext) => Promise<T>): Promise<T> {
+  const cfHome = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'saptools-cf-session-'));
+  const context: CfExecContext = { env: { CF_HOME: cfHome } };
   try {
-    return await work(cfHome);
+    return await work(context);
   } finally {
     await fsPromises.rm(cfHome, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -246,26 +175,16 @@ function buildSpaceNode(name: string, apps: readonly AppNode[], error?: string):
   return { name, apps };
 }
 
-function toAppNode(app: CfApp): AppNode {
-  const routes = app.urls !== undefined && app.urls.length > 0 ? { routes: app.urls } : {};
-  if (app.state === 'started') {
-    return { name: app.name, requestedState: 'started', runningInstances: 1, totalInstances: 1, ...routes };
-  }
-  if (app.state === 'empty') {
-    return { name: app.name, requestedState: 'started', runningInstances: 0, totalInstances: 1, ...routes };
-  }
-  return { name: app.name, requestedState: 'stopped', runningInstances: 0, totalInstances: 1, ...routes };
-}
-
 async function collectSpace(
   regionKey: string,
   orgName: string,
   spaceName: string,
-  cfHome: string,
+  cfContext: CfExecContext,
 ): Promise<SpaceNode> {
   try {
-    const apps = await cfTargetAndApps(orgName, spaceName, cfHome);
-    return buildSpaceNode(spaceName, apps.map(toAppNode));
+    await cfTargetSpace(orgName, spaceName, cfContext);
+    const apps = await cfAppDetails(cfContext);
+    return buildSpaceNode(spaceName, apps);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logWarn(`[CacheSync] ${regionKey}/${orgName}/${spaceName}: apps fetch failed — ${message}`);
@@ -276,14 +195,15 @@ async function collectSpace(
 async function collectOrg(
   regionKey: string,
   orgName: string,
-  cfHome: string,
+  cfContext: CfExecContext,
 ): Promise<OrgNode> {
   try {
-    const spaceNames = await cfTargetOrgAndSpaces(orgName, cfHome);
+    await cfTargetOrg(orgName, cfContext);
+    const spaceNames = await cfSpaces(cfContext);
     const spaces: SpaceNode[] = [];
     for (const spaceName of spaceNames) {
       if (shouldAbort()) break;
-      spaces.push(await collectSpace(regionKey, orgName, spaceName, cfHome));
+      spaces.push(await collectSpace(regionKey, orgName, spaceName, cfContext));
     }
     return buildOrgNode(orgName, spaces);
   } catch (err: unknown) {
@@ -299,9 +219,10 @@ async function collectRegion(
   password: string,
   onOrgProgress: (orgName: string) => void,
 ): Promise<RegionNode> {
-  return await withCfSession(async (cfHome) => {
+  return await withCfSession(async (cfContext) => {
     try {
-      await cfLogin(region.apiEndpoint, email, password, cfHome);
+      await cfApi(region.apiEndpoint, cfContext);
+      await cfAuth(email, password, cfContext);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logWarn(`[CacheSync] ${region.key}: auth failed — ${message}`);
@@ -310,7 +231,7 @@ async function collectRegion(
 
     let orgNames: readonly string[];
     try {
-      orgNames = await cfOrgs(cfHome);
+      orgNames = await cfOrgs(cfContext);
       logInfo(`[CacheSync] ${region.key}: ${orgNames.length.toString()} org(s) found.`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -322,7 +243,7 @@ async function collectRegion(
     for (const orgName of orgNames) {
       if (shouldAbort()) break;
       onOrgProgress(orgName);
-      orgs.push(await collectOrg(region.key, orgName, cfHome));
+      orgs.push(await collectOrg(region.key, orgName, cfContext));
     }
 
     return buildAccessibleRegionNode(region, orgs);
@@ -425,7 +346,6 @@ async function doSync(): Promise<void> {
   let lockHandle: Awaited<ReturnType<typeof tryAcquireSyncLock>> = undefined;
 
   try {
-    await recoverStaleFullSyncLock();
     lockHandle = await tryAcquireSyncLock(syncId);
     if (!lockHandle) {
       logInfo('[CacheSync] Another sync process holds the lock — skipping.');

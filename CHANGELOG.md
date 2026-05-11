@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.17] — 2026
+
+### Changes
+
+- **Cache sync now delegates topology recovery to cf-sync** — Updated `@saptools/cf-sync` to `0.4.7`, moved background CF topology commands back to cf-sync's timeout-backed helpers, and removed CDS Debug's local stale-lock recovery workaround while keeping Change Mapping cancellation responsive.
+
+---
+
 ## [0.3.62-pre.16] — 2026
 
 ### Fixes

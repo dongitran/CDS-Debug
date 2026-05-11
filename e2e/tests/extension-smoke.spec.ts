@@ -253,7 +253,7 @@ OUT
     if [[ "$SCENARIO" == "slow-apps" ]]; then
       sleep 30
     fi
-    if [[ "$SCENARIO" == "slow-sync" && "\${CF_HOME:-}" == *"cds-debug-cf-"* ]]; then
+    if [[ "$SCENARIO" == "slow-sync" && ( "\${CF_HOME:-}" == *"saptools-cf-session-"* || "\${CF_HOME:-}" == *"cds-debug-cf-"* ) ]]; then
       sleep 3
     fi
     if [[ "$SCENARIO" == "slow-target-after-apps" ]]; then
@@ -1016,15 +1016,41 @@ async function goToOrgSelection(webview: Frame): Promise<void> {
   await expect(webview.getByText('Select CF Org')).toBeVisible();
 }
 
+async function selectCfOrg(webview: Frame, orgName: string): Promise<void> {
+  const orgRadio = webview.getByRole('radio', { name: orgName });
+  await expect(orgRadio).toBeAttached();
+  await webview.getByText(orgName, { exact: true }).click();
+  await expect(orgRadio).toBeChecked();
+  await expectButtonEnabled(webview.getByRole('button', { name: /Next/ }));
+}
+
+async function continueFromCfOrgSelection(webview: Frame): Promise<void> {
+  const nextButton = webview.getByRole('button', { name: /Next/ });
+  await expectButtonEnabled(nextButton);
+  await nextButton.click();
+}
+
+async function selectCfOrgAndContinue(webview: Frame, orgName: string): Promise<void> {
+  await selectCfOrg(webview, orgName);
+  await continueFromCfOrgSelection(webview);
+}
+
 async function goToFolderSelection(webview: Frame, orgName = 'mock-org-alpha'): Promise<void> {
   await goToOrgSelection(webview);
-  await webview.locator(`input[name="cf-org"][value="${orgName}"]`).check({ force: true });
-  await webview.locator('#btn-next-org').click();
+  await selectCfOrgAndContinue(webview, orgName);
   await expect(webview.getByText('Select Local Folder')).toBeVisible();
 }
 
 async function selectRegion(webview: Frame, accessibleName: string | RegExp): Promise<void> {
-  await webview.getByRole('radio', { name: accessibleName }).check({ force: true });
+  const regionRadio = webview.getByRole('radio', { name: accessibleName });
+  await expect(regionRadio).toBeAttached();
+  if (typeof accessibleName === 'string') {
+    const regionCode = accessibleName.split(' ', 1)[0] ?? accessibleName;
+    await webview.getByText(regionCode, { exact: true }).click();
+  } else {
+    await webview.getByText(accessibleName).click();
+  }
+  await expect(regionRadio).toBeChecked();
 }
 
 async function injectSelectedFolder(webview: Frame, folderPath: string): Promise<void> {
@@ -1920,8 +1946,8 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       // Each org is rendered as an .org-item label with a radio input
       await expect(webview.locator('.org-item', { hasText: 'mock-org-alpha' })).toBeVisible();
       await expect(webview.locator('.org-item', { hasText: 'mock-org-beta' })).toBeVisible();
-      await expect(webview.locator('input[name="cf-org"][value="mock-org-alpha"]')).toBeAttached();
-      await expect(webview.locator('input[name="cf-org"][value="mock-org-beta"]')).toBeAttached();
+      await expect(webview.getByRole('radio', { name: 'mock-org-alpha' })).toBeAttached();
+      await expect(webview.getByRole('radio', { name: 'mock-org-beta' })).toBeAttached();
       await expect(webview.locator('.error-box')).toHaveCount(0);
       await expect(webview.locator('#btn-login')).toHaveCount(0);
       await expect(webview.locator('#btn-save-creds')).toHaveCount(0);
@@ -2341,12 +2367,12 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       await expect(webview.locator('#btn-next-org')).toBeDisabled();
       await expect(webview.locator('#btn-back-select-org')).toHaveCount(0);
 
-      await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
+      await selectCfOrg(webview, 'mock-org-beta');
       // Surgical DOM update: selected org gets the "selected" CSS class on its label
       await expect(webview.locator('.org-item.selected', { hasText: 'mock-org-beta' })).toBeVisible();
       // Next button becomes enabled after an org is selected
       await expect(webview.locator('#btn-next-org')).toBeEnabled();
-      await webview.locator('#btn-next-org').click();
+      await continueFromCfOrgSelection(webview);
 
       await expect(webview.getByText('Select Local Folder')).toBeVisible();
       await expect(webview.getByRole('button', { name: /Browse/i })).toBeVisible();
@@ -2370,8 +2396,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       const webview = await openCdsDebugWebview(workbenchPage);
       await goToOrgSelection(webview);
 
-      await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
-      await webview.locator('#btn-next-org').click();
+      await selectCfOrgAndContinue(webview, 'mock-org-alpha');
 
       await expect(webview.getByText('Select CF Space')).toBeVisible();
       await expect(webview.locator('.step-badge', { hasText: '2/3' })).toBeVisible();
@@ -4818,8 +4843,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           await expectSapCapCurrentScope(artifacts.userDataDir, alphaScope);
 
           await remapToOrgSelection(webview);
-          await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
-          await webview.locator('#btn-next-org').click();
+          await selectCfOrgAndContinue(webview, 'mock-org-beta');
           await expect(webview.getByText('Select Local Folder')).toBeVisible();
           await injectSelectedFolder(webview, folderBeta);
           await webview.locator('#btn-save-mapping').click();
@@ -4855,8 +4879,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           await selectRegion(webview, 'us10 US East (VA) - AWS');
           await loginFromRegionScreen(webview);
           await expect(webview.getByText('Select CF Org')).toBeVisible();
-          await webview.locator('input[name="cf-org"][value="sample-org-beta"]').check({ force: true });
-          await webview.locator('#btn-next-org').click();
+          await selectCfOrgAndContinue(webview, 'sample-org-beta');
           await expect(webview.getByText('Select Local Folder')).toBeVisible();
           await injectSelectedFolder(webview, folderBeta);
           await webview.locator('#btn-save-mapping').click();
@@ -4867,8 +4890,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           await selectRegion(webview, 'eu10 Europe (Frankfurt) - AWS');
           await loginFromRegionScreen(webview);
           await expect(webview.getByText('Select CF Org')).toBeVisible();
-          await webview.locator('input[name="cf-org"][value="sample-org-alpha"]').check({ force: true });
-          await webview.locator('#btn-next-org').click();
+          await selectCfOrgAndContinue(webview, 'sample-org-alpha');
           await expect(webview.getByText('Select Local Folder')).toBeVisible();
           await expect(webview.getByText(folderAlpha)).toBeVisible();
           await webview.locator('#btn-save-mapping').click();
@@ -5025,8 +5047,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
               await selectRegion(webview, 'us10 US East (VA) - AWS');
               await loginFromRegionScreen(webview);
               await expect(webview.getByText('Select CF Org')).toBeVisible();
-              await webview.locator('input[name="cf-org"][value="sample-org-beta"]').check({ force: true });
-              await webview.locator('#btn-next-org').click();
+              await selectCfOrgAndContinue(webview, 'sample-org-beta');
               await expect(webview.getByText('Select Local Folder')).toBeVisible();
               await injectSelectedFolder(webview, folderB);
               await webview.locator('#btn-save-mapping').click();
@@ -5041,8 +5062,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
               await selectRegion(webview, 'eu10 Europe (Frankfurt) - AWS');
               await loginFromRegionScreen(webview);
               await expect(webview.getByText('Select CF Org')).toBeVisible();
-              await webview.locator('input[name="cf-org"][value="sample-org-alpha"]').check({ force: true });
-              await webview.locator('#btn-next-org').click();
+              await selectCfOrgAndContinue(webview, 'sample-org-alpha');
               await expect(webview.getByText('Select Local Folder')).toBeVisible();
               await expect(webview.getByText(folderA)).toBeVisible();
               await expectButtonEnabled(webview.locator('#btn-save-mapping'));
@@ -5066,8 +5086,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
             await startSession(async (webview) => {
               await completeMappingToReadyWithFolder(webview, folderA);
               await remapToOrgSelection(webview);
-              await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
-              await webview.locator('#btn-next-org').click();
+              await selectCfOrgAndContinue(webview, 'mock-org-beta');
               await expect(webview.getByText('Select Local Folder')).toBeVisible();
               await injectSelectedFolder(webview, folderB);
               await webview.locator('#btn-save-mapping').click();
@@ -5079,8 +5098,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
               await expectReadyScreen(webview);
               await expectReadyTarget(webview, 'mock-org-beta');
               await remapToOrgSelection(webview);
-              await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
-              await webview.locator('#btn-next-org').click();
+              await selectCfOrgAndContinue(webview, 'mock-org-beta');
               await expect(webview.getByText('Select Local Folder')).toBeVisible();
               await expect(webview.getByText(folderB)).toBeVisible();
               await expectButtonEnabled(webview.locator('#btn-save-mapping'));
@@ -5104,8 +5122,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await remapToOrgSelection(webview);
 
         // Re-select mock-org-alpha (the org that was already mapped)
-        await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
-        await webview.locator('#btn-next-org').click();
+        await selectCfOrgAndContinue(webview, 'mock-org-alpha');
 
         // SELECT_FOLDER must show the previously chosen folder path — no Browse required
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
@@ -5128,8 +5145,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         // Step 2: remap through CF Region / Org → select org-beta → folder screen has no cached path
         await remapToOrgSelection(webview);
-        await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
-        await webview.locator('#btn-next-org').click();
+        await selectCfOrgAndContinue(webview, 'mock-org-beta');
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
         // org-beta has never been mapped → no pre-fill
         await expect(webview.getByText('No folder selected yet.')).toBeVisible();
@@ -5143,8 +5159,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         // Step 4: remap through CF Region / Org → switch back to org-alpha → folder-alpha pre-filled
         await remapToOrgSelection(webview);
-        await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
-        await webview.locator('#btn-next-org').click();
+        await selectCfOrgAndContinue(webview, 'mock-org-alpha');
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
         await expect(webview.getByText(MOCK_GROUP_FOLDER)).toBeVisible();
         await expectButtonEnabled(webview.locator('#btn-save-mapping'));
@@ -5152,8 +5167,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         // Step 5: go back → SELECT_ORG → switch to org-beta → folder-beta pre-filled
         await webview.locator('#btn-back-select-org').click();
         await expect(webview.getByText('Select CF Org')).toBeVisible();
-        await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
-        await webview.locator('#btn-next-org').click();
+        await selectCfOrgAndContinue(webview, 'mock-org-beta');
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
         await expect(webview.getByText(MOCK_GROUP_FOLDER_BETA)).toBeVisible();
         await expectButtonEnabled(webview.locator('#btn-save-mapping'));
@@ -5169,8 +5183,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         // Remap → select same org → folder is pre-filled with cached path
         await remapToOrgSelection(webview);
-        await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
-        await webview.locator('#btn-next-org').click();
+        await selectCfOrgAndContinue(webview, 'mock-org-alpha');
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
         await expect(webview.getByText(MOCK_GROUP_FOLDER)).toBeVisible();
 
@@ -5234,8 +5247,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
         // Remap through CF Region / Org → select org-alpha → folder /cached/alpha is pre-filled
         await remapToOrgSelection(webview);
-        await webview.locator('input[name="cf-org"][value="mock-org-alpha"]').check({ force: true });
-        await webview.locator('#btn-next-org').click();
+        await selectCfOrgAndContinue(webview, 'mock-org-alpha');
         await expect(webview.getByText(/Loading spaces for/)).toBeVisible();
         await injectMessage(webview, { type: 'SPACES_LOADED', payload: { org: 'mock-org-alpha', spaces: ['app'] } });
         await expect(webview.getByText('Select Local Folder')).toBeVisible();
@@ -5245,8 +5257,7 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         // Go back → SELECT_ORG → select org-beta → folder /cached/beta is pre-filled
         await webview.locator('#btn-back-select-org').click();
         await expect(webview.getByText('Select CF Org')).toBeVisible();
-        await webview.locator('input[name="cf-org"][value="mock-org-beta"]').check({ force: true });
-        await webview.locator('#btn-next-org').click();
+        await selectCfOrgAndContinue(webview, 'mock-org-beta');
         await expect(webview.getByText(/Loading spaces for/)).toBeVisible();
         await injectMessage(webview, { type: 'SPACES_LOADED', payload: { org: 'mock-org-beta', spaces: ['app'] } });
         await expect(webview.getByText('Select Local Folder')).toBeVisible();

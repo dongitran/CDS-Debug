@@ -1,4 +1,3 @@
-import { rm, writeFile } from 'node:fs/promises';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const MOCK_REGIONS = vi.hoisted(() => [
@@ -30,24 +29,9 @@ vi.mock('../../src/core/logger', () => ({
   logError: vi.fn(),
 }));
 
-const cfClientMock = vi.hoisted(() => ({
-  cfLogin: vi.fn<(
-    apiEndpoint: string,
-    email: string,
-    password: string,
-    cfHome?: string,
-  ) => Promise<void>>(() => Promise.resolve()),
-  cfOrgs: vi.fn<(cfHome?: string) => Promise<string[]>>(() => Promise.resolve([])),
-  cfTargetOrgAndSpaces: vi.fn<(org: string, cfHome?: string) => Promise<string[]>>(() => Promise.resolve([])),
-  cfTargetAndApps: vi.fn<(org: string, space?: string, cfHome?: string) => Promise<unknown[]>>(() => Promise.resolve([])),
-}));
-
-vi.mock('../../src/core/cfClient', () => cfClientMock);
-
 vi.mock('@saptools/cf-sync', () => ({
   getAllRegions: vi.fn().mockReturnValue(MOCK_REGIONS),
   cfStructurePath: vi.fn().mockReturnValue('/tmp/cds-debug-test-cf-structure.json'),
-  cfSyncLockPath: vi.fn().mockReturnValue('/tmp/cds-debug-test-cf-sync.lock'),
   writeStructure: vi.fn().mockResolvedValue(undefined),
   initializeRuntimeState: vi.fn().mockResolvedValue({}),
   mergeRuntimeRegion: vi.fn().mockResolvedValue(undefined),
@@ -57,7 +41,6 @@ vi.mock('@saptools/cf-sync', () => ({
     completedRegionKeys: [],
   }),
   failRuntimeState: vi.fn().mockResolvedValue(undefined),
-  readRuntimeState: vi.fn().mockResolvedValue(undefined),
   tryAcquireSyncLock: vi.fn().mockResolvedValue(undefined),
   releaseSyncLock: vi.fn().mockResolvedValue(undefined),
   cfApi: vi.fn().mockResolvedValue(undefined),
@@ -81,11 +64,16 @@ import {
   failRuntimeState,
   initializeRuntimeState,
   persistRegion,
-  readRuntimeState,
   tryAcquireSyncLock,
+  cfApi,
+  cfAuth,
+  cfOrgs,
+  cfTargetOrg,
+  cfSpaces,
+  cfTargetSpace,
+  cfAppDetails,
 } from '@saptools/cf-sync';
 import type { CfStructure, RuntimeSyncState } from '@saptools/cf-sync';
-import { cfLogin, cfOrgs, cfTargetAndApps, cfTargetOrgAndSpaces } from '../../src/core/cfClient';
 import { getCredentials } from '../../src/core/shellEnv';
 import {
   saveCachedApps,
@@ -98,7 +86,6 @@ import type { SyncProgress } from '../../src/types/index';
 
 const EU10_ENDPOINT = 'https://api.cf.eu10.hana.ondemand.com';
 const AP11_ENDPOINT = 'https://api.cf.ap11.hana.ondemand.com';
-const SYNC_LOCK_PATH = '/tmp/cds-debug-test-cf-sync.lock';
 
 function makeStructure(overrides: Partial<CfStructure> = {}): CfStructure {
   return {
@@ -432,14 +419,12 @@ describe('getCurrentSyncProgress', () => {
 });
 
 describe('runCacheSync progress status', () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
-    await rm(SYNC_LOCK_PATH, { force: true });
     vi.mocked(getSyncProgress).mockReturnValue(undefined);
     vi.mocked(getCacheSettings).mockReturnValue({ enabled: true, intervalHours: 24 });
     vi.mocked(getCredentials).mockResolvedValue({ email: '', password: '' });
     vi.mocked(tryAcquireSyncLock).mockResolvedValue(undefined);
-    vi.mocked(readRuntimeState).mockResolvedValue(undefined);
     vi.mocked(initializeRuntimeState).mockResolvedValue(makeRuntimeState());
     vi.mocked(completeRuntimeState).mockResolvedValue(makeRuntimeState({
       status: 'completed',
@@ -541,52 +526,53 @@ describe('runCacheSync progress status', () => {
     expect(stored?.lastAttemptedAt).toEqual(expect.any(Number));
   });
 
-  it('recovers a stale full-sync lock before acquiring a new lock', async () => {
-    const staleIso = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-    await writeFile(SYNC_LOCK_PATH, JSON.stringify({
-      syncId: 'stale-sync',
-      pid: process.pid,
-      hostname: 'sample-host',
-      startedAt: staleIso,
-    }), 'utf8');
+  it('uses cf-sync CF helpers with an isolated session during full sync', async () => {
     vi.mocked(getCredentials).mockResolvedValue({
       email: 'sample.user@example.com',
       password: 'sample-password',
     });
-    vi.mocked(readRuntimeState).mockResolvedValue(makeRuntimeState({
-      syncId: 'stale-sync',
-      updatedAt: staleIso,
-    }));
     vi.mocked(tryAcquireSyncLock).mockResolvedValue(makeLockHandle());
+    vi.mocked(cfOrgs).mockResolvedValue(['demo-org']);
+    vi.mocked(cfSpaces).mockResolvedValue(['demo-space']);
+    vi.mocked(cfAppDetails).mockResolvedValue([{
+      name: 'sample-service-a',
+      requestedState: 'started',
+      runningInstances: 1,
+      totalInstances: 1,
+      routes: ['sample-service-a.cfapps.example.com'],
+    }]);
 
     runCacheSync();
 
     await vi.waitFor(() => {
-      expect(tryAcquireSyncLock).toHaveBeenCalled();
+      expect(saveSyncProgress).toHaveBeenCalledWith(expect.objectContaining({
+        isRunning: false,
+        done: MOCK_REGIONS.length,
+      }));
     });
-    expect(failRuntimeState).toHaveBeenCalledWith(
-      'stale-sync',
-      expect.stringContaining('stale'),
-    );
-    await expect(rm(SYNC_LOCK_PATH, { force: false })).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const firstApiCall = vi.mocked(cfApi).mock.calls[0];
+    const cfContext = firstApiCall?.[1];
+    expect(firstApiCall?.[0]).toBe(EU10_ENDPOINT);
+    expect(cfContext).toEqual(expect.objectContaining({
+      env: expect.objectContaining({
+        CF_HOME: expect.stringContaining('saptools-cf-session-'),
+      }),
+    }));
+    if (cfContext === undefined) throw new Error('Expected cf-sync CF context');
+    expect(cfAuth).toHaveBeenCalledWith('sample.user@example.com', 'sample-password', cfContext);
+    expect(cfOrgs).toHaveBeenCalledWith(cfContext);
+    expect(cfTargetOrg).toHaveBeenCalledWith('demo-org', cfContext);
+    expect(cfSpaces).toHaveBeenCalledWith(cfContext);
+    expect(cfTargetSpace).toHaveBeenCalledWith('demo-org', 'demo-space', cfContext);
+    expect(cfAppDetails).toHaveBeenCalledWith(cfContext);
   });
 
-  it('preserves a fresh active full-sync lock as lock contention', async () => {
-    const freshIso = new Date().toISOString();
-    await writeFile(SYNC_LOCK_PATH, JSON.stringify({
-      syncId: 'fresh-sync',
-      pid: process.pid,
-      hostname: 'sample-host',
-      startedAt: freshIso,
-    }), 'utf8');
+  it('treats a refused cf-sync lock as lock contention', async () => {
     vi.mocked(getCredentials).mockResolvedValue({
       email: 'sample.user@example.com',
       password: 'sample-password',
     });
-    vi.mocked(readRuntimeState).mockResolvedValue(makeRuntimeState({
-      syncId: 'fresh-sync',
-      updatedAt: freshIso,
-    }));
     vi.mocked(tryAcquireSyncLock).mockResolvedValue(undefined);
 
     runCacheSync();
@@ -597,7 +583,8 @@ describe('runCacheSync progress status', () => {
       }));
     });
     expect(failRuntimeState).not.toHaveBeenCalled();
-    await rm(SYNC_LOCK_PATH, { force: true });
+    expect(initializeRuntimeState).not.toHaveBeenCalled();
+    expect(cfApi).not.toHaveBeenCalled();
   });
 });
 
@@ -606,13 +593,18 @@ describe('syncSingleRegion', () => {
     vi.clearAllMocks();
     vi.mocked(getSyncProgress).mockReturnValue(undefined);
     vi.mocked(getCacheSettings).mockReturnValue({ enabled: true, intervalHours: 24 });
-    vi.mocked(cfLogin).mockResolvedValue(undefined);
+    vi.mocked(cfApi).mockResolvedValue(undefined);
+    vi.mocked(cfAuth).mockResolvedValue(undefined);
     vi.mocked(cfOrgs).mockResolvedValue(['demo-org']);
-    vi.mocked(cfTargetOrgAndSpaces).mockResolvedValue(['app']);
-    vi.mocked(cfTargetAndApps).mockResolvedValue([{
+    vi.mocked(cfTargetOrg).mockResolvedValue(undefined);
+    vi.mocked(cfSpaces).mockResolvedValue(['app']);
+    vi.mocked(cfTargetSpace).mockResolvedValue(undefined);
+    vi.mocked(cfAppDetails).mockResolvedValue([{
       name: 'sample-service-a',
-      state: 'started',
-      urls: ['sample-service-a.cfapps.example.com'],
+      requestedState: 'started',
+      runningInstances: 1,
+      totalInstances: 1,
+      routes: ['sample-service-a.cfapps.example.com'],
     }]);
     vi.mocked(persistRegion).mockResolvedValue(undefined);
   });
@@ -639,14 +631,21 @@ describe('syncSingleRegion', () => {
       'sample-password',
     )).resolves.toEqual({ status: 'synced' });
 
-    expect(cfLogin).toHaveBeenCalledWith(
-      EU10_ENDPOINT,
-      'sample.user@example.com',
-      'sample-password',
-      expect.stringContaining('cds-debug-cf-'),
-    );
-    expect(cfTargetOrgAndSpaces).toHaveBeenCalledWith('demo-org', expect.stringContaining('cds-debug-cf-'));
-    expect(cfTargetAndApps).toHaveBeenCalledWith('demo-org', 'app', expect.stringContaining('cds-debug-cf-'));
+    const firstApiCall = vi.mocked(cfApi).mock.calls[0];
+    const cfContext = firstApiCall?.[1];
+    expect(firstApiCall?.[0]).toBe(EU10_ENDPOINT);
+    expect(cfContext).toEqual(expect.objectContaining({
+      env: expect.objectContaining({
+        CF_HOME: expect.stringContaining('saptools-cf-session-'),
+      }),
+    }));
+    if (cfContext === undefined) throw new Error('Expected cf-sync CF context');
+    expect(cfAuth).toHaveBeenCalledWith('sample.user@example.com', 'sample-password', cfContext);
+    expect(cfOrgs).toHaveBeenCalledWith(cfContext);
+    expect(cfTargetOrg).toHaveBeenCalledWith('demo-org', cfContext);
+    expect(cfSpaces).toHaveBeenCalledWith(cfContext);
+    expect(cfTargetSpace).toHaveBeenCalledWith('demo-org', 'app', cfContext);
+    expect(cfAppDetails).toHaveBeenCalledWith(cfContext);
     expect(persistRegion).toHaveBeenCalledWith({
       key: 'eu10',
       label: 'Europe (Frankfurt) - AWS (eu10)',
