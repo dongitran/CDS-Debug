@@ -4,7 +4,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export const DEFAULT_PORT_FREE_TIMEOUT_MS = 3_000;
 const PORT_FREE_PROBE_INTERVAL_MS = 100;
-const PORT_OPEN_PROBE_INTERVAL_MS = 250;
 const PORT_PROBE_SOCKET_TIMEOUT_MS = 200;
 
 type PortProbeResult = 'open' | 'free' | 'unknown';
@@ -25,21 +24,6 @@ export async function waitPortFree(port: number, timeoutMs = DEFAULT_PORT_FREE_T
     timeoutMs,
     PORT_FREE_PROBE_INTERVAL_MS,
     (result) => result === 'free',
-  );
-}
-
-export async function waitPortListening(
-  port: number,
-  timeoutMs: number,
-  intervalMs = PORT_OPEN_PROBE_INTERVAL_MS,
-  shouldContinue: () => boolean = () => true,
-): Promise<boolean> {
-  return waitForPortState(
-    port,
-    timeoutMs,
-    intervalMs,
-    (result) => result === 'open',
-    shouldContinue,
   );
 }
 
@@ -118,13 +102,10 @@ async function waitForPortState(
   timeoutMs: number,
   intervalMs: number,
   isTargetState: (result: PortProbeResult) => boolean,
-  shouldContinue: () => boolean = () => true,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    if (!shouldContinue()) return false;
-
     const result = await probeLocalPort(port);
     if (isTargetState(result)) return true;
 

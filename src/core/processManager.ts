@@ -5,7 +5,8 @@ import { logInfo, logWarn, logError } from './logger';
 import { removeLaunchConfigs } from './launchConfigurator';
 import { openChromeDevTools } from './chromeDevTools';
 import { getDebugPreferences } from '../storage/cacheStore';
-import { cleanupPort, DEFAULT_PORT_FREE_TIMEOUT_MS, waitPortListening } from './portCleanup';
+import { cleanupPort, DEFAULT_PORT_FREE_TIMEOUT_MS } from './portCleanup';
+import { waitInspectorReady } from './inspectorReadyProbe';
 import { CF_SSH_SIGNAL_TIMEOUT_MS, isSshDisabledError, runCfSshSignal } from './cfSshSignal';
 import { registerActiveTunnel, unregisterActiveTunnel } from './orphanTunnelReaper';
 import {
@@ -551,12 +552,12 @@ async function probeTunnelAndAttach(
   lifecycleVersion: number,
 ): Promise<void> {
   if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
-  const PROBE_INTERVAL_MS = 250;
+  const PROBE_INTERVAL_MS = 500;
   const configuredSecs = vscode.workspace.getConfiguration('cdsDebug').get('tunnelReadyTimeoutSeconds', 30);
   const TIMEOUT_MS = Math.max(10, Math.min(120, configuredSecs)) * 1000;
-  logInfo(`[${appName}] Probing port ${port.toString()} (timeout ${(TIMEOUT_MS / 1000).toString()}s)…`);
+  logInfo(`[${appName}] Probing Node inspector through tunnel on port ${port.toString()} (timeout ${(TIMEOUT_MS / 1000).toString()}s)…`);
 
-  const isReady = await waitPortListening(
+  const isReady = await waitInspectorReady(
     port,
     TIMEOUT_MS,
     PROBE_INTERVAL_MS,
@@ -566,7 +567,7 @@ async function probeTunnelAndAttach(
   if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
 
   if (!isReady) {
-    const errMsg = `Tunnel on port ${port.toString()} did not become ready within ${(TIMEOUT_MS / 1000).toString()}s. Try increasing cdsDebug.tunnelReadyTimeoutSeconds in VS Code settings.`;
+    const errMsg = `Remote Node inspector did not respond through tunnel on port ${port.toString()} within ${(TIMEOUT_MS / 1000).toString()}s. The app may still be starting; try increasing cdsDebug.tunnelReadyTimeoutSeconds in VS Code settings.`;
     logError(`[${appName}] ${errMsg}`);
     reconnecting.delete(appName);
     sessionStates.set(appName, { status: 'ERROR', message: errMsg });

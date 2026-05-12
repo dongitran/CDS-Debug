@@ -38,6 +38,7 @@ type DebugSessionListener = (session: MockDebugSession) => void;
 const {
   childProcessMockState,
   keepaliveMockState,
+  inspectorProbeMockState,
   portCleanupMockState,
   processMockState,
   remoteCleanupMockState,
@@ -55,11 +56,13 @@ const {
     disposers: [] as ReturnType<typeof vi.fn>[],
     startTunnelKeepalive: vi.fn(),
   },
+  inspectorProbeMockState: {
+    waitInspectorReady: vi.fn(),
+  },
   portCleanupMockState: {
     cleanupPort: vi.fn(),
     killProcessOnPort: vi.fn(),
     waitPortFree: vi.fn(),
-    waitPortListening: vi.fn(),
   },
   processMockState: {
     kill: vi.fn(),
@@ -145,7 +148,10 @@ vi.mock('../../src/core/portCleanup', () => ({
   cleanupPort: portCleanupMockState.cleanupPort,
   killProcessOnPort: portCleanupMockState.killProcessOnPort,
   waitPortFree: portCleanupMockState.waitPortFree,
-  waitPortListening: portCleanupMockState.waitPortListening,
+}));
+
+vi.mock('../../src/core/inspectorReadyProbe', () => ({
+  waitInspectorReady: inspectorProbeMockState.waitInspectorReady,
 }));
 
 vi.mock('../../src/core/cfClient', () => ({
@@ -257,7 +263,8 @@ beforeEach(() => {
   portCleanupMockState.cleanupPort.mockResolvedValue(true);
   portCleanupMockState.killProcessOnPort.mockResolvedValue(undefined);
   portCleanupMockState.waitPortFree.mockResolvedValue(true);
-  portCleanupMockState.waitPortListening.mockResolvedValue(true);
+  inspectorProbeMockState.waitInspectorReady.mockReset();
+  inspectorProbeMockState.waitInspectorReady.mockResolvedValue(true);
 
   vscodeMockState.append.mockClear();
   vscodeMockState.appendLine.mockClear();
