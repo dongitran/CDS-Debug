@@ -5,7 +5,11 @@ import type * as BreakpointSnapshotManagerModule from '../../src/core/breakpoint
 import type * as ProcessManagerModule from '../../src/core/processManager';
 import type * as ScopeSyncModule from '../../src/storage/scopeSync';
 import type * as ShellEnvModule from '../../src/core/shellEnv';
-import type { CapDebugConfig, CfApp, ExtensionConfig, SharedCfScope } from '../../src/types/index';
+import type { CapDebugConfig, CfApp, CfTopology, ExtensionConfig, SharedCfScope } from '../../src/types/index';
+import type {
+  CfSyncRegionOrgRefreshResult,
+  CfSyncSpaceRefreshResult,
+} from '../../src/core/cfSpaceRefresh';
 
 const cfClientMock = vi.hoisted(() => ({
   cfLogin: vi.fn<(apiEndpoint: string, email: string, password: string) => Promise<void>>(
@@ -43,8 +47,32 @@ const cacheSyncMock = vi.hoisted(() => {
 
 const cfTopologyMock = vi.hoisted(() => ({
   getAppsFromTopologySync: vi.fn<() => CfApp[] | undefined>(() => undefined),
-  getTopologySnapshot: vi.fn(() => Promise.resolve({ ready: false, accounts: [] })),
-  getTopologySnapshotSync: vi.fn(() => ({ ready: false, accounts: [] })),
+  getTopologySnapshot: vi.fn<() => Promise<CfTopology>>(
+    () => Promise.resolve({ ready: false, accounts: [] }),
+  ),
+  getTopologySnapshotSync: vi.fn<() => CfTopology>(() => ({ ready: false, accounts: [] })),
+}));
+
+const cfSpaceRefreshMock = vi.hoisted(() => ({
+  refreshCfSyncRegionOrgs: vi.fn<
+    (input: { apiEndpoint: string; email?: string; password?: string }) => Promise<CfSyncRegionOrgRefreshResult>
+  >(() => Promise.resolve({ status: 'skipped', reason: 'unknown-region' })),
+  refreshCfSyncSpace: vi.fn<
+    (
+      input: {
+        apiEndpoint: string;
+        orgName: string;
+        spaceName?: string;
+        email?: string;
+        password?: string;
+      },
+    ) => Promise<CfSyncSpaceRefreshResult>
+  >(() => Promise.resolve({ status: 'skipped', reason: 'unknown-region' })),
+  resolveRegionKeyForEndpoint: vi.fn((apiEndpoint: string) => {
+    if (apiEndpoint.includes('eu10')) return 'eu10';
+    if (apiEndpoint.includes('us10')) return 'us10';
+    return undefined;
+  }),
 }));
 
 const loggerMock = vi.hoisted(() => ({
@@ -127,6 +155,8 @@ vi.mock('../../src/core/cfClient', async (importOriginal) => {
 vi.mock('../../src/core/cacheSync', () => cacheSyncMock);
 
 vi.mock('../../src/core/cfTopology', () => cfTopologyMock);
+
+vi.mock('../../src/core/cfSpaceRefresh', () => cfSpaceRefreshMock);
 
 vi.mock('../../src/core/processManager', async (importOriginal) => {
   const actual = await importOriginal<typeof ProcessManagerModule>();
@@ -338,7 +368,25 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     cfTopologyMock.getAppsFromTopologySync.mockReset();
     cfTopologyMock.getAppsFromTopologySync.mockReturnValue(undefined);
     cfTopologyMock.getTopologySnapshot.mockClear();
+    cfTopologyMock.getTopologySnapshot.mockResolvedValue({ ready: false, accounts: [] });
     cfTopologyMock.getTopologySnapshotSync.mockClear();
+    cfTopologyMock.getTopologySnapshotSync.mockReturnValue({ ready: false, accounts: [] });
+    cfSpaceRefreshMock.refreshCfSyncRegionOrgs.mockReset();
+    cfSpaceRefreshMock.refreshCfSyncRegionOrgs.mockResolvedValue({
+      status: 'skipped',
+      reason: 'unknown-region',
+    });
+    cfSpaceRefreshMock.refreshCfSyncSpace.mockReset();
+    cfSpaceRefreshMock.refreshCfSyncSpace.mockResolvedValue({
+      status: 'skipped',
+      reason: 'unknown-region',
+    });
+    cfSpaceRefreshMock.resolveRegionKeyForEndpoint.mockReset();
+    cfSpaceRefreshMock.resolveRegionKeyForEndpoint.mockImplementation((apiEndpoint: string) => {
+      if (apiEndpoint.includes('eu10')) return 'eu10';
+      if (apiEndpoint.includes('us10')) return 'us10';
+      return undefined;
+    });
     loggerMock.logError.mockClear();
     loggerMock.logInfo.mockClear();
     loggerMock.logWarn.mockClear();
@@ -495,6 +543,101 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     expect(getConfig()).toMatchObject({
       apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
       orgs: ['sample-org-alpha'],
+    });
+  });
+
+  it('uses cf-sync region org refresh instead of stale topology orgs during login', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfTopologyMock.getTopologySnapshotSync.mockReturnValue({
+      ready: true,
+      accounts: [{
+        regionKey: 'eu10',
+        regionLabel: 'Europe (Frankfurt)',
+        apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+        orgName: 'sample-org-stale',
+        spaces: [{ name: 'app', apps: [] }],
+      }],
+    });
+    cfSpaceRefreshMock.refreshCfSyncRegionOrgs.mockResolvedValue({
+      status: 'refreshed',
+      regionKey: 'eu10',
+      orgNames: ['sample-org-fresh'],
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-live']);
+
+    await getInternals(provider).handleLogin('https://api.cf.eu10.hana.ondemand.com');
+
+    expect(cfSpaceRefreshMock.refreshCfSyncRegionOrgs).toHaveBeenCalledWith({
+      apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    expect(cfClientMock.cfOrgs).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'LOGIN_SUCCESS',
+      payload: {
+        orgs: ['sample-org-fresh'],
+        apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+      },
+    });
+  });
+
+  it('falls back to live cf orgs when cf-sync cannot refresh the selected endpoint', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfSpaceRefreshMock.refreshCfSyncRegionOrgs.mockResolvedValue({
+      status: 'skipped',
+      reason: 'unknown-region',
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-live']);
+
+    await getInternals(provider).handleLogin('https://api.cf.custom.example.com');
+
+    expect(cfClientMock.cfOrgs).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'LOGIN_SUCCESS',
+      payload: {
+        orgs: ['sample-org-live'],
+        apiEndpoint: 'https://api.cf.custom.example.com',
+      },
+    });
+  });
+
+  it('falls back to live cf orgs when cf-sync region org refresh fails', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    shellEnvMock.getCredentials.mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    cfSpaceRefreshMock.refreshCfSyncRegionOrgs.mockResolvedValue({
+      status: 'failed',
+      regionKey: 'eu10',
+      error: new Error('org refresh failed'),
+    });
+    cfClientMock.cfOrgs.mockResolvedValue(['sample-org-live']);
+
+    await getInternals(provider).handleLogin('https://api.cf.eu10.hana.ondemand.com');
+
+    expect(cfClientMock.cfOrgs).toHaveBeenCalledTimes(1);
+    expect(loggerMock.logWarn).toHaveBeenCalledWith(
+      '[cf-sync] Region org refresh failed for eu10: org refresh failed. Falling back to live cf orgs.',
+    );
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'LOGIN_SUCCESS',
+      payload: {
+        orgs: ['sample-org-live'],
+        apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+      },
     });
   });
 

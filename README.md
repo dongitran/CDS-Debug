@@ -32,7 +32,7 @@ A sidebar panel connects to your Cloud Foundry environment, shows your running a
 
 ## ✨ Features
 
-- 🗺️ **Region Picker** — choose from 14 built-in CF regions or enter a custom endpoint
+- 🗺️ **Region Picker** — choose from the cf-sync SAP CF region catalog or enter a custom endpoint
 - 🔐 **Zero-input Auth** — reads `SAP_EMAIL` / `SAP_PASSWORD` from your shell environment automatically
 - 📋 **Live App List** — started apps on top, stopped dimmed below, with instant search
 - ☑️ **Multi-select Debug** — tick any started apps and launch all sessions at once
@@ -75,7 +75,7 @@ Click the **⚡ CDS Debug** icon in the Activity Bar.
 
 ### 3 — Pick a CF region and log in
 
-Select your region from the grid (or enter a custom endpoint), then click **Login to Cloud Foundry**. Credentials are read from your environment — nothing to type.
+Select your region from the grid (or enter a custom endpoint), then click **Login to Cloud Foundry**. CDS Debug refreshes that region's org list through `cf-sync` before showing the org step, without loading spaces or apps. Credentials are read from your environment — nothing to type.
 
 ### 4 — Map a CF org to a local folder
 

@@ -29,7 +29,11 @@ import {
   cfTargetOrgAndSpaces,
   isCfAuthError,
 } from '../core/cfClient';
-import { refreshCfSyncSpace, resolveRegionKeyForEndpoint } from '../core/cfSpaceRefresh';
+import {
+  refreshCfSyncRegionOrgs,
+  refreshCfSyncSpace,
+  resolveRegionKeyForEndpoint,
+} from '../core/cfSpaceRefresh';
 import { findRepoFolder } from '../core/folderScanner';
 import { buildDebugTargets, buildFallbackTargets, getFolderNameCandidates } from '../core/appMapper';
 import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig } from '../core/launchConfigurator';
@@ -398,7 +402,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'LOGIN':
-        await this.handleLogin(raw.payload.apiEndpoint);
+        await this.handleLogin(raw.payload.apiEndpoint, raw.payload.topologyOrgName);
         break;
 
       case 'SAVE_MAPPINGS':
@@ -709,7 +713,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     this.postMessage({ type: 'GROUP_FOLDER_SELECTED', payload: { path: selected.fsPath } });
   }
 
-  private async handleLogin(apiEndpoint: string): Promise<void> {
+  private async handleLogin(apiEndpoint: string, topologyOrgName?: string): Promise<void> {
     const { email, password } = await getCredentials();
 
     if (!email || !password) {
@@ -740,19 +744,17 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       }
 
       await cfLogin(apiEndpoint, email, password);
-      const topologyOrgs = this.getTopologyOrgsForEndpoint(apiEndpoint);
-      const orgs = topologyOrgs ?? await cfOrgs();
-      if (topologyOrgs) {
-        logInfo(`[Topology] Skipped live cf orgs for ${apiEndpoint} — using ${orgs.length.toString()} synced org(s).`);
-      } else {
-        logInfo(`Login successful. Found ${orgs.length.toString()} org(s): ${orgs.join(', ')}`);
-      }
+      const topologyShortcut = topologyOrgName
+        ? this.loadTopologyShortcutLoginOrgs(apiEndpoint, topologyOrgName)
+        : undefined;
+      const loginOrgs = topologyShortcut ?? await this.loadLoginOrgs(apiEndpoint, email, password);
+      const orgs = loginOrgs.orgs;
 
       const existing = getConfig();
       await saveConfig(buildLoginConfig(apiEndpoint, orgs, existing));
       this.postMessage({ type: 'LOGIN_SUCCESS', payload: { orgs, apiEndpoint } });
       this.applyPendingExternalScopeIfAny(orgs);
-      this.startSingleRegionSyncAfterLogin(apiEndpoint, email, password, topologyOrgs !== undefined);
+      this.startSingleRegionSyncAfterLogin(apiEndpoint, email, password, loginOrgs.topologyAlreadyAvailable);
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Login failed: ${msg}`);
@@ -763,6 +765,49 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       if (!revoked) {
         this.postMessage({ type: 'LOGIN_ERROR', payload: { message: msg } });
       }
+    }
+  }
+
+  private loadTopologyShortcutLoginOrgs(
+    apiEndpoint: string,
+    orgName: string,
+  ): { orgs: string[]; topologyAlreadyAvailable: boolean } | undefined {
+    const topologyOrgs = this.getTopologyOrgsForEndpoint(apiEndpoint);
+    if (!topologyOrgs?.includes(orgName)) return undefined;
+
+    logInfo(`[Topology] Continuing with synced org ${orgName}; skipped region org refresh for ${apiEndpoint}.`);
+    return { orgs: topologyOrgs, topologyAlreadyAvailable: true };
+  }
+
+  private async loadLoginOrgs(
+    apiEndpoint: string,
+    email: string,
+    password: string,
+  ): Promise<{ orgs: string[]; topologyAlreadyAvailable: boolean }> {
+    const topologyOrgs = this.getTopologyOrgsForEndpoint(apiEndpoint);
+    const topologyAlreadyAvailable = topologyOrgs !== undefined;
+    const refreshed = await refreshCfSyncRegionOrgs({ apiEndpoint, email, password });
+
+    if (refreshed.status === 'refreshed') {
+      logInfo(`[cf-sync] Refreshed ${refreshed.orgNames.length.toString()} org(s) for ${refreshed.regionKey}.`);
+      void this.pushCfTopology();
+      return { orgs: refreshed.orgNames, topologyAlreadyAvailable };
+    }
+
+    if (refreshed.status === 'failed') {
+      logWarn(
+        `[cf-sync] Region org refresh failed for ${refreshed.regionKey}: ${extractErrorMessage(refreshed.error)}. Falling back to live cf orgs.`,
+      );
+    }
+
+    try {
+      const orgs = await cfOrgs();
+      logInfo(`Login successful. Found ${orgs.length.toString()} org(s): ${orgs.join(', ')}`);
+      return { orgs, topologyAlreadyAvailable };
+    } catch (error: unknown) {
+      if (!topologyOrgs) throw error;
+      logWarn(`[Topology] Live cf orgs failed for ${apiEndpoint}; using ${topologyOrgs.length.toString()} synced org(s).`);
+      return { orgs: topologyOrgs, topologyAlreadyAvailable };
     }
   }
 

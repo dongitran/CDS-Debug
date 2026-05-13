@@ -244,7 +244,7 @@ export function getScript(nonce: string): string {
 
     function getSpacesFromTopology(regionKey, orgName) {
       const account = findTopologyAccountForNavigation(regionKey, orgName);
-      if (!account || !Array.isArray(account.spaces)) return null;
+      if (!account || !Array.isArray(account.spaces) || account.spaces.length === 0) return null;
       return account.spaces.map(normalizeTopologySpace).filter(Boolean);
     }
 
@@ -453,7 +453,10 @@ export function getScript(nonce: string): string {
       state.pendingTopologyOrg = { regionKey: account.regionKey, orgName: account.orgName };
       state.screen = SCREENS.LOGGING_IN;
       render();
-      vscode.postMessage({ type: 'LOGIN', payload: { apiEndpoint: account.apiEndpoint } });
+      vscode.postMessage({
+        type: 'LOGIN',
+        payload: { apiEndpoint: account.apiEndpoint, topologyOrgName: account.orgName },
+      });
     }
 
     function addBreakpointSnapshot(snapshot) {

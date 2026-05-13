@@ -334,6 +334,22 @@ describe('webview markup contracts', () => {
     expect(script).toMatch(/const mapping = selectPreferredOrgMapping\(state\.orgs,\s*state\.mappings\);/);
   });
 
+  it('treats topology accounts with empty spaces as org-list only data', () => {
+    const script = getScript('test-nonce');
+
+    expect(script).toContain(
+      'if (!account || !Array.isArray(account.spaces) || account.spaces.length === 0) return null;',
+    );
+  });
+
+  it('passes the selected topology org during topology shortcut login', () => {
+    const script = getScript('test-nonce');
+
+    expect(script).toContain(
+      "payload: { apiEndpoint: account.apiEndpoint, topologyOrgName: account.orgName }",
+    );
+  });
+
   it('does not trigger LOAD_APPS when SCOPE_SYNCED matches the selected org and space', () => {
     const harness = createWebviewScriptHarness();
     moveHarnessToReadyScreen(harness);

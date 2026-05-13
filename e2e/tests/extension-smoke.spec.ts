@@ -38,6 +38,7 @@ type CfScenario =
   | 'remote-root-race'
   | 'restart-race'
   | 'reload-changes'
+  | 'region-org-refresh'
   | 'multi-spaces'
   | 'multi-region-cache'
   | 'multi-region-auth-fail'
@@ -164,6 +165,22 @@ case "$cmd" in
     if [[ "$SCENARIO" == "topology-cache-only" ]]; then
       echo "unexpected live orgs command in topology-cache-only scenario" >&2
       exit 23
+    fi
+    if [[ "$SCENARIO" == "region-org-refresh" ]]; then
+      if [[ "\${CF_HOME:-}" == *"saptools-cf-session-"* ]]; then
+        cat <<'OUT'
+Getting orgs as e2e.mock.user@example.com...
+name
+sample-org-fresh
+OUT
+      else
+        cat <<'OUT'
+Getting orgs as e2e.mock.user@example.com...
+name
+sample-org-stale-live
+OUT
+      fi
+      exit 0
     fi
     if [[ "$SCENARIO" == "no-orgs" ]]; then
       echo "name"
@@ -1954,6 +1971,42 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
 
       const errorBoxEvents = await stopErrorBoxMonitor(webview);
       expect(errorBoxEvents).toEqual([]);
+    });
+  });
+
+  test('User can login to a selected region with the latest cf-sync org list', async () => {
+    await withVsCodeSession({ credentialMode: 'env', cfScenario: 'region-org-refresh' }, async (workbenchPage, artifacts) => {
+      const webview = await openCdsDebugWebview(workbenchPage);
+      await expectRegionScreen(webview);
+
+      await injectMessage(webview, {
+        type: 'CF_TOPOLOGY',
+        payload: {
+          ready: true,
+          accounts: [{
+            regionKey: 'eu10',
+            regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
+            apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+            orgName: 'sample-org-stale-topology',
+            spaces: [],
+          }],
+        },
+      });
+
+      await webview.getByRole('tab', { name: 'Region' }).click();
+      await selectRegion(webview, 'eu10 Europe (Frankfurt) - AWS');
+      await loginFromRegionScreen(webview);
+
+      await expect(webview.getByText('Select CF Org')).toBeVisible({ timeout: 15_000 });
+      await expect(webview.getByRole('radio', { name: 'sample-org-fresh' })).toBeAttached();
+      await expect(webview.getByText('sample-org-stale-topology')).toHaveCount(0);
+      await expect(webview.getByText('sample-org-stale-live')).toHaveCount(0);
+      await captureStepEvidence(workbenchPage, 'region-login-cf-sync-org-refresh');
+
+      const commands = await readMockCfCommands(artifacts.mockBinDir);
+      expect(commands.filter((command) => command === 'orgs')).toHaveLength(1);
+      expect(commands).not.toContain('spaces');
+      expect(commands).not.toContain('apps');
     });
   });
 
@@ -3890,12 +3943,15 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expectRegionScreen(webview);
         await captureStepEvidence(workbenchPage, 'change-mapping-while-sync-running');
 
+        const apiCountAtStop = (await readMockCfCommands(artifacts.mockBinDir))
+          .filter((command) => command === 'api')
+          .length;
         const observedAt = Date.now();
         await expect.poll(async () => {
           const apiCount = (await readMockCfCommands(artifacts.mockBinDir))
             .filter((command) => command === 'api')
             .length;
-          if (apiCount > 2) return 'continued';
+          if (apiCount > apiCountAtStop) return 'continued';
           return Date.now() - observedAt > 5_500 ? 'stopped' : 'waiting';
         }, { timeout: 8_000 }).toBe('stopped');
       });

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.62-pre.19] — 2026
+
+### Changes
+
+- **Region login now refreshes orgs through cf-sync** — Updated `@saptools/cf-sync` to `0.4.9` and use its region org-list refresh during Cloud Foundry login, so Step 2 shows the latest orgs without walking spaces or apps.
+- **Org-list topology stays a live navigation hint** — CDS Debug now treats topology accounts with empty `spaces` as org-list-only data, preserving live `cf spaces` fallback until targeted space/app data is synced.
+
 ## [0.3.62-pre.17] — 2026
 
 ### Changes

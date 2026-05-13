@@ -397,7 +397,7 @@ export type E2eBridgeCommand =
 // Messages from webview → extension
 export type WebviewMessage =
   | { type: 'SELECT_GROUP_FOLDER' }
-  | { type: 'LOGIN'; payload: { apiEndpoint: string } }
+  | { type: 'LOGIN'; payload: { apiEndpoint: string; topologyOrgName?: string } }
   | { type: 'LOAD_SPACES'; payload: { org: string } }
   | { type: 'LOAD_APPS'; payload: { org: string; space?: string; forceRefresh?: boolean } }
   | { type: 'WARMUP_CF_SESSION'; payload: { org: string; space?: string } }

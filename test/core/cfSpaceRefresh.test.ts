@@ -1,14 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getAllRegionsMock = vi.hoisted(() => vi.fn());
+const syncRegionOrgsMock = vi.hoisted(() => vi.fn());
 const syncSpaceMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@saptools/cf-sync', () => ({
   getAllRegions: getAllRegionsMock,
+  syncRegionOrgs: syncRegionOrgsMock,
   syncSpace: syncSpaceMock,
 }));
 
-import { refreshCfSyncSpace, resolveRegionKeyForEndpoint } from '../../src/core/cfSpaceRefresh';
+import {
+  refreshCfSyncRegionOrgs,
+  refreshCfSyncSpace,
+  resolveRegionKeyForEndpoint,
+} from '../../src/core/cfSpaceRefresh';
 
 const EU10_ENDPOINT = 'https://api.cf.eu10.hana.ondemand.com';
 const EU10_002_ENDPOINT = 'https://api.cf.eu10-002.hana.ondemand.com';
@@ -22,6 +28,62 @@ describe('cfSpaceRefresh', () => {
       { key: 'eu10-002', label: 'Europe (Frankfurt) - AWS (eu10-002)', apiEndpoint: EU10_002_ENDPOINT },
       { key: 'ap11', label: 'Singapore', apiEndpoint: 'https://api.cf.ap11.hana.ondemand.com' },
     ]);
+  });
+
+  it('refreshes one region org list through cf-sync without loading apps', async () => {
+    syncRegionOrgsMock.mockResolvedValue({
+      orgNames: ['sample-org-alpha', 'sample-org-beta'],
+    });
+
+    const result = await refreshCfSyncRegionOrgs({
+      apiEndpoint: EU10_ENDPOINT,
+      email: 'demo@example.com',
+      password: 'secret',
+    });
+
+    expect(syncRegionOrgsMock).toHaveBeenCalledWith({
+      regionKey: 'eu10',
+      email: 'demo@example.com',
+      password: 'secret',
+    });
+    expect(syncSpaceMock).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      status: 'refreshed',
+      regionKey: 'eu10',
+      orgNames: ['sample-org-alpha', 'sample-org-beta'],
+    });
+  });
+
+  it('skips region org refresh when credentials are missing', async () => {
+    await expect(refreshCfSyncRegionOrgs({ apiEndpoint: EU10_ENDPOINT })).resolves.toEqual({
+      status: 'skipped',
+      reason: 'missing-credentials',
+    });
+    expect(syncRegionOrgsMock).not.toHaveBeenCalled();
+  });
+
+  it('skips region org refresh for UI-only fallback endpoints that cf-sync does not know', async () => {
+    await expect(
+      refreshCfSyncRegionOrgs({
+        apiEndpoint: US10_004_ENDPOINT,
+        email: 'demo@example.com',
+        password: 'secret',
+      }),
+    ).resolves.toEqual({ status: 'skipped', reason: 'unknown-region' });
+    expect(syncRegionOrgsMock).not.toHaveBeenCalled();
+  });
+
+  it('returns region org refresh failures so callers can fall back to live cf orgs', async () => {
+    const error = new Error('org lookup failed');
+    syncRegionOrgsMock.mockRejectedValue(error);
+
+    await expect(
+      refreshCfSyncRegionOrgs({
+        apiEndpoint: EU10_ENDPOINT,
+        email: 'demo@example.com',
+        password: 'secret',
+      }),
+    ).resolves.toEqual({ status: 'failed', regionKey: 'eu10', error });
   });
 
   it('resolves a built-in region from its API endpoint', () => {
