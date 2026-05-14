@@ -337,15 +337,33 @@ describe('clearBreakpointsBeforeStop', () => {
       breakpoints: [],
       sourceModified: false,
     });
-    // Remote path is broadcast to every tracked session — including the child where the
-    // breakpoint was actually bound by vscode-js-debug.
-    const remoteClearMatcher = ['setBreakpoints', {
+    // Path-only clear is broadcast to every tracked session — including the child where
+    // the breakpoint was actually bound by vscode-js-debug.
+    const pathOnlyMatcher = ['setBreakpoints', {
       source: { path: '/home/vcap/app/node_modules/@sap/cds/lib/server.ts' },
       breakpoints: [],
       sourceModified: false,
     }] as const;
-    expect(rootSession.customRequest).toHaveBeenCalledWith(...remoteClearMatcher);
-    expect(childSession.customRequest).toHaveBeenCalledWith(...remoteClearMatcher);
+    expect(rootSession.customRequest).toHaveBeenCalledWith(...pathOnlyMatcher);
+    expect(childSession.customRequest).toHaveBeenCalledWith(...pathOnlyMatcher);
+
+    // Critical: the original setBreakpoints from VS Code carried sourceReference, so
+    // vscode-js-debug bound the breakpoint by ref. The path-only clear above would NOT
+    // match in that case — we must mirror the original descriptor to the tagged session
+    // (child-id), and only there because sourceReference is session-scoped.
+    expect(childSession.customRequest).toHaveBeenCalledWith('setBreakpoints', {
+      source: {
+        path: '/home/vcap/app/node_modules/@sap/cds/lib/server.ts',
+        sourceReference: 17,
+      },
+      breakpoints: [],
+      sourceModified: false,
+    });
+    expect(rootSession.customRequest).not.toHaveBeenCalledWith('setBreakpoints', {
+      source: expect.objectContaining({ sourceReference: 17 }) as unknown,
+      breakpoints: [],
+      sourceModified: false,
+    });
 
     // Orphan debug-URI breakpoint dropped from VS Code state so it cannot leak into the
     // next session.
