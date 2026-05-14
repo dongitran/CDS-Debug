@@ -115,6 +115,17 @@ function killProcessGroup(child: ChildProcess): void {
   child.kill();
 }
 
+function teardownTunnelOnProbeFailure(appName: string): void {
+  const child = processes.get(appName);
+  if (child === undefined) return;
+  logWarn(`[${appName}] Probe timed out — terminating unresponsive cf ssh tunnel.`);
+  killProcessGroup(child);
+  processes.delete(appName);
+  debugPorts.delete(appName);
+  disposeKeepalive(appName);
+  void unregisterActiveTunnel(appName);
+}
+
 async function cleanupDebugPort(appName: string, port: number): Promise<boolean> {
   const isFree = await cleanupPort(port, DEFAULT_PORT_FREE_TIMEOUT_MS);
   if (!isFree) {
@@ -557,6 +568,21 @@ async function probeTunnelAndAttach(
   const TIMEOUT_MS = Math.max(10, Math.min(120, configuredSecs)) * 1000;
   logInfo(`[${appName}] Probing Node inspector through tunnel on port ${port.toString()} (timeout ${(TIMEOUT_MS / 1000).toString()}s)…`);
 
+  // Re-arm USR1 once part-way through the probe window. Right after `cf restart`
+  // (or a freshly rolled CF instance) the first USR1 sometimes hits a Node process
+  // that has not yet registered the SIGUSR1 inspector handler, and the signal is
+  // silently dropped. A second signal at the midpoint catches an app that finished
+  // bootstrapping after the initial USR1 was sent, without doubling the cost when
+  // things are healthy.
+  const usr1ResendDelayMs = Math.floor(TIMEOUT_MS / 2);
+  const resendTimer = setTimeout(() => {
+    if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
+    logInfo(`[${appName}] Inspector still unresponsive — re-arming USR1 once more…`);
+    void runCfSshSignal(appName, buildInspectorSignalCommand(), channel).catch((err: unknown) => {
+      logWarn(`[${appName}] USR1 re-arm failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }, usr1ResendDelayMs);
+
   const isReady = await waitInspectorReady(
     port,
     TIMEOUT_MS,
@@ -564,9 +590,15 @@ async function probeTunnelAndAttach(
     () => isCurrentLifecycle(appName, lifecycleVersion) && !stoppedApps.has(appName),
   );
 
+  clearTimeout(resendTimer);
+
   if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
 
   if (!isReady) {
+    // Tear down the orphaned cf ssh tunnel so a follow-up Start Debug click is not
+    // fighting a leftover process holding the local port. Without this the user had
+    // to manually Stop the failed session before Start would succeed.
+    teardownTunnelOnProbeFailure(appName);
     const errMsg = `Remote Node inspector did not respond through tunnel on port ${port.toString()} within ${(TIMEOUT_MS / 1000).toString()}s. The app may still be starting; try increasing cdsDebug.tunnelReadyTimeoutSeconds in VS Code settings.`;
     logError(`[${appName}] ${errMsg}`);
     reconnecting.delete(appName);

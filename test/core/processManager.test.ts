@@ -81,6 +81,7 @@ const {
     appendLine: vi.fn(),
     clear: vi.fn(),
     dispose: vi.fn(),
+    show: vi.fn(),
     showInformationMessage: vi.fn(),
     startDebugging: vi.fn(),
     stopDebugging: vi.fn(),
@@ -210,6 +211,7 @@ vi.mock('vscode', () => ({
       appendLine: vscodeMockState.appendLine,
       clear: vscodeMockState.clear,
       dispose: vscodeMockState.dispose,
+      show: vscodeMockState.show,
     }),
     showInformationMessage: vscodeMockState.showInformationMessage,
   },
@@ -393,6 +395,46 @@ describe('processManager remote inspector hardening', () => {
       expect.objectContaining({ name: 'Debug: reconnect-app' }),
     );
     expect(tunnelSpawnCount()).toBe(2);
+  });
+
+  it('re-arms USR1 mid-probe and tears down the cf ssh tunnel when the probe times out', async () => {
+    // Reproduces the user-reported flow where Start Debug after a fresh CF app boot
+    // would hang on the inspector probe and require a manual Stop + Start to recover.
+    // The midpoint USR1 re-arm gives the still-booting app a second chance to expose
+    // the inspector, and the explicit teardown ensures the orphaned cf ssh tunnel
+    // does not keep port 20000 held captive when the probe ultimately fails.
+    const probeReady = createDeferred<boolean>();
+    inspectorProbeMockState.waitInspectorReady.mockReset();
+    inspectorProbeMockState.waitInspectorReady.mockImplementationOnce(() => probeReady.promise);
+    vscodeMockState.startDebugging.mockClear();
+
+    const tunnelChild = await startManagedTunnel('slow-boot-app', 20000);
+
+    const signalCount = (): number =>
+      childProcessMockState.calls.filter((call) => call.command === 'cf' && call.args.includes('-c')).length;
+    expect(signalCount()).toBe(1);
+
+    // Default tunnelReadyTimeoutSeconds is 30s, so the resend fires at 15s in.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(signalCount()).toBe(2);
+
+    processMockState.kill.mockClear();
+    tunnelRegistryMockState.unregisterActiveTunnel.mockClear();
+
+    const errors: string[] = [];
+    debugProcessEvents.on('statusChanged', (event: StatusChangedEvent) => {
+      if (event.status === 'ERROR' && event.message !== undefined) errors.push(event.message);
+    });
+
+    probeReady.resolve(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(processMockState.kill).toHaveBeenCalledWith(-tunnelChild.pid, 'SIGTERM');
+    expect(tunnelRegistryMockState.unregisterActiveTunnel).toHaveBeenCalledWith('slow-boot-app');
+    expect(vscodeMockState.startDebugging).not.toHaveBeenCalled();
+    expect(errors.some((message) => message.includes('Remote Node inspector did not respond'))).toBe(true);
   });
 
   it('schedules reconnect when keepalive reports repeated failure', async () => {

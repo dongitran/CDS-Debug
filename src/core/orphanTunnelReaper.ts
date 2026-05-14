@@ -52,10 +52,8 @@ export async function registerActiveTunnel(entry: ActiveTunnelEntry): Promise<vo
   const storagePath = tunnelRegistryStoragePath;
   if (storagePath === undefined) return;
 
-  const registry = await readRegistry(storagePath);
-  if (!registry.safe) return;
-
-  const next = registry.entries.filter((item) => item.appName !== entry.appName && item.pid !== entry.pid);
+  const entries = await readRegistryEntriesForWrite(storagePath);
+  const next = entries.filter((item) => item.appName !== entry.appName && item.pid !== entry.pid);
   next.push({ ...entry });
   await writeRegistry(storagePath, next);
 }
@@ -64,13 +62,22 @@ export async function unregisterActiveTunnel(appNameOrPid: string | number): Pro
   const storagePath = tunnelRegistryStoragePath;
   if (storagePath === undefined) return;
 
-  const registry = await readRegistry(storagePath);
-  if (!registry.safe) return;
-
-  const next = registry.entries.filter((item) => (
+  const entries = await readRegistryEntriesForWrite(storagePath);
+  const next = entries.filter((item) => (
     typeof appNameOrPid === 'string' ? item.appName !== appNameOrPid : item.pid !== appNameOrPid
   ));
   await writeRegistry(storagePath, next);
+}
+
+// A corrupt registry (e.g. concatenated JSON from an interrupted write or a stale file
+// left by an older extension version) would otherwise persist forever: every read
+// returns `safe: false`, so every register/unregister silently bails out and the file
+// is never rewritten. Because the caller is about to fully overwrite the file anyway,
+// treat corruption as "start from empty" here. The reap path stays conservative and
+// still skips when the registry is unreadable.
+async function readRegistryEntriesForWrite(storagePath: string): Promise<ActiveTunnelEntry[]> {
+  const registry = await readRegistry(storagePath);
+  return registry.safe ? registry.entries : [];
 }
 
 export async function reapOrphanCfSshTunnels(

@@ -207,6 +207,37 @@ describe('orphanTunnelReaper', () => {
     });
   });
 
+  it('overwrites a corrupt registry on register so the file self-recovers', async () => {
+    // Simulate the real-world failure: two JSON arrays concatenated end-to-end.
+    // Before the fix this kept register/unregister bailing out forever, so the
+    // warning would spam every activation and orphan tunnels could never be
+    // tracked.
+    await writeFile(
+      join(storageDir, 'active-tunnels.json'),
+      '[]\n[{"appName":"stale","pid":1,"port":1,"startedAt":1,"ownerPid":1}]\n',
+      'utf8',
+    );
+
+    await registerActiveTunnel({
+      appName: 'recovering-app',
+      pid: 606,
+      port: 20002,
+      startedAt: 456,
+      ownerPid: 789,
+    });
+
+    const raw = await readFile(join(storageDir, 'active-tunnels.json'), 'utf8');
+    expect(JSON.parse(raw)).toEqual([
+      {
+        appName: 'recovering-app',
+        pid: 606,
+        port: 20002,
+        startedAt: 456,
+        ownerPid: 789,
+      },
+    ]);
+  });
+
   it('registers and unregisters active tunnel records', async () => {
     await registerActiveTunnel({
       appName: 'demo-app',
