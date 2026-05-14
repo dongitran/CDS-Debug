@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 interface MockBreakpoint {
   enabled: boolean;
   location: {
-    uri: { fsPath: string };
+    uri: { scheme: string; path: string; fsPath: string; query?: string };
     range: { start: { line: number; character: number } };
   };
 }
@@ -17,15 +17,30 @@ interface MockDebugSession {
 
 type ProgressTask = () => Promise<void>;
 
+interface BreakpointUriInit {
+  scheme?: string;
+  path?: string;
+  fsPath?: string;
+  query?: string;
+}
+
 const { vscodeMockState, cfClientMockState, MockSourceBreakpoint } = vi.hoisted(() => {
   class HoistedSourceBreakpoint {
     enabled: boolean;
     location: MockBreakpoint['location'];
 
-    constructor(fsPath: string, enabled = true) {
+    constructor(uriOrFsPath: string | BreakpointUriInit, enabled = true) {
       this.enabled = enabled;
+      const uri = typeof uriOrFsPath === 'string'
+        ? { scheme: 'file', path: uriOrFsPath, fsPath: uriOrFsPath }
+        : {
+          scheme: uriOrFsPath.scheme ?? 'file',
+          path: uriOrFsPath.path ?? uriOrFsPath.fsPath ?? '',
+          fsPath: uriOrFsPath.fsPath ?? uriOrFsPath.path ?? '',
+          ...(uriOrFsPath.query !== undefined ? { query: uriOrFsPath.query } : {}),
+        };
       this.location = {
-        uri: { fsPath },
+        uri,
         range: { start: { line: 0, character: 0 } },
       };
     }
@@ -35,6 +50,7 @@ const { vscodeMockState, cfClientMockState, MockSourceBreakpoint } = vi.hoisted(
     vscodeMockState: {
       settings: new Map<string, unknown>(),
       breakpoints: [] as unknown[],
+      removeBreakpoints: vi.fn(),
       showInformationMessage: vi.fn(),
       showWarningMessage: vi.fn(),
       withProgress: vi.fn(),
@@ -51,6 +67,14 @@ const { vscodeMockState, cfClientMockState, MockSourceBreakpoint } = vi.hoisted(
 
 vi.mock('../../src/core/cfClient', () => ({
   cfRestartApp: cfClientMockState.cfRestartApp,
+}));
+
+const debugSessionRegistryMockState = vi.hoisted(() => ({
+  sessionsByApp: new Map<string, unknown[]>(),
+}));
+
+vi.mock('../../src/core/debugSessionRegistry', () => ({
+  getDebugSessionsForApp: (appName: string): unknown[] => debugSessionRegistryMockState.sessionsByApp.get(appName) ?? [],
 }));
 
 vi.mock('vscode', () => ({
@@ -81,6 +105,7 @@ vi.mock('vscode', () => ({
     get breakpoints() {
       return vscodeMockState.breakpoints;
     },
+    removeBreakpoints: vscodeMockState.removeBreakpoints,
   },
   window: {
     showInformationMessage: vscodeMockState.showInformationMessage,
@@ -119,6 +144,7 @@ function createSession(customRequest?: ReturnType<typeof vi.fn>): MockDebugSessi
 beforeEach(() => {
   vscodeMockState.settings.clear();
   vscodeMockState.breakpoints = [];
+  vscodeMockState.removeBreakpoints.mockReset();
   vscodeMockState.showInformationMessage.mockReset();
   vscodeMockState.showWarningMessage.mockReset();
   vscodeMockState.withProgress.mockImplementation((_options: unknown, task: ProgressTask) => task());
@@ -126,6 +152,7 @@ beforeEach(() => {
   vscodeMockState.openTextDocument.mockResolvedValue({ uri: { fsPath: '/workspace/srv/sample.js' } });
   vscodeMockState.showTextDocument.mockResolvedValue({ selection: undefined, revealRange: vi.fn() });
   cfClientMockState.cfRestartApp.mockResolvedValue(undefined);
+  debugSessionRegistryMockState.sessionsByApp.clear();
 });
 
 afterEach(() => {
@@ -274,6 +301,76 @@ describe('clearBreakpointsBeforeStop', () => {
     await clearBreakpointsBeforeStop('missing-session-app', undefined);
 
     expect(vscodeMockState.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  it('clears debug-URI breakpoints across every tracked session of the app and removes them from VS Code state', async () => {
+    // Reproduces the Package browser case: a `.ts` file opened from node_modules that the
+    // local workspace does not have. `asDebugSourceUri` produced a `debug:` URI tagged with
+    // the deepest session, but vscode-js-debug bound the breakpoint inside a child session
+    // because CAP auto-attaches workers. Pre-fix, the URI fell outside the workspace so the
+    // setBreakpoints clear was never sent, and the orphan breakpoint persisted after stop
+    // (forcing a `cf restart`). The fix broadcasts the clear to every app session and drops
+    // the orphan from VS Code state.
+    const rootSession = createSession();
+    const childSession = createSession();
+    debugSessionRegistryMockState.sessionsByApp.set('multi-session-app', [
+      { id: 'root-id', customRequest: rootSession.customRequest },
+      { id: 'child-id', customRequest: childSession.customRequest },
+    ]);
+
+    const debugBreakpoint = new MockSourceBreakpoint({
+      scheme: 'debug',
+      path: '/home/vcap/app/node_modules/@sap/cds/lib/server.ts',
+      fsPath: '/home/vcap/app/node_modules/@sap/cds/lib/server.ts',
+      query: 'session=child-id&ref=17',
+    });
+    vscodeMockState.breakpoints = [
+      new MockSourceBreakpoint('/workspace/srv/sample.js'),
+      debugBreakpoint,
+    ];
+
+    await clearBreakpointsBeforeStop('multi-session-app', rootSession as unknown as Parameters<typeof clearBreakpointsBeforeStop>[1]);
+
+    // Workspace path goes to the root session once.
+    expect(rootSession.customRequest).toHaveBeenCalledWith('setBreakpoints', {
+      source: { path: '/workspace/srv/sample.js' },
+      breakpoints: [],
+      sourceModified: false,
+    });
+    // Remote path is broadcast to every tracked session — including the child where the
+    // breakpoint was actually bound by vscode-js-debug.
+    const remoteClearMatcher = ['setBreakpoints', {
+      source: { path: '/home/vcap/app/node_modules/@sap/cds/lib/server.ts' },
+      breakpoints: [],
+      sourceModified: false,
+    }] as const;
+    expect(rootSession.customRequest).toHaveBeenCalledWith(...remoteClearMatcher);
+    expect(childSession.customRequest).toHaveBeenCalledWith(...remoteClearMatcher);
+
+    // Orphan debug-URI breakpoint dropped from VS Code state so it cannot leak into the
+    // next session.
+    expect(vscodeMockState.removeBreakpoints).toHaveBeenCalledWith([debugBreakpoint]);
+  });
+
+  it('leaves debug-URI breakpoints tagged with a foreign session alone', async () => {
+    const session = createSession();
+    debugSessionRegistryMockState.sessionsByApp.set('owned-app', [
+      { id: 'owned-id', customRequest: session.customRequest },
+    ]);
+
+    const foreignBreakpoint = new MockSourceBreakpoint({
+      scheme: 'debug',
+      path: '/home/vcap/app/foreign.ts',
+      query: 'session=someone-else&ref=99',
+    });
+    vscodeMockState.breakpoints = [foreignBreakpoint];
+
+    await clearBreakpointsBeforeStop('owned-app', session as unknown as Parameters<typeof clearBreakpointsBeforeStop>[1]);
+
+    // Neither cleared nor removed — would surprise users who set the breakpoint via a
+    // different extension/session.
+    expect(session.customRequest).not.toHaveBeenCalled();
+    expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
   });
 });
 

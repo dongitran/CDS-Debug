@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { relative } from 'node:path';
 import { cfRestartApp } from './cfClient';
 import { scanForDebuggerLiterals, type DebuggerLiteralMatch } from './debuggerLiteralScanner';
+import { getDebugSessionsForApp } from './debugSessionRegistry';
 import { logError, logInfo, logWarn, showLogChannel } from './logger';
 import { incrementLocalTelemetryCounter } from './localTelemetry';
 import { getRemoteInspectorCleanupSettings } from './remoteInspectorSettings';
@@ -81,13 +82,40 @@ export async function clearBreakpointsBeforeStop(
   if (!getRemoteInspectorCleanupSettings().clearRemoteBreakpointsBeforeStop) return;
   if (session === undefined) return;
 
-  const sourcePaths = collectWorkspaceSourceBreakpointPaths();
-  if (sourcePaths.length === 0) return;
+  // Split breakpoints by URI scheme:
+  //  - Workspace `file://` paths can be cleared via the root session alone — vscode-js-debug
+  //    propagates path-based breakpoints to all child sessions through its source registry.
+  //  - `debug:` URIs come from Package browser opens. The remote Node inspector tracked the
+  //    breakpoint under the encoded remote path (e.g. `/home/vcap/app/.../server.ts`) and, with
+  //    `autoAttachChildProcesses: true`, that path may have been bound in any of the app's
+  //    sessions. We broadcast the empty `setBreakpoints` to every session so the inspector
+  //    forgets the breakpoint regardless of which session originally registered it.
+  const collected = collectBreakpointSourcePaths(appName);
+  const sessions = collectAppSessions(appName, session);
+  const requests: Promise<boolean>[] = [];
 
-  const requests = sourcePaths.map((sourcePath) => clearBreakpointsForSource(session, sourcePath));
-  const results = await withTimeout(Promise.all(requests), CLEAR_BREAKPOINT_TOTAL_TIMEOUT_MS, []);
-  const cleared = results.filter((result) => result).length;
-  logInfo(`[${appName}] Pre-stop cleared breakpoints for ${cleared.toString()}/${sourcePaths.length.toString()} source file(s).`);
+  for (const path of collected.workspacePaths) {
+    requests.push(clearBreakpointsForSource(session, path));
+  }
+  for (const path of collected.remotePaths) {
+    for (const target of sessions) {
+      requests.push(clearBreakpointsForSource(target, path));
+    }
+  }
+
+  if (requests.length > 0) {
+    const results = await withTimeout(Promise.all(requests), CLEAR_BREAKPOINT_TOTAL_TIMEOUT_MS, []);
+    const cleared = results.filter((result) => result).length;
+    logInfo(`[${appName}] Pre-stop cleared breakpoints for ${cleared.toString()}/${requests.length.toString()} setBreakpoints request(s) across ${sessions.length.toString()} session(s).`);
+  }
+
+  // Breakpoints on `debug:` URIs are tied to a specific debug session and become orphaned
+  // the moment the session ends — the URI's `sourceReference` becomes unresolvable, the
+  // tab can no longer load content, and the user often cannot remove the breakpoint via
+  // the editor margin because the document body is no longer reachable. Drop them from
+  // VS Code's breakpoint state proactively to prevent stale entries from accumulating and
+  // re-triggering on the next session.
+  removeOrphanedDebugUriBreakpoints(appName, sessions);
 }
 
 export async function scanAndWarnForDebuggerLiterals(
@@ -168,16 +196,90 @@ function isReminderDebounced(appName: string): boolean {
   return lastShownAt !== undefined && Date.now() - lastShownAt < REMOTE_INSPECTOR_REMINDER_DEBOUNCE_MS;
 }
 
-function collectWorkspaceSourceBreakpointPaths(): string[] {
-  const paths = new Set<string>();
+interface CollectedBreakpointPaths {
+  workspacePaths: string[];
+  remotePaths: string[];
+}
+
+function collectBreakpointSourcePaths(appName: string): CollectedBreakpointPaths {
+  const workspacePaths = new Set<string>();
+  const remotePaths = new Set<string>();
+  const appSessionIds = new Set(getDebugSessionsForApp(appName).map((session) => session.id));
+
   for (const breakpoint of vscode.debug.breakpoints) {
     if (!(breakpoint instanceof vscode.SourceBreakpoint)) continue;
     if (!breakpoint.enabled) continue;
-    const sourcePath = breakpoint.location.uri.fsPath;
-    if (!isInsideWorkspace(sourcePath)) continue;
-    paths.add(sourcePath);
+    const uri = breakpoint.location.uri;
+
+    if (uri.scheme === 'file') {
+      // Without a workspace, fall back to the legacy behavior of accepting every file URI:
+      // the worst case is one redundant setBreakpoints request, which the adapter ignores.
+      if (isInsideWorkspace(uri.fsPath)) workspacePaths.add(uri.fsPath);
+      continue;
+    }
+
+    // `debug:` URIs are emitted by `vscode.debug.asDebugSourceUri` for source-reference-backed
+    // sources (the common case when Package browser opens a `.ts` whose file is not present
+    // locally). The `fsPath` getter on a non-file URI returns the decoded URI path component,
+    // which for these URIs is the remote source path the inspector binds breakpoints by.
+    if (uri.scheme === 'debug') {
+      const sessionId = extractDebugUriSessionId(uri);
+      // If the URI is tagged with a session we do not own, skip — clearing someone else's
+      // breakpoint as a side effect of stopping a CDS Debug session would surprise users.
+      if (sessionId !== null && !appSessionIds.has(sessionId)) continue;
+      const remotePath = uri.path && uri.path.length > 0 ? uri.path : uri.fsPath;
+      if (remotePath) remotePaths.add(remotePath);
+    }
   }
-  return [...paths].sort();
+
+  return {
+    workspacePaths: [...workspacePaths].sort(),
+    remotePaths: [...remotePaths].sort(),
+  };
+}
+
+function extractDebugUriSessionId(uri: vscode.Uri): string | null {
+  if (!uri.query) return null;
+  try {
+    const params = new URLSearchParams(uri.query);
+    return params.get('session');
+  } catch {
+    return null;
+  }
+}
+
+function collectAppSessions(
+  appName: string,
+  fallback: vscode.DebugSession,
+): vscode.DebugSession[] {
+  const tracked = getDebugSessionsForApp(appName);
+  if (tracked.length > 0) return tracked;
+  // Registry has not seen the session yet (e.g. an external retry path bypassed
+  // trackStartedDebugSession). Fall back to the explicitly passed root session.
+  return [fallback];
+}
+
+function removeOrphanedDebugUriBreakpoints(
+  appName: string,
+  appSessions: readonly vscode.DebugSession[],
+): void {
+  const appSessionIds = new Set(appSessions.map((session) => session.id));
+  const orphans: vscode.SourceBreakpoint[] = [];
+
+  for (const breakpoint of vscode.debug.breakpoints) {
+    if (!(breakpoint instanceof vscode.SourceBreakpoint)) continue;
+    const uri = breakpoint.location.uri;
+    if (uri.scheme !== 'debug') continue;
+    const sessionId = extractDebugUriSessionId(uri);
+    // No tagged session → cannot prove it belongs to this app → leave it alone.
+    if (sessionId === null) continue;
+    if (!appSessionIds.has(sessionId)) continue;
+    orphans.push(breakpoint);
+  }
+
+  if (orphans.length === 0) return;
+  vscode.debug.removeBreakpoints(orphans);
+  logInfo(`[${appName}] Removed ${orphans.length.toString()} orphan debug-URI breakpoint(s) from VS Code state.`);
 }
 
 function isInsideWorkspace(sourcePath: string): boolean {
