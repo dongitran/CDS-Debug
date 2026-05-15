@@ -5,6 +5,7 @@ import { scanForDebuggerLiterals, type DebuggerLiteralMatch } from './debuggerLi
 import { getDebugSessionsForApp } from './debugSessionRegistry';
 import { logError, logInfo, logWarn, showLogChannel } from './logger';
 import { incrementLocalTelemetryCounter } from './localTelemetry';
+import { clearOpenedPackageUris, getOpenedPackageUris } from './packageSourceBrowser';
 import { getRemoteInspectorCleanupSettings } from './remoteInspectorSettings';
 
 const RESTART_ACTION = 'Restart App';
@@ -104,20 +105,35 @@ export async function clearBreakpointsBeforeStop(
   const workspacePaths = new Set<string>();
   const debugBreakpoints: DebugUriBreakpointRecord[] = [];
 
+  // Pre-build the set of URI string forms that the Package browser opened for this app.
+  // Any breakpoint on one of these URIs must be cleared on Stop regardless of whether the
+  // URI's path falls inside the VS Code workspace, because pnpm-hoisted node_modules
+  // typically live at the monorepo root (outside the app's mapped folder) and the legacy
+  // `isInsideWorkspace` filter would silently drop them — leaving the Node inspector with
+  // a permanent breakpoint until `cf restart`.
+  const trackedPackageUriStrings = new Set(
+    getOpenedPackageUris(appName).map((uri) => uri.toString()),
+  );
+
   for (const breakpoint of vscode.debug.breakpoints) {
     if (!(breakpoint instanceof vscode.SourceBreakpoint)) continue;
     if (!breakpoint.enabled) continue;
     const uri = breakpoint.location.uri;
+    const isTrackedPackageUri = trackedPackageUriStrings.has(uri.toString());
 
     if (uri.scheme === 'file') {
-      if (isInsideWorkspace(uri.fsPath)) workspacePaths.add(uri.fsPath);
+      // Workspace files use path-based binding via vscode-js-debug's source registry.
+      // Include the path either if it is inside the workspace OR if Package browser opened
+      // this URI for the current app.
+      if (isInsideWorkspace(uri.fsPath) || isTrackedPackageUri) workspacePaths.add(uri.fsPath);
       continue;
     }
 
     const taggedSessionId = extractDebugUriSessionId(uri);
-    // Ignore breakpoints tagged with sessions we do not own — clearing third-party state as a
-    // side effect of stopping a CDS Debug session would surprise users.
-    if (taggedSessionId !== null && !appSessionIds.has(taggedSessionId)) continue;
+    // Ignore breakpoints tagged with sessions we do not own — clearing third-party state as
+    // a side effect of stopping a CDS Debug session would surprise users. Tracked Package
+    // URIs are always considered owned, even when the URI lacks a `session=<id>` query.
+    if (!isTrackedPackageUri && taggedSessionId !== null && !appSessionIds.has(taggedSessionId)) continue;
 
     debugBreakpoints.push({
       breakpoint,
@@ -131,6 +147,7 @@ export async function clearBreakpointsBeforeStop(
   }
 
   logBreakpointCleanupSummary(appName, sessions, workspacePaths, debugBreakpoints);
+  logInfo(`[BreakpointCleanup ${appName}] session ids: ${sessions.map((s) => `${s.name}=${s.id}`).join(' | ')}`);
 
   const requests: Promise<boolean>[] = [];
 
@@ -138,21 +155,54 @@ export async function clearBreakpointsBeforeStop(
     requests.push(clearBreakpointsForSourceDescriptor(session, { path }));
   }
 
-  for (const record of debugBreakpoints) {
+  // Reverse-lookup: each session has its own `sourceReference` number for the same
+  // logical source. vscode-js-debug binds the breakpoint by the sourceReference VS Code
+  // sent at set-time, and a clear sent with only `path` (or with a sibling session's
+  // sourceReference) silently misses. Pre-query every session's loadedSources to build a
+  // `path → sourceReference` map per session, so the clear request we send to each
+  // session uses that session's OWN sourceReference for the same file. Skip the query
+  // entirely when there are no debug-URI breakpoints — only those bound by reference
+  // need session-specific descriptors.
+  const sessionSourceMaps = debugBreakpoints.length > 0
+    ? await loadSessionSourceMaps(sessions)
+    : new Map<string, Map<string, number>>();
+  if (debugBreakpoints.length > 0) {
     for (const target of sessions) {
+      const map = sessionSourceMaps.get(target.id);
+      const sample: string[] = [];
+      if (map) {
+        for (const record of debugBreakpoints) {
+          if (!record.remotePath) continue;
+          const ref = map.get(record.remotePath);
+          sample.push(`${record.remotePath}→${ref === undefined ? 'NOT_FOUND' : ref.toString()}`);
+        }
+      }
+      logInfo(`[BreakpointCleanup ${appName}] session=${target.id} loadedSources size=${(map?.size ?? 0).toString()} matched: ${sample.join(', ') || '<none>'}`);
+    }
+  }
+
+  for (const record of debugBreakpoints) {
+    if (!record.remotePath) continue;
+    for (const target of sessions) {
+      const sessionMap = sessionSourceMaps.get(target.id);
+      const sessionRef = sessionMap?.get(record.remotePath);
       const isTaggedSession = record.taggedSessionId !== null && record.taggedSessionId === target.id;
-      // `sourceReference` is only valid in the session that minted it; sending it to a
-      // sibling would silently match the wrong (or no) source. Restrict the
-      // path+sourceReference variant to the tagged session.
-      if (isTaggedSession && record.sourceReference !== null && record.remotePath) {
+
+      // Prefer the session-specific sourceReference (either looked up just now, or the
+      // one minted in the URI for the tagged session). Without a ref, adapters that
+      // bound by reference will not match the clear.
+      const refForThisSession = sessionRef
+        ?? (isTaggedSession && record.sourceReference !== null ? record.sourceReference : null);
+
+      if (refForThisSession !== null) {
         requests.push(clearBreakpointsForSourceDescriptor(target, {
           path: record.remotePath,
-          sourceReference: record.sourceReference,
+          sourceReference: refForThisSession,
         }));
       }
-      if (record.remotePath) {
-        requests.push(clearBreakpointsForSourceDescriptor(target, { path: record.remotePath }));
-      }
+      // Always send the path-only fallback too — covers adapters that bind by path and
+      // the (rare) case where loadedSources returned 0/undefined for sourceReference.
+      requests.push(clearBreakpointsForSourceDescriptor(target, { path: record.remotePath }));
     }
   }
 
@@ -170,6 +220,11 @@ export async function clearBreakpointsBeforeStop(
     vscode.debug.removeBreakpoints(debugBreakpoints.map((record) => record.breakpoint));
     logInfo(`[${appName}] Removed ${debugBreakpoints.length.toString()} orphan debug-URI breakpoint(s) from VS Code state.`);
   }
+
+  // Forget the Package browser URIs for this app — they are now meaningless (the debug
+  // session that minted them has ended) and will only confuse the next session's clear
+  // pass if left behind.
+  clearOpenedPackageUris(appName);
 }
 
 export async function scanAndWarnForDebuggerLiterals(
@@ -259,25 +314,52 @@ interface DebugUriBreakpointRecord {
 }
 
 function extractDebugUriSessionId(uri: vscode.Uri): string | null {
-  if (!uri.query) return null;
-  try {
-    const params = new URLSearchParams(uri.query);
-    return params.get('session');
-  } catch {
-    return null;
-  }
+  return parseDebugUriQuery(uri).get('session') ?? null;
 }
 
 function extractDebugUriSourceReference(uri: vscode.Uri): number | null {
-  if (!uri.query) return null;
+  const raw = parseDebugUriQuery(uri).get('ref');
+  if (raw === undefined) return null;
+  const value = Number.parseInt(raw, 10);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+// `vscode.debug.asDebugSourceUri` constructs the query by URL-encoding the entire
+// `session=<id>&ref=<n>` substring, so by the time the URI roundtrips through
+// `Uri.parse`, `uri.query` reads back as `session%3D...%26ref%3D...` (the delimiters
+// `=` and `&` themselves are percent-encoded). Feeding that directly into
+// `URLSearchParams` treats the whole blob as one key with no value — the previous
+// implementation therefore silently returned `null` for both session and ref, breaking
+// every downstream consumer (per-session BP cleanup, BP mirror) that relied on them.
+//
+// Decode the query string FIRST so the literal delimiters are restored, then parse.
+function parseDebugUriQuery(uri: vscode.Uri): Map<string, string> {
+  const result = new Map<string, string>();
+  const raw = uri.query;
+  if (!raw) return result;
+  const decoded = safeDecodeURIComponent(raw);
+  // Use the decoded form when it contains delimiters; otherwise fall back to the raw
+  // form (some VS Code versions hand back already-decoded queries).
+  const queryString = decoded.includes('=') || decoded.includes('&') ? decoded : raw;
+  for (const pair of queryString.split('&')) {
+    if (pair.length === 0) continue;
+    const eq = pair.indexOf('=');
+    if (eq < 0) {
+      result.set(safeDecodeURIComponent(pair), '');
+      continue;
+    }
+    const key = safeDecodeURIComponent(pair.slice(0, eq));
+    const value = safeDecodeURIComponent(pair.slice(eq + 1));
+    result.set(key, value);
+  }
+  return result;
+}
+
+function safeDecodeURIComponent(value: string): string {
   try {
-    const params = new URLSearchParams(uri.query);
-    const raw = params.get('ref');
-    if (raw === null) return null;
-    const value = Number.parseInt(raw, 10);
-    return Number.isInteger(value) && value > 0 ? value : null;
+    return decodeURIComponent(value);
   } catch {
-    return null;
+    return value;
   }
 }
 
@@ -291,6 +373,48 @@ function collectAppSessions(
   // trackStartedDebugSession). Fall back to the explicitly passed root session so the
   // clear is still attempted somewhere.
   return [fallback];
+}
+
+const LOADED_SOURCES_QUERY_TIMEOUT_MS = 1_500;
+
+interface DapSourceListResponse {
+  sources?: { path?: unknown; sourceReference?: unknown }[];
+}
+
+// vscode-js-debug assigns each loaded source a session-scoped `sourceReference` (a stable
+// integer derived from the source's identity within that session). The same `.ts` file
+// loaded in parent + child + worker sessions therefore has THREE DIFFERENT
+// sourceReferences. To clear a breakpoint bound by reference we must use the correct
+// session's reference, which we cannot infer from the URI alone — the URI only carries
+// the reference of the session that originally minted it. Querying every session's
+// `loadedSources` once per Stop builds the `path → ref` map we need to send a precisely-
+// targeted clear to each session.
+async function loadSessionSourceMaps(
+  sessions: readonly vscode.DebugSession[],
+): Promise<Map<string, Map<string, number>>> {
+  const result = new Map<string, Map<string, number>>();
+  await Promise.all(sessions.map(async (session) => {
+    const map = new Map<string, number>();
+    try {
+      const response = await withTimeout(
+        Promise.resolve(session.customRequest('loadedSources', {})) as Promise<DapSourceListResponse | undefined>,
+        LOADED_SOURCES_QUERY_TIMEOUT_MS,
+        undefined,
+      );
+      const sources = response?.sources;
+      if (Array.isArray(sources)) {
+        for (const source of sources) {
+          const path = typeof source.path === 'string' ? source.path : null;
+          const ref = typeof source.sourceReference === 'number' ? source.sourceReference : 0;
+          if (path !== null && ref > 0) map.set(path, ref);
+        }
+      }
+    } catch (err: unknown) {
+      logWarn(`[BreakpointCleanup] loadedSources query failed for session ${session.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    result.set(session.id, map);
+  }));
+  return result;
 }
 
 function logBreakpointCleanupSummary(

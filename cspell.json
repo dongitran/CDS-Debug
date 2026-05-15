@@ -29,6 +29,8 @@
     "vcap",
     "webview",
     "webviews",
+    "Deduplicator",
+    "unloadable",
     "tsconfig",
     "typecheck",
     "precommit",

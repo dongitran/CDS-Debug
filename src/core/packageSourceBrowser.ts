@@ -1,7 +1,9 @@
+import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import * as vscode from 'vscode';
+import { logInfo } from './logger';
 import type {
   LoadedPackageEntry,
   LoadedPackageFile,
@@ -498,25 +500,37 @@ function mergeLoadedSources(batches: readonly LoadedPackageSource[][]): LoadedPa
   return batches.flat();
 }
 
-function resolveOpenFilePath(source: LoadedPackageSource, localRoot?: string): string | null {
-  if (localRoot) {
-    const fallbackPath = buildLocalRootSourcePath(localRoot, source);
-    if (fallbackPath) return fallbackPath;
-  }
-  return toReadableLocalSourcePath(source);
-}
-
 function toOpenUri(
   session: vscode.DebugSession,
   source: LoadedPackageSource,
   options?: { localRoot?: string },
 ): vscode.Uri {
+  // Prefer a `file:` URI whenever the source path resolves to a real file on disk —
+  // ahead of the `sourceReference > 0` check. Rationale:
+  //
+  // vscode-js-debug, when a paused frame's source path exists locally, advertises that
+  // source in `stackTrace` with `sourceReference = 0` and the resolvable local path,
+  // and VS Code opens it as a `file:` URI. If our Package browser uses
+  // `asDebugSourceUri` instead (because `loadedSources` had a non-zero ref), the two
+  // URIs differ even though they point to the same on-disk file — producing the
+  // user-visible "two tabs at the same path" symptom across the
+  // Package-browser-open → runtime-pause transition.
+  //
+  // Resolving via `realpathSync` also normalizes pnpm symlink chains so the URI exactly
+  // matches the canonical form vscode-js-debug computes internally.
+  const localCandidates = collectLocalFileCandidates(source, options?.localRoot);
+  for (const candidate of localCandidates) {
+    const canonical = tryRealpath(candidate);
+    if (canonical !== null) return vscode.Uri.file(canonical);
+  }
+
+  // No candidate exists on disk. Fall back to the debug-source URI for sources that
+  // vscode-js-debug serves via embedded `sourcesContent` (common for `.ts` files whose
+  // source-map-embedded path differs from the actual installed pnpm hash, e.g. when
+  // the package was built against one peer-dep resolution but installed against
+  // another).
   if (typeof source.sourceReference === 'number' && source.sourceReference > 0) {
     return vscode.debug.asDebugSourceUri(source, session);
-  }
-  const resolvedFilePath = resolveOpenFilePath(source, options?.localRoot);
-  if (resolvedFilePath) {
-    return vscode.Uri.file(resolvedFilePath);
   }
   if (!source.path) {
     throw new Error('Package source cannot be opened because it has no path.');
@@ -524,7 +538,40 @@ function toOpenUri(
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(source.path)) {
     return vscode.Uri.parse(source.path);
   }
+  // Last resort: open the highest-preference candidate as `Uri.file` even though it
+  // does not exist on disk. Preserves the legacy workspace-mapped semantics for
+  // sources whose embedded path differs from the actual install location.
+  const preferred = localCandidates[0];
+  if (preferred !== undefined) return vscode.Uri.file(preferred);
   return vscode.Uri.file(source.path);
+}
+
+function collectLocalFileCandidates(
+  source: LoadedPackageSource,
+  localRoot: string | undefined,
+): string[] {
+  const candidates: string[] = [];
+  // Workspace-mapped fallback first: the user's local checkout under their app folder
+  // overrides the build-machine embedded path. Important when the package was built on
+  // a different machine.
+  if (localRoot !== undefined) {
+    const mapped = buildLocalRootSourcePath(localRoot, source);
+    if (mapped) candidates.push(mapped);
+  }
+  // Then the source's own `path` field — covers the common case where the package was
+  // built on the same machine as the IDE and the embedded build-time path resolves
+  // directly.
+  const direct = toReadableLocalSourcePath(source);
+  if (direct) candidates.push(direct);
+  return candidates;
+}
+
+function tryRealpath(filePath: string): string | null {
+  try {
+    return realpathSync.native(filePath);
+  } catch {
+    return null;
+  }
 }
 
 export function buildPackageEntries(sources: LoadedPackageSource[]): LoadedPackageEntry[] {
@@ -652,7 +699,25 @@ export async function loadPackageEntriesFromSessions(
       logSessionCandidates(appName, currentSessions, log);
     }
 
-    for (const session of currentSessions) {
+    // Iterate deepest sessions first so `buildPackageEntries`'s first-wins dedupe
+    // stamps each shared file with a WORKER session URI rather than the parent
+    // Remote Process URI.
+    //
+    // Why this matters: when VS Code sends `setBreakpoints` for a `debug:` URI tagged
+    // with session=Remote Process [0], the adapter for that session looks up the source
+    // by reference, translates `.ts:line N` to `.js:line M` via the source map, and
+    // calls `Debugger.setBreakpoint`. But Node's main process only knows the `.js` as
+    // a source-map artifact — it does not run that code itself; the actual execution
+    // happens in worker threads. `Debugger.setBreakpoint` returns unverified, and the
+    // user sees a GRAY breakpoint dot.
+    //
+    // Stamping the URI with a worker session means `setBreakpoints` goes to a session
+    // whose Node inspector actually loaded the `.js`, so the binding verifies and the
+    // dot turns red. The runtime pause still happens in whichever worker is free at
+    // the time; if it is the same worker we stamped, the URI matches and VS Code
+    // reuses the existing tab — eliminating the duplicate-tab effect entirely.
+    const sessionsForCollection = [...currentSessions].reverse();
+    for (const session of sessionsForCollection) {
       try {
         const sources = await requestLoadedSources(session, resolvedOptions.loadedSourcesRequestTimeoutMs, log);
         if (sources.length > 0) {
@@ -708,13 +773,100 @@ export async function loadPackageEntriesFromSessions(
   throw new Error(`No loaded sources were returned by any debug session for ${appName}.`);
 }
 
+// Tracks the URIs we have opened on behalf of each app via the Package browser. The
+// `clearBreakpointsBeforeStop` path uses this registry to clear breakpoints set on URIs
+// that fall outside the VS Code workspace (typical for pnpm-hoisted `node_modules` —
+// the package files live under the monorepo root, not inside the app's mapped folder),
+// which the existing workspace filter would otherwise silently skip.
+const openedPackageUrisByApp = new Map<string, Map<string, vscode.Uri>>();
+
+export function trackOpenedPackageUri(appName: string, uri: vscode.Uri): void {
+  let registry = openedPackageUrisByApp.get(appName);
+  if (registry === undefined) {
+    registry = new Map();
+    openedPackageUrisByApp.set(appName, registry);
+  }
+  registry.set(uri.toString(), uri);
+}
+
+export function getOpenedPackageUris(appName: string): vscode.Uri[] {
+  const registry = openedPackageUrisByApp.get(appName);
+  return registry ? Array.from(registry.values()) : [];
+}
+
+export function clearOpenedPackageUris(appName: string): void {
+  openedPackageUrisByApp.delete(appName);
+}
+
+// Reverse lookup: given a URI's `.path` (the decoded URL path component, which equals
+// the remote file path for `debug:` URIs and the local file path for `file:` URIs),
+// return the app whose Package browser opened a URI with the same path. Allows external
+// modules (e.g. the breakpoint mirror) to find the right session set without needing
+// the URI's session-id query — the path is the stable cross-session identifier.
+export function findAppForOpenedPath(path: string): string | undefined {
+  for (const [appName, registry] of openedPackageUrisByApp) {
+    for (const uri of registry.values()) {
+      if (uri.path === path) return appName;
+    }
+  }
+  return undefined;
+}
+
+// Drop a single tracked URI by its `toString()` form. Used by TabDedupe's prune step
+// to evict URIs whose tagged debug session has ended (otherwise they would be picked
+// as "canonical" on the next debug run, redirecting the user onto a dead-session
+// editor that VS Code cannot load content for — silent margin-dot regressions).
+export function unregisterOpenedPackageUri(appName: string, uri: vscode.Uri): void {
+  const registry = openedPackageUrisByApp.get(appName);
+  if (registry === undefined) return;
+  registry.delete(uri.toString());
+  if (registry.size === 0) openedPackageUrisByApp.delete(appName);
+}
+
+// Extracts the `session=<id>` parameter from a `debug:` URI's query string.
+// `vscode.debug.asDebugSourceUri` percent-encodes the entire `session=<id>&ref=<n>`
+// substring (delimiters `=` and `&` themselves become `%3D` and `%26`), so the raw
+// `uri.query` reads back as `session%3D...%26ref%3D...`. We must decode first before
+// splitting; a naive `URLSearchParams(uri.query)` would treat the whole blob as one
+// key with no value and silently return `null`.
+export function extractSessionIdFromDebugUri(uri: vscode.Uri): string | null {
+  const raw = uri.query;
+  if (!raw) return null;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw;
+  }
+  const queryString = decoded.includes('=') || decoded.includes('&') ? decoded : raw;
+  for (const pair of queryString.split('&')) {
+    const eq = pair.indexOf('=');
+    if (eq < 0) continue;
+    const key = pair.slice(0, eq);
+    if (key === 'session') {
+      try {
+        return decodeURIComponent(pair.slice(eq + 1));
+      } catch {
+        return pair.slice(eq + 1);
+      }
+    }
+  }
+  return null;
+}
+
 export async function openPackageSource(
   session: vscode.DebugSession,
   source: LoadedPackageSource,
   location?: PackageSourceLocation,
-  options?: { localRoot?: string },
-): Promise<void> {
+  options?: { localRoot?: string; appName?: string },
+): Promise<vscode.Uri> {
   const uri = toOpenUri(session, source, options);
+  logInfo(
+    `[PackageBrowser] open scheme=${uri.scheme} path=${uri.path} fsPath=${uri.fsPath} query=${uri.query || '<none>'} sourceRef=${(source.sourceReference ?? 0).toString()} session=${session.id} toString=${uri.toString()}`,
+  );
+  if (options?.appName !== undefined) {
+    trackOpenedPackageUri(options.appName, uri);
+  }
   const document = await vscode.workspace.openTextDocument(uri);
   const selection = location
     ? new vscode.Range(
@@ -730,4 +882,5 @@ export async function openPackageSource(
   if (selection) {
     editor.revealRange(selection, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
   }
+  return uri;
 }

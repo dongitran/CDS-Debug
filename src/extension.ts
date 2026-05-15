@@ -9,6 +9,9 @@ import { setSecretStorage, clearCredentialsFromSecretStorage } from './core/shel
 import { cleanStaleDebugConfigs, removeLaunchConfigs } from './core/launchConfigurator';
 import { disposeBreakpointSnapshotManager, initializeBreakpointSnapshotManager } from './core/breakpointSnapshotManager';
 import { disposeBreakpointResolver, initializeBreakpointResolver } from './core/breakpointResolver';
+import { disposePackageBreakpointMirror, initializePackageBreakpointMirror } from './core/packageBreakpointMirror';
+import { clearOpenedPackageUris } from './core/packageSourceBrowser';
+import { disposePackageTabDeduplicator, initializePackageTabDeduplicator } from './core/packageTabDeduplicator';
 import { showWhatsNewIfNeeded } from './core/whatsNewManager';
 import { WhatsNewPanel } from './webview/whatsNewPanel';
 import { initializeTunnelRegistry, reapOrphanCfSshTunnels } from './core/orphanTunnelReaper';
@@ -27,6 +30,35 @@ export function activate(context: vscode.ExtensionContext): void {
   initializeProcessManager();
   initializeBreakpointSnapshotManager();
   initializeBreakpointResolver();
+  initializePackageBreakpointMirror();
+  initializePackageTabDeduplicator();
+
+  // Belt-and-suspenders cleanup of the Package browser URI tracker around debug
+  // session lifecycle events. The tracker is an in-memory Map that survives across
+  // debug sessions within the same extension host; stale entries from a prior run
+  // would otherwise be picked up by TabDedupe as the "canonical" URI on the next run
+  // and redirect the user to a dead-session editor (content unloadable, breakpoint
+  // margin dot never renders, even though the BP appears in the Breakpoints panel and
+  // fires through the BPMirror's path-based propagation). Clearing on both START and
+  // TERMINATE handles every observed window:
+  //   - START: the previous debug session may have been killed externally (e.g.
+  //     via VS Code's red square in the toolbar) without our `stopProcess` running.
+  //   - TERMINATE: covers the normal stop path.
+  const DEBUG_SESSION_PREFIX = 'Debug: ';
+  context.subscriptions.push(
+    vscode.debug.onDidStartDebugSession((session) => {
+      if (!session.name.startsWith(DEBUG_SESSION_PREFIX)) return;
+      const appName = session.name.slice(DEBUG_SESSION_PREFIX.length);
+      clearOpenedPackageUris(appName);
+    }),
+  );
+  context.subscriptions.push(
+    vscode.debug.onDidTerminateDebugSession((session) => {
+      if (!session.name.startsWith(DEBUG_SESSION_PREFIX)) return;
+      const appName = session.name.slice(DEBUG_SESSION_PREFIX.length);
+      clearOpenedPackageUris(appName);
+    }),
+  );
 
   // Remove stale debug configurations left by a previous session that ended without
   // proper cleanup (e.g. VS Code was force-killed while a debug session was active).
@@ -122,6 +154,8 @@ export async function deactivate(): Promise<void> {
   disposeCacheSync();
   disposeBreakpointSnapshotManager();
   disposeBreakpointResolver();
+  disposePackageBreakpointMirror();
+  disposePackageTabDeduplicator();
 
   // Best-effort cleanup of active debug configurations on normal VS Code shutdown.
   // Removes the Debug: entries from launch.json so the file is not left dirty when the

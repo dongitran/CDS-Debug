@@ -653,11 +653,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         `Opening source from ${session.name} [${session.id}] path="${source.path ?? source.name ?? 'unknown'}" sourceRef=${String(source.sourceReference ?? 0)}`,
       );
       const localRoot = this.getPackageLocalRoot(appName);
-      await openPackageSource(
+      const openedUri = await openPackageSource(
         session,
         source,
         location,
-        localRoot ? { localRoot } : undefined,
+        { ...(localRoot ? { localRoot } : {}), appName },
+      );
+      this.logPackageDiagnostic(
+        appName,
+        `Opened editor URI scheme=${openedUri.scheme} query="${openedUri.query || '<none>'}" toString=${openedUri.toString()}`,
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

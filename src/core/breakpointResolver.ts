@@ -36,6 +36,7 @@ export function initializeBreakpointResolver(): void {
       if (!isCdsDebugSession(session)) return undefined;
       return {
         onDidSendMessage(message: unknown): void {
+          logStackTraceSources(session, message);
           const sourcePath = extractLoadedSourcePath(message);
           if (sourcePath === null) return;
           scheduleReresolve(session, sourcePath);
@@ -43,6 +44,34 @@ export function initializeBreakpointResolver(): void {
       };
     },
   });
+}
+
+// Diagnostic: when a session pauses on a breakpoint, VS Code requests `stackTrace` to
+// populate the call-stack view. Each frame's `source` descriptor is what VS Code feeds
+// into `asDebugSourceUri` to decide which editor URI to open. Logging it makes the
+// "URI A vs URI B" mismatch debuggable from the extension log without instrumenting
+// vscode-js-debug itself.
+function logStackTraceSources(session: vscode.DebugSession, message: unknown): void {
+  if (typeof message !== 'object' || message === null) return;
+  const record = message as Record<string, unknown>;
+  if (record.type !== 'response' || record.command !== 'stackTrace') return;
+  const body = record.body;
+  if (typeof body !== 'object' || body === null) return;
+  const stackFrames = (body as { stackFrames?: unknown }).stackFrames;
+  if (!Array.isArray(stackFrames)) return;
+  for (const frame of stackFrames.slice(0, 5)) {
+    if (typeof frame !== 'object' || frame === null) continue;
+    const frameRecord = frame as { name?: unknown; line?: unknown; source?: unknown };
+    const source = frameRecord.source;
+    if (typeof source !== 'object' || source === null) continue;
+    const sourceRecord = source as { path?: unknown; sourceReference?: unknown; name?: unknown };
+    const path = typeof sourceRecord.path === 'string' ? sourceRecord.path : '<none>';
+    const ref = typeof sourceRecord.sourceReference === 'number' ? sourceRecord.sourceReference : 0;
+    const name = typeof sourceRecord.name === 'string' ? sourceRecord.name : '<none>';
+    const frameName = typeof frameRecord.name === 'string' ? frameRecord.name : '<frame>';
+    const line = typeof frameRecord.line === 'number' ? frameRecord.line : 0;
+    logInfo(`[StackTrace] session=${session.id} frame="${frameName}" line=${line.toString()} source.name=${name} source.path=${path} source.ref=${ref.toString()}`);
+  }
 }
 
 export function disposeBreakpointResolver(): void {

@@ -68,6 +68,13 @@ vi.mock('vscode', () => ({
   },
   window: {
     showTextDocument: vscodeMockState.showTextDocument,
+    createOutputChannel: () => ({
+      appendLine: () => undefined,
+      append: () => undefined,
+      clear: () => undefined,
+      dispose: () => undefined,
+      show: () => undefined,
+    }),
   },
   Uri: {
     file: (path: string): MockUri => createMockUri(`file://${path}`, 'file', path, path),

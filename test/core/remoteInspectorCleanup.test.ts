@@ -370,6 +370,69 @@ describe('clearBreakpointsBeforeStop', () => {
     expect(vscodeMockState.removeBreakpoints).toHaveBeenCalledWith([debugBreakpoint]);
   });
 
+  it("uses each session's own sourceReference for the same logical source", async () => {
+    // vscode-js-debug assigns a session-scoped sourceReference to each loaded source.
+    // The same `.ts` loaded in parent + child sessions has DIFFERENT sourceReferences.
+    // The clear request to each session must use that session's own reference; sending
+    // the URI's reference (which only matches the tagged session) to a sibling would
+    // silently miss and leave the breakpoint registered in the Node inspector — exactly
+    // the bug the user reported when CAP spawns multiple `Remote Process [N]` workers.
+    const remotePath = '/Users/dongtran/Documents/brain/node_modules/.pnpm/x/server.ts';
+
+    function customRequestForSession(ref: number): (command: string) => Promise<unknown> {
+      return (command: string): Promise<unknown> => {
+        if (command === 'loadedSources') {
+          return Promise.resolve({ sources: [{ path: remotePath, sourceReference: ref }] });
+        }
+        return Promise.resolve(undefined);
+      };
+    }
+
+    const rootSession = createSession(vi.fn(customRequestForSession(11)));
+    const childSession = createSession(vi.fn(customRequestForSession(22)));
+
+    debugSessionRegistryMockState.sessionsByApp.set('worker-spawning-app', [
+      { id: 'root-id', name: 'root', customRequest: rootSession.customRequest },
+      { id: 'child-id', name: 'child', customRequest: childSession.customRequest },
+    ]);
+
+    vscodeMockState.breakpoints = [
+      new MockSourceBreakpoint({
+        scheme: 'debug',
+        path: remotePath,
+        // URI was minted by child session; ref 22 only valid there.
+        query: 'session=child-id&ref=22',
+      }),
+    ];
+
+    await clearBreakpointsBeforeStop(
+      'worker-spawning-app',
+      rootSession as unknown as Parameters<typeof clearBreakpointsBeforeStop>[1],
+    );
+
+    // Root session must receive a clear keyed by ITS OWN ref (11), even though the URI
+    // carries the child's ref (22). The reverse-lookup via loadedSources is what makes
+    // this work.
+    expect(rootSession.customRequest).toHaveBeenCalledWith('setBreakpoints', {
+      source: { path: remotePath, sourceReference: 11 },
+      breakpoints: [],
+      sourceModified: false,
+    });
+    // Child session uses its own ref 22 too (matches URI's tagged ref in this case).
+    expect(childSession.customRequest).toHaveBeenCalledWith('setBreakpoints', {
+      source: { path: remotePath, sourceReference: 22 },
+      breakpoints: [],
+      sourceModified: false,
+    });
+    // The clear keyed by the URI's ref must NOT be sent to root (the wrong descriptor
+    // would silently match the wrong source — or no source at all).
+    expect(rootSession.customRequest).not.toHaveBeenCalledWith('setBreakpoints', {
+      source: { path: remotePath, sourceReference: 22 },
+      breakpoints: [],
+      sourceModified: false,
+    });
+  });
+
   it('leaves debug-URI breakpoints tagged with a foreign session alone', async () => {
     const session = createSession();
     debugSessionRegistryMockState.sessionsByApp.set('owned-app', [
