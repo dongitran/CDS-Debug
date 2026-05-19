@@ -11,7 +11,7 @@ This folder contains a standalone E2E harness for the `cds-debug` VS Code extens
 ## Coverage
 Current suite validates end-to-end user behavior with comprehensive per-screen element verification.
 
-### Launch JSON and CAP Debug Config (8 tests)
+### Launch JSON and CAP Debug Config (9 tests)
 1. User can reopen VS Code and stale CDS launch configs are cleaned while manual configs are kept.
 2. User setting overrides workspace cap config when generating launch.json.
 3. Workspace cap config is used when no user setting is configured.
@@ -20,6 +20,7 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
 6. Per-service cap config overrides both user setting and workspace fallback.
 7. Malformed user setting falls back to workspace cap config.
 8. User can see a security warning instead of executing an unsafe cap config branch.
+9. User can resolve a CF app to a differently-named local folder via appFolderMappings.
 
 ### Onboarding and Launcher (20 tests)
 1. User can login and see mocked CF org list — verifies all REGION elements (step-badge 1/3, searchable scrollable 50-region list, representative region radio inputs, endpoint `.radio-desc`) and SELECT_ORG elements (step-badge 2/3, info-box, section label, disabled Next button, back button, `.org-item` labels with radio inputs).

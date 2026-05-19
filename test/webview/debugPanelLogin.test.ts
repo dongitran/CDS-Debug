@@ -114,6 +114,7 @@ vi.mock('vscode', () => ({
     workspaceFolders: [],
     getConfiguration: vi.fn(() => ({
       inspect: vi.fn(() => undefined),
+      get: vi.fn((_key: string, fallback: unknown) => fallback),
     })),
   },
   window: {

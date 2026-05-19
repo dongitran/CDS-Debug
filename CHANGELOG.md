@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.32] — 2026
+
+### Changes
+
+- **Explicit CF app → local folder mappings via `cdsDebug.appFolderMappings`** — A new array setting maps a Cloud Foundry app name to a local source folder name when the two differ too much for the automatic `-`↔`_` normalization to find a match (previously such apps fell back to console-only debugging with no source maps or breakpoints). Each `folderName` is a folder basename resolved through the existing recursive group-folder scan (depth ≤ 6, must contain a `package.json`); explicit mappings take the highest matching priority and apply consistently to debug start, target building, and regex `remoteRoot` warmup. Unset (default `[]`) keeps the previous behavior unchanged. v1 maps by folder basename only; pointing at an explicit path is a possible future addition.
+
+---
+
 ## [0.3.62-pre.31] — 2026
 
 ### Fixes

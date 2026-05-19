@@ -118,6 +118,20 @@ Precedence is:
 2. user `cdsDebug.sharedCapDebugConfig`
 3. workspace `.vscode/cap-debug-config.json`
 
+### Optional — map CF apps to differently-named local folders
+
+When you start debugging, CDS Debug matches each CF app to a local source folder under your mapped org folder by name, automatically trying the exact app name and a `-`→`_` variant. If a CF app's name differs too much from its local folder, that app would otherwise fall back to console-only debugging with no source maps. Add explicit mappings to your VS Code user `settings.json`:
+
+```json
+{
+  "cdsDebug.appFolderMappings": [
+    { "appName": "sample-service-billing", "folderName": "billing-internal" }
+  ]
+}
+```
+
+`folderName` is a folder *basename* — CDS Debug searches your mapped org folder recursively (depth ≤ 6) for a folder with that name containing a `package.json`. An explicit mapping has the highest matching priority, ahead of the exact and underscore-normalized name. If the named folder cannot be found (or has no `package.json`), resolution falls back to the automatic name matching, exactly as before. App names are matched exactly and case-sensitively; on duplicate `appName` entries the first wins.
+
 ### Optional — pre-configure the Package Regex Filter
 
 The Packages screen has a **Package Regex Filter** field that narrows which packages are shown. You can set a default value in VS Code settings so it is pre-populated every time:

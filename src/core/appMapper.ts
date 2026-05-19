@@ -1,16 +1,34 @@
 import { basename } from 'node:path';
-import type { DebugTarget } from '../types/index';
+import type { AppFolderMapping, DebugTarget } from '../types/index';
 import { DEBUG_BASE_PORT } from '../types/index';
+
+/**
+ * Returns the explicitly configured folder name for an app, if any.
+ * First match wins so duplicate user entries have deterministic precedence.
+ */
+export function resolveOverrideFolder(
+  appName: string,
+  overrides?: readonly AppFolderMapping[],
+): string | undefined {
+  return overrides?.find((m) => m.appName === appName)?.folderName;
+}
 
 /**
  * Gets candidate local folder names for a given CF app name.
  * CF often uses hyphens (-) while standard SAP CAP local folders use underscores (_).
  * But custom projects might use exact names. So we try both.
+ * An explicit `cdsDebug.appFolderMappings` override takes the highest priority.
  */
-export function getFolderNameCandidates(appName: string): string[] {
-  const candidates = [appName];
+export function getFolderNameCandidates(
+  appName: string,
+  overrides?: readonly AppFolderMapping[],
+): string[] {
+  const candidates: string[] = [];
+  const override = resolveOverrideFolder(appName, overrides);
+  if (override !== undefined) candidates.push(override);
+  if (!candidates.includes(appName)) candidates.push(appName);
   const dashReplaced = appName.replaceAll('-', '_');
-  if (dashReplaced !== appName) {
+  if (dashReplaced !== appName && !candidates.includes(dashReplaced)) {
     candidates.push(dashReplaced);
   }
   return candidates;
@@ -20,8 +38,12 @@ export function getFolderNameCandidates(appName: string): string[] {
  * Finds the full path of a repo folder from a list of scanned paths.
  * Performs match on folder basename against all candidates after normalizing separators.
  */
-export function findFolderPath(appName: string, allFolderPaths: string[]): string | null {
-  const candidates = getFolderNameCandidates(appName);
+export function findFolderPath(
+  appName: string,
+  allFolderPaths: string[],
+  overrides?: readonly AppFolderMapping[],
+): string | null {
+  const candidates = getFolderNameCandidates(appName, overrides);
   return allFolderPaths.find((p) => candidates.includes(basename(p))) ?? null;
 }
 
@@ -59,13 +81,14 @@ export function buildDebugTargets(
   existingPorts: Record<string, number> = {},
   usedPorts = new Set<number>(),
   startPort = DEBUG_BASE_PORT,
+  overrides?: readonly AppFolderMapping[],
 ): { targets: DebugTarget[]; unmapped: string[] } {
   const targets: DebugTarget[] = [];
   const unmapped: string[] = [];
   const cursor = { port: startPort };
 
   for (const appName of selectedAppNames) {
-    const folderPath = findFolderPath(appName, allFolderPaths);
+    const folderPath = findFolderPath(appName, allFolderPaths, overrides);
     if (folderPath !== null) {
       targets.push({ appName, folderPath, port: allocatePort(appName, existingPorts, usedPorts, cursor) });
     } else {

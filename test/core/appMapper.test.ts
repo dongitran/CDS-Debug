@@ -4,7 +4,9 @@ import {
   findFolderPath,
   buildDebugTargets,
   buildFallbackTargets,
+  resolveOverrideFolder,
 } from '../../src/core/appMapper';
+import type { AppFolderMapping } from '../../src/types/index';
 
 describe('getFolderNameCandidates', () => {
   it('returns both exact match and underscore-replaced match for hyphenated names', () => {
@@ -228,5 +230,138 @@ describe('buildFallbackTargets', () => {
 
   it('returns empty array for empty input', () => {
     expect(buildFallbackTargets([], fallbackRoot)).toEqual([]);
+  });
+});
+
+describe('resolveOverrideFolder', () => {
+  const overrides: AppFolderMapping[] = [
+    { appName: 'sample-service-billing', folderName: 'billing-internal' },
+    { appName: 'sample-service-core', folderName: 'core-svc' },
+  ];
+
+  it('returns the configured folder name for a matching app', () => {
+    expect(resolveOverrideFolder('sample-service-billing', overrides)).toBe('billing-internal');
+  });
+
+  it('returns undefined when no override matches', () => {
+    expect(resolveOverrideFolder('sample-service-other', overrides)).toBeUndefined();
+  });
+
+  it('returns undefined for undefined or empty overrides', () => {
+    expect(resolveOverrideFolder('sample-service-billing')).toBeUndefined();
+    expect(resolveOverrideFolder('sample-service-billing', [])).toBeUndefined();
+  });
+
+  it('returns the first match when duplicate app names are configured', () => {
+    const duplicates: AppFolderMapping[] = [
+      { appName: 'sample-service-billing', folderName: 'first-folder' },
+      { appName: 'sample-service-billing', folderName: 'second-folder' },
+    ];
+    expect(resolveOverrideFolder('sample-service-billing', duplicates)).toBe('first-folder');
+  });
+
+  it('matches app names case-sensitively', () => {
+    expect(resolveOverrideFolder('Sample-Service-Billing', overrides)).toBeUndefined();
+  });
+});
+
+describe('getFolderNameCandidates with overrides', () => {
+  it('prepends the override folder ahead of exact and underscore candidates', () => {
+    const overrides: AppFolderMapping[] = [{ appName: 'my-cap-app', folderName: 'custom-folder' }];
+    expect(getFolderNameCandidates('my-cap-app', overrides)).toEqual([
+      'custom-folder',
+      'my-cap-app',
+      'my_cap_app',
+    ]);
+  });
+
+  it('ignores overrides that do not match the app name', () => {
+    const overrides: AppFolderMapping[] = [{ appName: 'other-app', folderName: 'custom-folder' }];
+    expect(getFolderNameCandidates('my-cap-app', overrides)).toEqual([
+      'my-cap-app',
+      'my_cap_app',
+    ]);
+  });
+
+  it('does not duplicate when the override equals the exact app name', () => {
+    const overrides: AppFolderMapping[] = [{ appName: 'my-cap-app', folderName: 'my-cap-app' }];
+    expect(getFolderNameCandidates('my-cap-app', overrides)).toEqual([
+      'my-cap-app',
+      'my_cap_app',
+    ]);
+  });
+
+  it('does not duplicate when the override equals the underscore-normalized name', () => {
+    const overrides: AppFolderMapping[] = [{ appName: 'my-cap-app', folderName: 'my_cap_app' }];
+    expect(getFolderNameCandidates('my-cap-app', overrides)).toEqual([
+      'my_cap_app',
+      'my-cap-app',
+    ]);
+  });
+
+  it('behaves identically to no-override mode when overrides are undefined or empty', () => {
+    expect(getFolderNameCandidates('my-cap-app')).toEqual(['my-cap-app', 'my_cap_app']);
+    expect(getFolderNameCandidates('my-cap-app', [])).toEqual(['my-cap-app', 'my_cap_app']);
+  });
+});
+
+describe('findFolderPath with overrides', () => {
+  const paths = [
+    '/root/group/services/billing-internal',
+    '/root/group/services/sample_service_core',
+  ];
+
+  it('resolves a folder whose basename is the override but not the app or underscore name', () => {
+    const overrides: AppFolderMapping[] = [
+      { appName: 'sample-service-billing', folderName: 'billing-internal' },
+    ];
+    // Without the override, neither 'sample-service-billing' nor
+    // 'sample_service_billing' matches 'billing-internal' → null.
+    expect(findFolderPath('sample-service-billing', paths)).toBeNull();
+    expect(findFolderPath('sample-service-billing', paths, overrides)).toBe(
+      '/root/group/services/billing-internal',
+    );
+  });
+
+  it('falls back to exact/underscore candidates when the override folder is absent', () => {
+    const overrides: AppFolderMapping[] = [
+      { appName: 'sample-service-core', folderName: 'missing-folder' },
+    ];
+    expect(findFolderPath('sample-service-core', paths, overrides)).toBe(
+      '/root/group/services/sample_service_core',
+    );
+  });
+});
+
+describe('buildDebugTargets with overrides', () => {
+  const allFolderPaths = ['/root/group/services/billing-internal'];
+
+  it('maps an app to an override-named folder the second re-derivation would otherwise drop', () => {
+    const overrides: AppFolderMapping[] = [
+      { appName: 'sample-service-billing', folderName: 'billing-internal' },
+    ];
+    const { targets, unmapped } = buildDebugTargets(
+      ['sample-service-billing'],
+      allFolderPaths,
+      {},
+      new Set(),
+      undefined,
+      overrides,
+    );
+    expect(unmapped).toHaveLength(0);
+    expect(targets[0]).toMatchObject({
+      appName: 'sample-service-billing',
+      folderPath: '/root/group/services/billing-internal',
+      port: 20000,
+    });
+  });
+
+  it('leaves the same app unmapped without overrides (proves the gap the feature closes)', () => {
+    const { targets, unmapped } = buildDebugTargets(
+      ['sample-service-billing'],
+      allFolderPaths,
+    );
+    expect(targets).toHaveLength(0);
+    expect(unmapped).toEqual(['sample-service-billing']);
   });
 });

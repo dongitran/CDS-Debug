@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type {
+  AppFolderMapping,
   BranchPrepService,
   BranchPrepStep,
   BreakpointContextSnapshot,
@@ -35,7 +36,13 @@ import {
   resolveRegionKeyForEndpoint,
 } from '../core/cfSpaceRefresh';
 import { findRepoFolder } from '../core/folderScanner';
-import { buildDebugTargets, buildFallbackTargets, getFolderNameCandidates } from '../core/appMapper';
+import {
+  buildDebugTargets,
+  buildFallbackTargets,
+  getFolderNameCandidates,
+  resolveOverrideFolder,
+} from '../core/appMapper';
+import { getAppFolderMappings } from '../core/appFolderMappingSettings';
 import { getExistingLaunchConfigs, mergeLaunchJson, readCapDebugConfig } from '../core/launchConfigurator';
 import { resolveSharedCapDebugConfig } from '../core/capDebugConfig';
 import {
@@ -1038,8 +1045,12 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async resolveLocalFolderPath(groupPath: string, appName: string): Promise<string | null> {
-    for (const candidate of getFolderNameCandidates(appName)) {
+  private async resolveLocalFolderPath(
+    groupPath: string,
+    appName: string,
+    overrides: readonly AppFolderMapping[],
+  ): Promise<string | null> {
+    for (const candidate of getFolderNameCandidates(appName, overrides)) {
       const folderPath = await findRepoFolder(groupPath, candidate);
       if (folderPath !== null) return folderPath;
     }
@@ -1105,13 +1116,16 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     apps: readonly CfApp[],
   ): Promise<void> {
     const fallbackConfig = await resolveSharedCapDebugConfig(workspaceRoot);
+    const appFolderMappings = getAppFolderMappings();
     const startedApps = apps.filter((app) => app.state === 'started');
 
     for (let index = 0; index < startedApps.length; index += REMOTE_ROOT_WARMUP_CONCURRENCY) {
       if (generation !== this.remoteRootWarmupGeneration) return;
       const batch = startedApps.slice(index, index + REMOTE_ROOT_WARMUP_CONCURRENCY);
       await Promise.allSettled(batch.map((app) => (
-        this.warmRemoteRootForApp(generation, apiEndpoint, org, space, groupPath, app.name, fallbackConfig)
+        this.warmRemoteRootForApp(
+          generation, apiEndpoint, org, space, groupPath, app.name, fallbackConfig, appFolderMappings,
+        )
       )));
     }
   }
@@ -1124,8 +1138,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     groupPath: string,
     appName: string,
     fallbackConfig: CapDebugConfig | null,
+    appFolderMappings: readonly AppFolderMapping[],
   ): Promise<void> {
-    const folderPath = await this.resolveLocalFolderPath(groupPath, appName);
+    const folderPath = await this.resolveLocalFolderPath(groupPath, appName, appFolderMappings);
     const target = { appName, folderPath: folderPath ?? groupPath, port: 0, noLocalFolder: folderPath === null };
     const configuredRemoteRoot = await this.getConfiguredRemoteRoot(target, fallbackConfig);
     if (configuredRemoteRoot === undefined) return;
@@ -1380,14 +1395,16 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
     const groupPath = mapping.groupFolderPath;
 
+    const appFolderMappings = getAppFolderMappings();
     logInfo(`[StartDebug] Resolving local folders under: ${groupPath}`);
     const resolvedPaths: string[] = [];
     for (const appName of appNames) {
-      const folderPath = await this.resolveLocalFolderPath(groupPath, appName);
+      const folderPath = await this.resolveLocalFolderPath(groupPath, appName, appFolderMappings);
 
       if (folderPath !== null) {
         resolvedPaths.push(folderPath);
-        logInfo(`Mapped: ${appName} → ${folderPath}`);
+        const viaOverride = resolveOverrideFolder(appName, appFolderMappings) !== undefined;
+        logInfo(`Mapped${viaOverride ? ' (via appFolderMappings setting)' : ''}: ${appName} → ${folderPath}`);
       } else {
         logWarn(`Could not find local folder for: ${appName}`);
       }
@@ -1410,7 +1427,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       // Ignore errors parsing launch.json
     }
 
-    const { targets, unmapped } = buildDebugTargets(appNames, resolvedPaths, existingPorts, usedPorts);
+    const { targets, unmapped } = buildDebugTargets(
+      appNames, resolvedPaths, existingPorts, usedPorts, undefined, appFolderMappings,
+    );
 
     const sharedCapConfig = await resolveSharedCapDebugConfig(workspaceRoot);
 

@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.3.62-pre.31",
+  "version": "0.3.62-pre.32",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -151,6 +151,27 @@
               "type": "object",
               "additionalProperties": { "type": "string" },
               "markdownDescription": "Path-mapping overrides merged on top of the extension defaults. Keys are the source-map embedded paths, values are the local replacements (e.g. `\"/home/vcap/app/*\": \"${workspaceFolder}/*\"`)."
+            }
+          }
+        },
+        "cdsDebug.appFolderMappings": {
+          "type": "array",
+          "scope": "application",
+          "default": [],
+          "markdownDescription": "Explicit Cloud Foundry app name → local folder name mappings. Use this when a CF app's name differs too much from its local source folder for the automatic `-`↔`_` normalization to find it (otherwise that app falls back to console-only debugging with no source maps). `folderName` is a folder *basename*; CDS Debug searches the mapped group folder recursively (depth ≤ 6) for a folder with that name containing a `package.json`. Has the highest matching priority, ahead of the exact and underscore-normalized name.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["appName", "folderName"],
+            "properties": {
+              "appName": {
+                "type": "string",
+                "markdownDescription": "Exact Cloud Foundry application name (case-sensitive)."
+              },
+              "folderName": {
+                "type": "string",
+                "markdownDescription": "Local source folder name (basename) to resolve this app to."
+              }
             }
           }
         }

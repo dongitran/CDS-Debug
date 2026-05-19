@@ -550,6 +550,28 @@ async function readManagedRemoteRoot(workspaceDir: string, appName: string): Pro
   }
 }
 
+async function readManagedLocalRoot(workspaceDir: string, appName: string): Promise<string | null> {
+  try {
+    const launchJson = await readLaunchJson(workspaceDir);
+    const config = launchJson.configurations.find((item) => item.name === `Debug: ${appName}`);
+    return typeof config?.localRoot === 'string' ? config.localRoot : null;
+  } catch {
+    return null;
+  }
+}
+
+async function createWorkspaceWithMismatchedServiceFolder(folderName: string): Promise<string> {
+  const workspaceDir = await createTempDirectory('cds-debug-e2e-app-folder-map-');
+  const serviceDir = join(workspaceDir, folderName);
+  await mkdir(serviceDir, { recursive: true });
+  await writeFile(
+    join(serviceDir, 'package.json'),
+    JSON.stringify({ name: 'sample-service' }, null, 2) + '\n',
+    'utf8',
+  );
+  return workspaceDir;
+}
+
 async function allocateSinglePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
@@ -4519,6 +4541,44 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.getByText(MOCK_GROUP_FOLDER)).toBeVisible();
         await expectButtonEnabled(webview.locator('#btn-save-mapping'));
       });
+    });
+  });
+
+  // ─── App Folder Mappings ──────────────────────────────────────────────────
+
+  test.describe('App Folder Mappings', () => {
+    test('User can resolve a CF app to a differently-named local folder via appFolderMappings', async () => {
+      // The local folder name deliberately shares no `-`/`_` normalization with the
+      // CF app name, so without the setting it stays unmapped and localRoot falls
+      // back to the workspace root (asserting the mapped name proves the feature).
+      const folderName = 'sample-checkout-folder';
+      const workspaceDir = await createWorkspaceWithMismatchedServiceFolder(folderName);
+
+      try {
+        await withVsCodeSession(
+          {
+            credentialMode: 'env',
+            cfScenario: 'success',
+            userSettings: {
+              'cdsDebug.appFolderMappings': [{ appName: 'mock-service-a', folderName }],
+            },
+          },
+          async (workbenchPage) => {
+            const webview = await openCdsDebugWebview(workbenchPage);
+            await completeMappingToReadyWithFolder(webview, workspaceDir);
+            await startDebugForApp(webview, 'mock-service-a');
+
+            // Substring assertion is intentional: macOS resolves the /tmp
+            // workspace symlink via realpath, so exact path equality is brittle.
+            await expect
+              .poll(async () => readManagedLocalRoot(workspaceDir, 'mock-service-a'), { timeout: 15_000 })
+              .toContain(folderName);
+          },
+          workspaceDir,
+        );
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
     });
   });
 

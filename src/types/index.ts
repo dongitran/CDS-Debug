@@ -65,6 +65,13 @@ export interface OrgGroupMapping {
   lastUsedAt?: number;
 }
 
+export interface AppFolderMapping {
+  /** Cloud Foundry application name (exact match, case-sensitive). */
+  appName: string;
+  /** Local source folder basename to resolve to (fed into the recursive repo scan). */
+  folderName: string;
+}
+
 export interface DebugTarget {
   appName: string;
   folderPath: string;

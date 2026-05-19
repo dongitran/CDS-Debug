@@ -146,6 +146,7 @@ pnpm test:report          # Open HTML report
 6. Per-service cap config overrides both user setting and workspace fallback.
 7. Malformed user setting falls back to workspace cap config.
 8. User can see a security warning instead of executing an unsafe cap config branch.
+9. User can resolve a CF app to a differently-named local folder via appFolderMappings.
 
 ### CF Region / Org
 1. User can switch to region catalog fallback and filter `cf-sync` supplemental SAP endpoints plus the local `us10-004` fallback and China region endpoints after synced topology is ready.
