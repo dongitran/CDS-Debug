@@ -146,9 +146,23 @@ describe('buildLaunchConfiguration', () => {
     expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/build/**/*.{js,cjs,mjs}');
   });
 
-  it('excludes node_modules from outFiles via a negative glob', () => {
+  it('includes package runtime files from node_modules so Package Browser breakpoints can bind', () => {
     const config = buildLaunchConfiguration(target, undefined);
-    expect(config.outFiles).toContain('!/group/sub-a/myapp_svc_one/**/node_modules/**');
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/node_modules/**/*.{js,cjs,mjs}');
+    expect(config.outFiles).not.toContain('!/group/sub-a/myapp_svc_one/**/node_modules/**');
+  });
+
+  it('includes workspace-root package files when provided for hoisted pnpm packages', () => {
+    const config = buildLaunchConfiguration(
+      target,
+      undefined,
+      undefined,
+      undefined,
+      { packageOutFilesRoots: ['/group'] },
+    );
+
+    expect(config.outFiles).toContain('/group/sub-a/myapp_svc_one/node_modules/**/*.{js,cjs,mjs}');
+    expect(config.outFiles).toContain('/group/node_modules/**/*.{js,cjs,mjs}');
   });
 
   it('sets resolveSourceMapLocations to null so remote source maps are not silently dropped', () => {
@@ -326,7 +340,7 @@ describe('generateLaunchConfigurations', () => {
     expect(configs[0]?.outFiles).toEqual(['/group/sub-a/myapp_svc_one/custom/**/*.js']);
   });
 
-  it('appends outFilesExtra to the defaults while keeping the trailing node_modules exclusion last', async () => {
+  it('appends outFilesExtra to the defaults while keeping package runtime globs enabled', async () => {
     vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
       outFilesExtra: ['/group/sub-a/myapp_svc_one/extra/**/*.js'],
     }));
@@ -337,8 +351,63 @@ describe('generateLaunchConfigurations', () => {
 
     const outFiles = configs[0]?.outFiles ?? [];
     expect(outFiles).toContain('/group/sub-a/myapp_svc_one/srv/**/*.{js,cjs,mjs}');
+    expect(outFiles).toContain('/group/sub-a/myapp_svc_one/node_modules/**/*.{js,cjs,mjs}');
     expect(outFiles).toContain('/group/sub-a/myapp_svc_one/extra/**/*.js');
-    expect(outFiles[outFiles.length - 1]).toBe('!/group/sub-a/myapp_svc_one/**/node_modules/**');
+    expect(outFiles).not.toContain('!/group/sub-a/myapp_svc_one/**/node_modules/**');
+  });
+
+  it('adds workspace-root node_modules when generating configs inside a parent workspace', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations(
+      [firstTarget],
+      null,
+      { workspaceRoot: '/group' },
+    );
+
+    expect(configs[0]?.outFiles).toContain('/group/node_modules/**/*.{js,cjs,mjs}');
+  });
+
+  it('adds ancestor node_modules roots even when the VS Code workspace is unrelated', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const target: DebugTarget = {
+      appName: 'sample-service',
+      folderPath: '/repo/apps/sample-service',
+      port: 9229,
+    };
+    const configs = await generateLaunchConfigurations(
+      [target],
+      null,
+      { workspaceRoot: '/workspace-shell' },
+    );
+
+    expect(configs[0]?.outFiles).toContain('/repo/apps/sample-service/node_modules/**/*.{js,cjs,mjs}');
+    expect(configs[0]?.outFiles).toContain('/repo/apps/node_modules/**/*.{js,cjs,mjs}');
+    expect(configs[0]?.outFiles).toContain('/repo/node_modules/**/*.{js,cjs,mjs}');
+  });
+
+  it('keeps raw workspace-root node_modules when localRoot resolves through a symlink', async () => {
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    vi.mocked(fs.realpath).mockImplementation((path) => {
+      if (path === '/group/sub-a/myapp_svc_one') {
+        return Promise.resolve('/private/group/sub-a/myapp_svc_one');
+      }
+      return Promise.resolve(String(path));
+    });
+
+    const firstTarget = TARGETS[0];
+    if (!firstTarget) throw new Error('TARGETS[0] must exist');
+    const configs = await generateLaunchConfigurations(
+      [firstTarget],
+      null,
+      { workspaceRoot: '/group' },
+    );
+
+    expect(configs[0]?.localRoot).toBe('/private/group/sub-a/myapp_svc_one');
+    expect(configs[0]?.outFiles).toContain('/group/node_modules/**/*.{js,cjs,mjs}');
   });
 
   it('lets cap-debug-config.json override resolveSourceMapLocations with an explicit glob list', async () => {

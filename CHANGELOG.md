@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.62-pre.31] — 2026
+
+### Fixes
+
+- **Package Browser breakpoints now bind visibly for path-only file sources** — When a package source opens as a `file:` URI with `sourceReference: 0`, CDS Debug mirrors the breakpoint to the live debug sessions, reads the adapter's `verified=true` response, and refreshes the same VS Code breakpoint so the editor UI changes from gray/unbound to red/bound.
+- **Package source identity is tracked across file and debug URIs** — Package Browser now keeps the originating source path, source reference, and session metadata for opened package files so breakpoint mirroring, tab dedupe, and cleanup all reason about the same logical source.
+- **Dependency source maps are included in generated attach configs** — Generated `outFiles` now includes app, workspace, and bounded ancestor `node_modules` roots, which lets vscode-js-debug verify package breakpoints through its native source-map pipeline.
+- **Source-reference package files can be materialized safely** — When a package source is only available through DAP `source` content, CDS Debug can write it to a safe local `node_modules` path and open it as a normal `file:` URI instead of forcing a virtual debug-source editor.
+- **Auto-attached debug sessions are tracked by session id** — Child and worker sessions with repeated display names are retained separately, improving Package Browser source collection and breakpoint propagation.
+
+---
+
 ## [0.3.62-pre.19] — 2026
 
 ### Changes

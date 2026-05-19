@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -40,6 +40,7 @@ const { vscodeMockState } = vi.hoisted(() => ({
     TextEditorRevealType: {
       InCenterIfOutsideViewport: 1,
     },
+    workspaceFolders: [] as { uri: { fsPath: string } }[],
   },
 }));
 
@@ -64,6 +65,9 @@ vi.mock('vscode', () => ({
     asDebugSourceUri: vscodeMockState.asDebugSourceUri,
   },
   workspace: {
+    get workspaceFolders(): { uri: { fsPath: string } }[] {
+      return vscodeMockState.workspaceFolders;
+    },
     openTextDocument: vscodeMockState.openTextDocument,
   },
   window: {
@@ -176,6 +180,7 @@ beforeEach(() => {
   vscodeMockState.asDebugSourceUri.mockReset();
   vscodeMockState.openTextDocument.mockReset();
   vscodeMockState.showTextDocument.mockReset();
+  vscodeMockState.workspaceFolders = [];
   vscodeMockState.asDebugSourceUri.mockImplementation((source: { path?: string; name?: string }) =>
     createMockUri(
       `debug:${source.path ?? source.name ?? 'unknown'}`,
@@ -888,6 +893,111 @@ describe('packageSourceBrowser', () => {
       }),
       expect.objectContaining({ preview: true }),
     );
+  });
+
+  it('materializes missing source-reference package content and opens a file URI', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-materialize-'));
+    const sourcePath = join(
+      rootDir,
+      'node_modules',
+      '.pnpm',
+      'sample-client@1.0.0',
+      'node_modules',
+      'sample-client',
+      'src',
+      'client.ts',
+    );
+    const sourceContent = 'export function createClient() { return true; }\n';
+    const requests: string[] = [];
+    const session: MockDebugSession = {
+      id: 'session-materialize',
+      name: 'Debug: sample-service',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        void args;
+        requests.push(command);
+        if (command === 'source') return Promise.resolve({ content: sourceContent });
+        return Promise.resolve({ sources: [] });
+      },
+    };
+    vscodeMockState.workspaceFolders = [{ uri: { fsPath: rootDir } }];
+
+    try {
+      await openPackageSource(asDebugSession(session), {
+        name: 'client.ts',
+        path: sourcePath,
+        sourceReference: 91,
+      });
+
+      await expect(readFile(sourcePath, 'utf8')).resolves.toBe(sourceContent);
+      expect(requests).toEqual(['source']);
+      expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
+      expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scheme: 'file',
+          path: sourcePath,
+        }),
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('materializes package content from an ancestor node_modules root outside workspace folders', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-ancestor-'));
+    const localRoot = join(rootDir, 'apps', 'sample-service');
+    const unrelatedWorkspace = join(rootDir, 'workspace-shell');
+    const sourcePath = join(
+      rootDir,
+      'node_modules',
+      '.pnpm',
+      '@sample-org+demo-helper@1.2.3',
+      'node_modules',
+      '@sample-org',
+      'demo-helper',
+      'src',
+      'handler.ts',
+    );
+    const sourceContent = 'export function handleSampleEvent() { return true; }\n';
+    const requests: string[] = [];
+    const session: MockDebugSession = {
+      id: 'session-ancestor-materialize',
+      name: 'Debug: sample-service',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        void args;
+        requests.push(command);
+        if (command === 'source') return Promise.resolve({ content: sourceContent });
+        return Promise.resolve({ sources: [] });
+      },
+    };
+    vscodeMockState.workspaceFolders = [{ uri: { fsPath: unrelatedWorkspace } }];
+
+    try {
+      await mkdir(localRoot, { recursive: true });
+      await mkdir(unrelatedWorkspace, { recursive: true });
+
+      await openPackageSource(
+        asDebugSession(session),
+        {
+          name: 'handler.ts',
+          path: sourcePath,
+          sourceReference: 417,
+        },
+        undefined,
+        { localRoot },
+      );
+
+      await expect(readFile(sourcePath, 'utf8')).resolves.toBe(sourceContent);
+      expect(requests).toEqual(['source']);
+      expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
+      expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scheme: 'file',
+          path: sourcePath,
+        }),
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
   });
 
   it('falls back to local file URIs when no sourceReference is available', async () => {

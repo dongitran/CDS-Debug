@@ -3,20 +3,24 @@ import type * as vscode from 'vscode';
 export const DEBUG_SESSION_PREFIX = 'Debug: ';
 
 const activeDebugSessions = new Map<string, vscode.DebugSession>();
-const activeVsCodeSessions = new Set<string>();
+const activeVsCodeSessionCounts = new Map<string, number>();
 
 export function trackStartedDebugSession(session: vscode.DebugSession): void {
-  activeVsCodeSessions.add(session.name);
-  activeDebugSessions.set(session.name, session);
+  const previous = activeDebugSessions.get(session.id);
+  if (previous !== undefined) decrementSessionName(previous.name);
+  activeVsCodeSessionsIncrement(session.name);
+  activeDebugSessions.set(session.id, session);
 }
 
 export function untrackDebugSession(session: vscode.DebugSession): void {
-  activeVsCodeSessions.delete(session.name);
-  activeDebugSessions.delete(session.name);
+  if (!activeDebugSessions.has(session.id)) return;
+  activeDebugSessions.delete(session.id);
+  decrementSessionName(session.name);
 }
 
 export function getActiveDebugSessionForApp(appName: string): vscode.DebugSession | undefined {
-  return activeDebugSessions.get(`${DEBUG_SESSION_PREFIX}${appName}`);
+  const rootSessionName = `${DEBUG_SESSION_PREFIX}${appName}`;
+  return Array.from(activeDebugSessions.values()).find((session) => session.name === rootSessionName);
 }
 
 export function getDebugSessionsForApp(appName: string): vscode.DebugSession[] {
@@ -30,12 +34,26 @@ export function getDebugSessionById(sessionId: string): vscode.DebugSession | un
 }
 
 export function hasActiveVsCodeSession(sessionName: string): boolean {
-  return activeVsCodeSessions.has(sessionName);
+  return activeVsCodeSessionCounts.has(sessionName);
 }
 
 export function clearDebugSessionRegistry(): void {
   activeDebugSessions.clear();
-  activeVsCodeSessions.clear();
+  activeVsCodeSessionCounts.clear();
+}
+
+function activeVsCodeSessionsIncrement(sessionName: string): void {
+  activeVsCodeSessionCounts.set(sessionName, (activeVsCodeSessionCounts.get(sessionName) ?? 0) + 1);
+}
+
+function decrementSessionName(sessionName: string): void {
+  const count = activeVsCodeSessionCounts.get(sessionName);
+  if (count === undefined) return;
+  if (count <= 1) {
+    activeVsCodeSessionCounts.delete(sessionName);
+    return;
+  }
+  activeVsCodeSessionCounts.set(sessionName, count - 1);
 }
 
 function sessionBelongsToApp(session: vscode.DebugSession, appName: string): boolean {

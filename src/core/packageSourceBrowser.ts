@@ -1,9 +1,10 @@
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import * as vscode from 'vscode';
 import { logInfo } from './logger';
+import { materializePackageSourceContent } from './packageSourceContent';
 import type {
   LoadedPackageEntry,
   LoadedPackageFile,
@@ -49,6 +50,14 @@ export interface PackageSearchIndex {
 
 interface PackageSearchOptions {
   packageNameFilterRegex?: string | undefined;
+}
+
+export interface OpenedPackageSourceRecord {
+  appName: string;
+  uri: vscode.Uri;
+  source?: LoadedPackageSource;
+  sessionId?: string;
+  sessionName?: string;
 }
 
 const DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS: Required<LoadPackageEntriesOptions> = {
@@ -500,12 +509,12 @@ function mergeLoadedSources(batches: readonly LoadedPackageSource[][]): LoadedPa
   return batches.flat();
 }
 
-function toOpenUri(
+async function toOpenUri(
   session: vscode.DebugSession,
   source: LoadedPackageSource,
   options?: { localRoot?: string },
-): vscode.Uri {
-  // Prefer a `file:` URI whenever the source path resolves to a real file on disk —
+): Promise<vscode.Uri> {
+  // Prefer a `file:` URI whenever the source path resolves to a local file on disk,
   // ahead of the `sourceReference > 0` check. Rationale:
   //
   // vscode-js-debug, when a paused frame's source path exists locally, advertises that
@@ -516,13 +525,22 @@ function toOpenUri(
   // user-visible "two tabs at the same path" symptom across the
   // Package-browser-open → runtime-pause transition.
   //
-  // Resolving via `realpathSync` also normalizes pnpm symlink chains so the URI exactly
-  // matches the canonical form vscode-js-debug computes internally.
+  // Keep the workspace-mapped candidate string instead of resolving pnpm/workspace
+  // package symlinks. The generated launch config maps remote package paths to
+  // `${localRoot}/node_modules/...`; opening that same URI gives VS Code's breakpoint
+  // verifier the same path identity that js-debug receives from source-map overrides.
   const localCandidates = collectLocalFileCandidates(source, options?.localRoot);
   for (const candidate of localCandidates) {
-    const canonical = tryRealpath(candidate);
-    if (canonical !== null) return vscode.Uri.file(canonical);
+    if (existsSync(candidate)) return vscode.Uri.file(candidate);
   }
+
+  const materialized = await materializePackageSourceContent(
+    session,
+    source,
+    localCandidates,
+    options?.localRoot === undefined ? {} : { localRoot: options.localRoot },
+  );
+  if (materialized !== null) return vscode.Uri.file(materialized);
 
   // No candidate exists on disk. Fall back to the debug-source URI for sources that
   // vscode-js-debug serves via embedded `sourcesContent` (common for `.ts` files whose
@@ -551,27 +569,35 @@ function collectLocalFileCandidates(
   localRoot: string | undefined,
 ): string[] {
   const candidates: string[] = [];
-  // Workspace-mapped fallback first: the user's local checkout under their app folder
-  // overrides the build-machine embedded path. Important when the package was built on
-  // a different machine.
   if (localRoot !== undefined) {
-    const mapped = buildLocalRootSourcePath(localRoot, source);
-    if (mapped) candidates.push(mapped);
+    for (const root of collectLocalRootCandidates(localRoot)) {
+      const mapped = buildLocalRootSourcePath(root, source);
+      if (mapped) pushUnique(candidates, mapped);
+    }
   }
-  // Then the source's own `path` field — covers the common case where the package was
-  // built on the same machine as the IDE and the embedded build-time path resolves
-  // directly.
   const direct = toReadableLocalSourcePath(source);
-  if (direct) candidates.push(direct);
+  if (direct) pushUnique(candidates, direct);
+  return candidates;
+}
+
+function collectLocalRootCandidates(localRoot: string): string[] {
+  const candidates: string[] = [];
+  const resolved = tryRealpath(localRoot);
+  if (resolved !== null) candidates.push(resolved);
+  pushUnique(candidates, localRoot);
   return candidates;
 }
 
 function tryRealpath(filePath: string): string | null {
   try {
-    return realpathSync.native(filePath);
+    return realpathSync(filePath);
   } catch {
     return null;
   }
+}
+
+function pushUnique(values: string[], value: string): void {
+  if (!values.includes(value)) values.push(value);
 }
 
 export function buildPackageEntries(sources: LoadedPackageSource[]): LoadedPackageEntry[] {
@@ -778,24 +804,58 @@ export async function loadPackageEntriesFromSessions(
 // that fall outside the VS Code workspace (typical for pnpm-hoisted `node_modules` —
 // the package files live under the monorepo root, not inside the app's mapped folder),
 // which the existing workspace filter would otherwise silently skip.
-const openedPackageUrisByApp = new Map<string, Map<string, vscode.Uri>>();
+const openedPackageUrisByApp = new Map<string, Map<string, OpenedPackageSourceRecord>>();
 
-export function trackOpenedPackageUri(appName: string, uri: vscode.Uri): void {
+export function trackOpenedPackageUri(
+  appName: string,
+  uri: vscode.Uri,
+  source?: LoadedPackageSource,
+  session?: vscode.DebugSession,
+): void {
   let registry = openedPackageUrisByApp.get(appName);
   if (registry === undefined) {
     registry = new Map();
     openedPackageUrisByApp.set(appName, registry);
   }
-  registry.set(uri.toString(), uri);
+  const existing = registry.get(uri.toString());
+  registry.set(uri.toString(), createOpenedPackageSourceRecord(appName, uri, source, session, existing));
 }
 
 export function getOpenedPackageUris(appName: string): vscode.Uri[] {
   const registry = openedPackageUrisByApp.get(appName);
-  return registry ? Array.from(registry.values()) : [];
+  return registry ? Array.from(registry.values()).map((record) => record.uri) : [];
 }
 
 export function clearOpenedPackageUris(appName: string): void {
   openedPackageUrisByApp.delete(appName);
+}
+
+function createOpenedPackageSourceRecord(
+  appName: string,
+  uri: vscode.Uri,
+  source: LoadedPackageSource | undefined,
+  session: vscode.DebugSession | undefined,
+  existing: OpenedPackageSourceRecord | undefined,
+): OpenedPackageSourceRecord {
+  const record: OpenedPackageSourceRecord = { appName, uri };
+  const sourceToStore = source ?? existing?.source;
+  const sessionId = session?.id ?? existing?.sessionId;
+  const sessionName = session?.name ?? existing?.sessionName;
+  if (sourceToStore !== undefined) record.source = { ...sourceToStore };
+  if (sessionId !== undefined) record.sessionId = sessionId;
+  if (sessionName !== undefined) record.sessionName = sessionName;
+  return record;
+}
+
+function cloneOpenedPackageSourceRecord(record: OpenedPackageSourceRecord): OpenedPackageSourceRecord {
+  const clone: OpenedPackageSourceRecord = {
+    appName: record.appName,
+    uri: record.uri,
+  };
+  if (record.source !== undefined) clone.source = { ...record.source };
+  if (record.sessionId !== undefined) clone.sessionId = record.sessionId;
+  if (record.sessionName !== undefined) clone.sessionName = record.sessionName;
+  return clone;
 }
 
 // Reverse lookup: given a URI's `.path` (the decoded URL path component, which equals
@@ -805,8 +865,22 @@ export function clearOpenedPackageUris(appName: string): void {
 // the URI's session-id query — the path is the stable cross-session identifier.
 export function findAppForOpenedPath(path: string): string | undefined {
   for (const [appName, registry] of openedPackageUrisByApp) {
-    for (const uri of registry.values()) {
-      if (uri.path === path) return appName;
+    for (const record of registry.values()) {
+      if (record.uri.path === path) return appName;
+    }
+  }
+  return undefined;
+}
+
+export function findOpenedPackageSourceByUri(uri: vscode.Uri): OpenedPackageSourceRecord | undefined {
+  const uriString = uri.toString();
+  for (const registry of openedPackageUrisByApp.values()) {
+    const exact = registry.get(uriString);
+    if (exact !== undefined) return cloneOpenedPackageSourceRecord(exact);
+  }
+  for (const registry of openedPackageUrisByApp.values()) {
+    for (const record of registry.values()) {
+      if (record.uri.path === uri.path) return cloneOpenedPackageSourceRecord(record);
     }
   }
   return undefined;
@@ -860,12 +934,12 @@ export async function openPackageSource(
   location?: PackageSourceLocation,
   options?: { localRoot?: string; appName?: string },
 ): Promise<vscode.Uri> {
-  const uri = toOpenUri(session, source, options);
+  const uri = await toOpenUri(session, source, options);
   logInfo(
     `[PackageBrowser] open scheme=${uri.scheme} path=${uri.path} fsPath=${uri.fsPath} query=${uri.query || '<none>'} sourceRef=${(source.sourceReference ?? 0).toString()} session=${session.id} toString=${uri.toString()}`,
   );
   if (options?.appName !== undefined) {
-    trackOpenedPackageUri(options.appName, uri);
+    trackOpenedPackageUri(options.appName, uri, source, session);
   }
   const document = await vscode.workspace.openTextDocument(uri);
   const selection = location

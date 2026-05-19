@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir, realpath } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { CapDebugConfig, DebugTarget, LaunchConfiguration, LaunchJson } from '../types/index';
 import { readCapDebugConfig } from './capDebugConfig';
 import { logWarn } from './logger';
@@ -16,10 +16,15 @@ export const DEBUG_CONFIG_PREFIX = 'Debug: ';
 // `gen/srv` is emitted by `cds build` for deploy. The remaining folders cover common
 // custom-bundling layouts (esbuild → dist, tsc → build, app-layer libs → app/lib).
 const OUT_FILES_FOLDERS = ['srv', 'gen/srv', 'app', 'lib', 'dist', 'build'] as const;
+// Package Browser explicitly debugs dependency sources; excluding `node_modules` keeps
+// those visible breakpoints gray even when runtime mirroring can still pause execution.
+const PACKAGE_OUT_FILES_FOLDER = 'node_modules';
 const SCRIPT_GLOB_SUFFIX = '/**/*.{js,cjs,mjs}';
+const MAX_PACKAGE_OUT_FILES_ANCESTORS = 6;
 
 export interface LaunchGenerationOptions {
   resolvedRemoteRoots?: ReadonlyMap<string, string>;
+  workspaceRoot?: string;
 }
 
 export interface LaunchConfigOverrides {
@@ -27,6 +32,10 @@ export interface LaunchConfigOverrides {
   outFilesExtra?: string[];
   resolveSourceMapLocations?: string[] | null;
   sourceMapPathOverrides?: Record<string, string>;
+}
+
+export interface LaunchBuildOptions {
+  packageOutFilesRoots?: readonly string[];
 }
 
 let launchJsonLock = Promise.resolve();
@@ -49,6 +58,7 @@ export function buildLaunchConfiguration(
   remoteRoot: string | undefined,
   localRootOverride?: string,
   overrides?: LaunchConfigOverrides,
+  options?: LaunchBuildOptions,
 ): LaunchConfiguration {
   const localRoot = localRootOverride ?? target.folderPath;
   const config: LaunchConfiguration = {
@@ -61,7 +71,7 @@ export function buildLaunchConfiguration(
     cdsDebugManaged: true,
     sourceMaps: true,
     skipFiles: SKIP_FILES,
-    outFiles: resolveOutFiles(localRoot, overrides),
+    outFiles: resolveOutFiles(localRoot, overrides, options?.packageOutFilesRoots),
     // null disables the workspace-only filter. Required for attach-mode debugging
     // through SSH tunnels because source maps embed remote paths (/home/vcap/app/...)
     // that fall outside the workspace and would otherwise be silently dropped.
@@ -104,22 +114,91 @@ function resolveSourceMapPathOverrides(
   return { ...defaults, ...overrides?.sourceMapPathOverrides };
 }
 
-function resolveOutFiles(localRoot: string, overrides: LaunchConfigOverrides | undefined): string[] {
+function resolveOutFiles(
+  localRoot: string,
+  overrides: LaunchConfigOverrides | undefined,
+  packageOutFilesRoots: readonly string[] | undefined,
+): string[] {
   if (overrides?.outFiles !== undefined) return [...overrides.outFiles];
 
-  const defaults = buildOutFilesGlobs(localRoot);
+  const defaults = buildOutFilesGlobs(localRoot, packageOutFilesRoots);
   const extra = overrides?.outFilesExtra;
   if (extra === undefined || extra.length === 0) return defaults;
 
-  // The trailing `!**/node_modules/**` glob must remain last so its negation
-  // still applies after the user-supplied include patterns are appended.
-  const lastIndex = defaults.length - 1;
-  return [...defaults.slice(0, lastIndex), ...extra, ...defaults.slice(lastIndex)];
+  return [...defaults, ...extra];
 }
 
-function buildOutFilesGlobs(localRoot: string): string[] {
-  const include = OUT_FILES_FOLDERS.map((folder) => `${join(localRoot, folder)}${SCRIPT_GLOB_SUFFIX}`);
-  return [...include, `!${localRoot}/**/node_modules/**`];
+function buildOutFilesGlobs(
+  localRoot: string,
+  packageOutFilesRoots: readonly string[] | undefined,
+): string[] {
+  const appFolders = OUT_FILES_FOLDERS
+    .map((folder) => `${join(localRoot, folder)}${SCRIPT_GLOB_SUFFIX}`);
+  const packageRoots = collectPackageOutFilesRoots(localRoot, packageOutFilesRoots);
+  const packageFolders = packageRoots.map((root) => `${join(root, PACKAGE_OUT_FILES_FOLDER)}${SCRIPT_GLOB_SUFFIX}`);
+  return [...appFolders, ...packageFolders];
+}
+
+function collectPackageOutFilesRoots(
+  localRoot: string,
+  packageOutFilesRoots: readonly string[] | undefined,
+): string[] {
+  const roots: string[] = [];
+  pushUnique(roots, localRoot);
+  for (const root of packageOutFilesRoots ?? []) {
+    pushUnique(roots, root);
+  }
+  return roots;
+}
+
+function pushUnique(values: string[], value: string): void {
+  if (!values.includes(value)) values.push(value);
+}
+
+function collectWorkspacePackageRoots(
+  localRoot: string,
+  rawLocalRoot: string,
+  workspaceRoot: string | undefined,
+): string[] {
+  if (workspaceRoot === undefined) return [];
+  if (!isParentOrSamePath(workspaceRoot, localRoot) && !isParentOrSamePath(workspaceRoot, rawLocalRoot)) return [];
+  return [workspaceRoot];
+}
+
+function collectAncestorPackageRoots(startPath: string): string[] {
+  if (!isAbsolute(startPath)) return [];
+  const roots: string[] = [];
+  let current = dirname(startPath);
+  for (let depth = 0; depth < MAX_PACKAGE_OUT_FILES_ANCESTORS; depth += 1) {
+    const next = dirname(current);
+    if (next === current) break;
+    pushUnique(roots, current);
+    current = next;
+  }
+  return roots;
+}
+
+function collectGeneratedPackageRoots(
+  localRoot: string,
+  rawLocalRoot: string,
+  workspaceRoot: string | undefined,
+): string[] {
+  const roots: string[] = [];
+  for (const root of collectWorkspacePackageRoots(localRoot, rawLocalRoot, workspaceRoot)) {
+    pushUnique(roots, root);
+  }
+  for (const root of collectAncestorPackageRoots(localRoot)) {
+    pushUnique(roots, root);
+  }
+  for (const root of collectAncestorPackageRoots(rawLocalRoot)) {
+    pushUnique(roots, root);
+  }
+  return roots;
+}
+
+function isParentOrSamePath(parentPath: string, childPath: string): boolean {
+  const rel = relative(parentPath, childPath);
+  return rel.length === 0 || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
 async function resolveLocalRootSafe(rawPath: string): Promise<string> {
@@ -154,7 +233,9 @@ export async function generateLaunchConfigurations(
       localRoot,
     );
     const overrides = mergeLaunchConfigOverrides(appConfig, fallbackConfig);
-    configs.push(buildLaunchConfiguration(target, remoteRoot, localRoot, overrides));
+    configs.push(buildLaunchConfiguration(target, remoteRoot, localRoot, overrides, {
+      packageOutFilesRoots: collectGeneratedPackageRoots(localRoot, target.folderPath, options.workspaceRoot),
+    }));
   }
   return configs;
 }
@@ -200,7 +281,10 @@ export async function mergeLaunchJson(
 ): Promise<void> {
   return withLock(async () => {
     const launchJsonPath = join(workspacePath, '.vscode', 'launch.json');
-    const newConfigs = await generateLaunchConfigurations(targets, fallbackConfig, options);
+    const newConfigs = await generateLaunchConfigurations(targets, fallbackConfig, {
+      ...options,
+      workspaceRoot: options.workspaceRoot ?? workspacePath,
+    });
     const newNames = new Set(newConfigs.map((c) => c.name));
 
     const existing = await getExistingLaunchConfigs(workspacePath);
