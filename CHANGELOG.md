@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.33] — 2026
+
+### Changes
+
+- **Adds the `eu10-006` Cloud Foundry region** — Bumps `@saptools/cf-sync` to `0.4.10`, which adds the `eu10-006` (Europe/Frankfurt, AWS) landscape to the synced region catalog. CF topology sync and the region picker now cover all 50 SAP BTP Cloud Foundry regions.
+
+---
+
 ## [0.3.62-pre.32] — 2026
 
 ### Changes
