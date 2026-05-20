@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0] — 2026
+
+### Highlights
+
+- **Reliable breakpoints** — Breakpoints now bind more consistently on first attach across CAP workers, lazily-loaded scripts, package sources, source maps, and Windows path casing edge cases.
+- **Faster CF navigation** — `cf-sync` topology now powers more of the org/space/app flow, refreshes orgs during login, keeps the 50-region catalog current, and defers regex remote-folder SSH discovery until Start Debug for selected apps.
+- **Shared scope and folder mapping** — CDS Debug now syncs the active CF scope through `sapCap.currentScope`, handles cross-region external scope changes more safely, preserves region mappings, and supports explicit `cdsDebug.appFolderMappings`.
+- **Safer debug lifecycle** — Stop/restart now verifies local port cleanup, clears remote breakpoints defensively, detects stale tunnels, probes inspector readiness, and targets the likely main Node process by default.
+
+---
+
 ## [0.3.62-pre.34] — 2026
 
 ### Changes

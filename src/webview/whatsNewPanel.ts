@@ -20,44 +20,32 @@ interface ChangelogVersion {
 
 const CHANGELOG: ChangelogVersion[] = [
   {
-    version: '0.3.61',
-    label: 'v0.3.61',
+    version: '0.4.0',
+    label: 'v0.4.0',
     features: [
       {
-        icon: '📦',
-        title: 'Package Browser',
+        icon: '🎯',
+        title: 'Reliable Breakpoints',
         description:
-          'A new screen lets you browse every npm package loaded in an active debug session as a collapsible tree. Search by name, filter with a regex, and jump directly to any source file — no more hunting through node_modules manually.',
+          'Breakpoints now bind more consistently on first attach across CAP workers, lazy-loaded scripts, package sources, source maps, and Windows path casing edge cases.',
       },
       {
-        icon: '📸',
-        title: 'Breakpoint Snapshots',
+        icon: '⚡',
+        title: 'Faster CF Navigation',
         description:
-          'Capture the full variable context at any breakpoint without pausing execution — CDS Debug auto-continues and accumulates snapshots in the sidebar for review after the request completes. Toggle in Settings → Breakpoint Snapshot Handling.',
-      },
-      {
-        icon: '⚙️',
-        title: 'Shared CAP Debug Config',
-        description:
-          'Set <code>cdsDebug.sharedCapDebugConfig</code> once in VS Code user settings to share <code>remoteRoot</code> and <code>orgBranchMap</code> across every workspace — no more copying <code>cap-debug-config.json</code> into each project.',
-      },
-      {
-        icon: '🛡️',
-        title: 'Stability & Fixes',
-        description:
-          'Suppressed spurious save-before-start permission errors, retry package loading when a session restarts, and corrected source map paths for generated CAP server files.',
+          '<code>cf-sync</code> topology now powers more org, space, and app navigation, refreshes orgs during login, and keeps the 50-region catalog current.',
       },
       {
         icon: '🧭',
-        title: 'Dynamic Remote Roots',
+        title: 'Shared Scope & Mapping',
         description:
-          'Regex-based <code>remoteRoot</code> values now resolve per CF app before debugging starts, so generated attach configs can map services deployed under different remote folders such as <code>/usr/sample-service-a</code>.',
+          '<code>sapCap.currentScope</code> sync and explicit app-folder mappings keep Cloud Foundry region, org, space, and local source context aligned.',
       },
       {
-        icon: '🧩',
-        title: 'Compatibility Refresh',
+        icon: '🛡️',
+        title: 'Safer Debug Stop',
         description:
-          'Lowered the minimum VS Code engine target to 1.112 and checked the code against an older VS Code API type baseline, while keeping the existing CF sync, ESLint, and TypeScript ESLint updates.',
+          'Stop and restart now clean ports, breakpoints, stale tunnels, and target the likely main Node process by default.',
       },
     ],
     fixes: [],
