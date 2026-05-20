@@ -72,6 +72,7 @@ interface MirrorTargetResult {
 
 const MIRROR_REQUEST_TIMEOUT_MS = 1_500;
 const MIGRATION_GUARD_MS = 500;
+const SOURCE_URI_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
 
 let listener: vscode.Disposable | undefined;
 const inFlightByKey = new Map<string, Promise<void>>();
@@ -292,16 +293,21 @@ function findPromotionTarget(
   const verified = results.filter((result): result is MirrorTargetResult =>
     result?.verified === true);
   if (verified.length === 0) return null;
+  const referenced = verified.find((result) => (result.descriptor.sourceReference ?? 0) > 0) ?? null;
   if (source.uri.scheme !== 'file') {
-    return verified.find((result) => (result.descriptor.sourceReference ?? 0) > 0) ?? null;
+    return referenced;
   }
-  return verified.find((result) => (result.descriptor.sourceReference ?? 0) > 0)
-    ?? verified.at(-1)
-    ?? null;
+  if (referenced !== null) return referenced;
+  if (isUriLikeSourcePath(source.sourcePath)) return null;
+  return verified.at(-1) ?? null;
 }
 
 function isMaterializedFileSource(source: AffectedPackageSource): boolean {
   return source.uri.scheme === 'file' && (source.sourceReference ?? 0) > 0;
+}
+
+function isUriLikeSourcePath(path: string): boolean {
+  return SOURCE_URI_PATTERN.test(path);
 }
 
 function buildVerifiedDebugUri(source: AffectedPackageSource, target: MirrorTargetResult): vscode.Uri {

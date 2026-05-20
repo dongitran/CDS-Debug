@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1-pre.0] — 2026
+
+### Fixes
+
+- **Stable Package Browser breakpoints for mapped apps** — Package Browser now avoids inventing or materializing missing package files under a mapped app folder's `node_modules` path. Existing local package files still open normally, while missing package sources keep the debugger's source identity so mapped-app package breakpoints behave like the stable no-src flow.
+- **No double-encoded verified source URIs** — Path-only package sources whose debugger path is already a URI, such as `vscode-remote://...`, are no longer promoted through `asDebugSourceUri()`. This prevents broken `vscode-remote://.../vscode-remote%3A/...` editor focus attempts after breakpoint mirroring verifies the breakpoint.
+
 ## [0.4.0] — 2026
 
 ### Highlights

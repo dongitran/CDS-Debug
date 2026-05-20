@@ -180,6 +180,22 @@ pnpm test:report          # Open HTML report
 4. User can open the first local debugger statement warning match.
 5. User can start debug with the default main-process USR1 signal command.
 
+### Packages Browser
+1. User can open Packages from an attached session card and browse an inline tree.
+2. User can switch apps inside Packages and see each app package list independently.
+3. User can open Packages immediately after attach and wait for sources instead of seeing a false error.
+4. User can open Packages immediately after a started session and wait for the child debug session to appear.
+5. User can retry after a hanging package-source request times out.
+6. User can save a debug session package regex filter and apply it before search input filtering.
+7. User sees invalid debug session package regex rejected in settings.
+8. User can expand package tree rows without scroll jumps.
+9. User can search by package name while keeping the package collapsible.
+10. User can collapse matching folders after descendant search matches.
+11. User can search package file contents and open the matching file at the matched line.
+12. User can search package file contents when the debugger reports a remote package path.
+13. User can open mapped package content from an attached source-mapped session.
+14. Debug session package regex filtering still applies before content search results are shown.
+
 ## Debug Cleanup Workflow
 
 CDS Debug opens the remote Node inspector with `SIGUSR1` and attaches through a local `cf ssh -L` tunnel. Stopping a session closes the local tunnel and clears remote breakpoints defensively, but the Node inspector listener can remain open inside the CF container until the app restarts. The reminder is opt-in via `cdsDebug.warnRemoteInspectorAfterStop` because restarting CF apps can be slow or disruptive. Use `cdsDebug.autoRestartAppAfterStop` only when an automatic `cf restart <app>` is acceptable for that space.

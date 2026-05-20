@@ -66,6 +66,8 @@ const DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS: Required<LoadPackageEntriesOptions> 
   loadedSourcesRequestTimeoutMs: 1_500,
 };
 
+const SOURCE_URI_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -82,7 +84,7 @@ function toReadableLocalSourcePath(source: LoadedPackageSource): string | null {
   if (source.path.startsWith('file://')) {
     return normalizeSourcePath(source.path);
   }
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(source.path)) {
+  if (SOURCE_URI_PATTERN.test(source.path)) {
     return null;
   }
   return normalizeSourcePath(source.path);
@@ -537,7 +539,7 @@ async function toOpenUri(
   const materialized = await materializePackageSourceContent(
     session,
     source,
-    localCandidates,
+    collectDirectLocalFileCandidates(source),
     options?.localRoot === undefined ? {} : { localRoot: options.localRoot },
   );
   if (materialized !== null) return vscode.Uri.file(materialized);
@@ -553,15 +555,17 @@ async function toOpenUri(
   if (!source.path) {
     throw new Error('Package source cannot be opened because it has no path.');
   }
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(source.path)) {
+  if (SOURCE_URI_PATTERN.test(source.path)) {
     return vscode.Uri.parse(source.path);
   }
-  // Last resort: open the highest-preference candidate as `Uri.file` even though it
-  // does not exist on disk. Preserves the legacy workspace-mapped semantics for
-  // sources whose embedded path differs from the actual install location.
-  const preferred = localCandidates[0];
-  if (preferred !== undefined) return vscode.Uri.file(preferred);
+  const direct = toReadableLocalSourcePath(source);
+  if (direct !== null) return vscode.Uri.file(direct);
   return vscode.Uri.file(source.path);
+}
+
+function collectDirectLocalFileCandidates(source: LoadedPackageSource): string[] {
+  const direct = toReadableLocalSourcePath(source);
+  return direct === null ? [] : [direct];
 }
 
 function collectLocalFileCandidates(

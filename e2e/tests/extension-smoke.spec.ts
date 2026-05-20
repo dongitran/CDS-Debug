@@ -4004,6 +4004,42 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       }
     });
 
+    test('User can open mapped package content from an attached source-mapped session', async () => {
+      const workspaceDir = await createTempDirectory('cds-debug-e2e-package-mapped-content-');
+
+      try {
+        const contentFixture = await createPackageFixtureInWorkspace(workspaceDir, {
+          name: '@sample-org/demo-helper',
+          version: '1.2.0',
+          files: [{
+            relativePath: 'src/handler.ts',
+            content: 'export function createMappedPackageHandler() { return true; }\n',
+          }],
+        }, { reportedRootDir: '/sample-app' });
+
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await emitDebugConnecting(webview, { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } });
+          await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+          await setPackageFixture(webview, 'mock-service-a', [contentFixture], { localRoot: workspaceDir });
+
+          const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
+          await expect(activeCard.locator('.active-card-no-src')).toHaveCount(0);
+          await activeCard.locator('.active-packages-btn').click();
+          await expect(webview.locator('#packages-app-select')).toBeVisible();
+          await webview.locator('#packages-search-input').fill('createMappedPackageHandler');
+          await expect(webview.locator('.packages-tree-file-row', { hasText: 'handler.ts' })).toBeVisible({ timeout: 5_000 });
+          await webview.locator('.packages-tree-file-row', { hasText: 'handler.ts' }).click();
+          await expectEditorCursorPosition(workbenchPage, 1, 17);
+          await captureStepEvidence(workbenchPage, 'packages-mapped-content-opened');
+          await clearPackageFixtures(webview);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
+    });
+
     test('Debug session package regex filtering still applies before content search results are shown', async () => {
       const workspaceDir = await createTempDirectory('cds-debug-e2e-package-filter-');
 

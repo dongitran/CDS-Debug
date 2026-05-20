@@ -273,4 +273,36 @@ describe('packageBreakpointMirror', () => {
     expect(vscodeMockState.addBreakpoints).not.toHaveBeenCalled();
     expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
   });
+
+  it('does not promote path-only package breakpoints when the debugger source path is already a URI', async () => {
+    const appName = 'sample-service';
+    const fileUri = createUri('file', '/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.ts');
+    const sourcePath = 'vscode-remote://sample-host/home/sample/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.ts';
+    const breakpoint = createBreakpoint(fileUri);
+    const session = createVerifyingSession('session-uri-path', { path: sourcePath, sourceReference: 0 });
+    vscodeMockState.breakpoints = [breakpoint];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [session]);
+    packageSourceBrowserMockState.records.set(fileUri.toString(), {
+      appName,
+      uri: fileUri,
+      source: {
+        name: 'main.ts',
+        path: sourcePath,
+        sourceReference: 0,
+      },
+      sessionId: session.id,
+      sessionName: session.name,
+    });
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [breakpoint], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(session.customRequest).toHaveBeenCalledWith('setBreakpoints', expect.any(Object));
+    });
+    expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
+    expect(vscodeMockState.addBreakpoints).not.toHaveBeenCalled();
+    expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
+    expect(vscodeMockState.showTextDocument).not.toHaveBeenCalled();
+  });
 });

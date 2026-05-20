@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -174,6 +174,15 @@ async function createTempPackageEntries(
     entries: buildPackageEntries(sources),
     filePaths,
   };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 beforeEach(() => {
@@ -1042,29 +1051,125 @@ describe('packageSourceBrowser', () => {
     );
   });
 
-  it('opens remote package paths through the provided local root fallback', async () => {
+  it('opens remote package paths through the provided local root fallback when the file exists', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-local-root-'));
+    const localRoot = join(rootDir, 'sample-service');
+    const localPackagePath = join(
+      localRoot,
+      'node_modules',
+      '.pnpm',
+      '@sample-org+demo-kit@1.4.0',
+      'node_modules',
+      '@sample-org',
+      'demo-kit',
+      'dist',
+      'main.js',
+    );
     const session: MockDebugSession = {
       id: 'session-3e',
       name: 'Debug: sample-service',
       customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
     };
 
-    await openPackageSource(
-      asDebugSession(session),
-      {
-        name: 'main.js',
-        path: '/sample-app/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
-      },
-      undefined,
-      { localRoot: '/workspace/sample-service' },
-    );
+    try {
+      await mkdir(dirname(localPackagePath), { recursive: true });
+      await writeFile(localPackagePath, 'export const sample = true;\n', 'utf8');
 
-    expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scheme: 'file',
-        path: '/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
-      }),
-    );
+      await openPackageSource(
+        asDebugSession(session),
+        {
+          name: 'main.js',
+          path: '/sample-app/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js',
+        },
+        undefined,
+        { localRoot },
+      );
+
+      const openedUri = vscodeMockState.openTextDocument.mock.calls[0]?.[0] as MockUri | undefined;
+      expect(openedUri?.scheme).toBe('file');
+      expect(openedUri?.path.endsWith('/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.js')).toBe(true);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('opens path-only URI package sources without inventing a mapped node_modules file', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-uri-source-'));
+    const localRoot = join(rootDir, 'sample-service');
+    const sourcePath = 'vscode-remote://sample-host/home/sample/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.ts';
+    const session: MockDebugSession = {
+      id: 'session-uri-path',
+      name: 'Debug: sample-service',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+
+    try {
+      await mkdir(localRoot, { recursive: true });
+
+      await openPackageSource(
+        asDebugSession(session),
+        {
+          name: 'main.ts',
+          path: sourcePath,
+          sourceReference: 0,
+        },
+        undefined,
+        { localRoot },
+      );
+
+      expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
+      expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scheme: 'vscode-remote',
+        }),
+      );
+      expect(await pathExists(join(localRoot, 'node_modules'))).toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not materialize source-reference packages into a missing mapped localRoot fallback', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-no-local-root-materialize-'));
+    const localRoot = join(rootDir, 'sample-service');
+    const sourceContent = 'export function createSampleClient() { return true; }\n';
+    const requests: string[] = [];
+    const session: MockDebugSession = {
+      id: 'session-no-local-root-materialize',
+      name: 'Debug: sample-service',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        void args;
+        requests.push(command);
+        if (command === 'source') return Promise.resolve({ content: sourceContent });
+        return Promise.resolve({ sources: [] });
+      },
+    };
+
+    try {
+      await mkdir(localRoot, { recursive: true });
+
+      await openPackageSource(
+        asDebugSession(session),
+        {
+          name: 'client.ts',
+          path: '/remote-sample-service/node_modules/.pnpm/sample-client@1.0.0/node_modules/sample-client/src/client.ts',
+          sourceReference: 91,
+        },
+        undefined,
+        { localRoot },
+      );
+
+      expect(requests).toEqual([]);
+      expect(vscodeMockState.asDebugSourceUri).toHaveBeenCalledTimes(1);
+      expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scheme: 'debug',
+        }),
+      );
+      expect(await pathExists(join(localRoot, 'node_modules'))).toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
   });
 
   it('reveals the requested line and column when opening a matched package source', async () => {

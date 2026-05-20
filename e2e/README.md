@@ -64,36 +64,52 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
 33. ATTACHED with unmappedApps shows `.active-card-no-src` "no src" badge (debug console only, no local source folder).
 34. Stop All button absent with one session; visible with count ≥ 2; disappears again when count drops back to 1 via EXITED.
 
+### Packages Browser (14 tests)
+35. User can open Packages from an attached session card and browse an inline tree.
+36. User can switch apps inside Packages and see each app package list independently.
+37. Opening Packages immediately after attach waits for sources instead of flashing a false error.
+38. Opening Packages immediately after a started session waits for the child debug session to appear.
+39. Reload becomes clickable again after a hanging package-source request times out.
+40. User can save a debug session package regex filter and apply it before search input filtering.
+41. Invalid debug session package regex is rejected in settings.
+42. Tree expansion keeps the clicked package and folder in place while scrolling.
+43. Search by package name keeps the package collapsible instead of forcing it open.
+44. Search with descendant matches still lets users collapse matching folders.
+45. User can search package file contents and open the matching file at the matched line.
+46. User can search package file contents when the debugger reports a remote package path.
+47. User can open mapped package content from an attached source-mapped session.
+48. Debug session package regex filtering still applies before content search results are shown.
+
 ### Ready Screen — Actions and Navigation (4 tests)
-35. DEBUG_ERROR clears PENDING sessions, shows error message, and shows `#btn-retry-apps` alongside the error box.
-36. Change Mapping with no active sessions returns to **CF Region / Org** (step 1/3), not Select CF Org.
-37. Cancel app loading returns to **Ready** screen (not Select Folder) when apps were previously loaded — verifies the `state.apps.length > 0` conditional branch.
-38. Refresh Apps bypasses cache and redisplays the latest app list.
+49. DEBUG_ERROR clears PENDING sessions, shows error message, and shows `#btn-retry-apps` alongside the error box.
+50. Change Mapping with no active sessions returns to **CF Region / Org** (step 1/3), not Select CF Org.
+51. Cancel app loading returns to **Ready** screen (not Select Folder) when apps were previously loaded — verifies the `state.apps.length > 0` conditional branch.
+52. Refresh Apps bypasses cache and redisplays the latest app list.
 
 ### Settings Screen (6 tests)
-39. Keychain credentials section — verifies `.cred-source-badge.keychain`, email display, `#btn-update-credentials`, and `#btn-clear-credentials` via injected CREDENTIALS_STATUS.
-40. No-credentials section — verifies "No credentials configured." text and `#btn-update-credentials` (Set Credentials) when `source: 'none'`.
-41. Stopping-sync state — `.sync-status-row.running` + spinner + "Stopping sync…" when cache disabled but sync still in progress.
-42. Sync running state — verifies `.sync-status-row.running`, spinner, `.progress-bar-wrap`, `.progress-bar-fill`, disabled Sync Now button via injected SYNC_STATUS.
-43. Cache disabled state — verifies unchecked `#chk-cache-enabled`, disabled `#select-interval`, disabled Sync Now, and "Caching disabled" status row via injected CACHE_CONFIG.
-44. Back to Launcher — verifies all 4 sections: SAP Credentials (env badge + email + info icon), Debug Behavior (both toggles + `.pref-state-badge` + `.beta-badge` + `.pref-row .toggle-switch` × 2), App Cache (checked by default, sync interval, enabled Sync Now, "Last sync: Never"), navigation buttons.
+53. Keychain credentials section — verifies `.cred-source-badge.keychain`, email display, `#btn-update-credentials`, and `#btn-clear-credentials` via injected CREDENTIALS_STATUS.
+54. No-credentials section — verifies "No credentials configured." text and `#btn-update-credentials` (Set Credentials) when `source: 'none'`.
+55. Stopping-sync state — `.sync-status-row.running` + spinner + "Stopping sync…" when cache disabled but sync still in progress.
+56. Sync running state — verifies `.sync-status-row.running`, spinner, `.progress-bar-wrap`, `.progress-bar-fill`, disabled Sync Now button via injected SYNC_STATUS.
+57. Cache disabled state — verifies unchecked `#chk-cache-enabled`, disabled `#select-interval`, disabled Sync Now, and "Caching disabled" status row via injected CACHE_CONFIG.
+58. Back to Launcher — verifies all 4 sections: SAP Credentials (env badge + email + info icon), Debug Behavior (both toggles + `.pref-state-badge` + `.beta-badge` + `.pref-row .toggle-switch` × 2), App Cache (checked by default, sync interval, enabled Sync Now, "Last sync: Never"), navigation buttons.
 
 ### Select Folder Screen (1 test)
-45. Save and Continue disabled until folder selected — verifies all SELECT_FOLDER elements (step-badge 3/3, org info-box, section label, "No folder selected yet", browse/back buttons).
+59. Save and Continue disabled until folder selected — verifies all SELECT_FOLDER elements (step-badge 3/3, org info-box, section label, "No folder selected yet", browse/back buttons).
 
 ### Preparing Branches Screen (5 tests)
-46. BRANCH_PREP_START shows prep screen with service rows, branch badges, spinner status, and step-by-step updates (stashing → done → error) — verifies all 3 status block variants.
-47. BRANCH_PREP_START with empty services shows `.org-list-empty` "No services to prepare." placeholder inside `.prep-list`.
-48. DEBUG_CONNECTING from PREPARING_BRANCHES screen transitions to READY with the new session card; prep rows cleared.
-49. BRANCH_PREP_STATUS step variants — verifies checking-out, installing, building, and skipped steps; verifies `.prep-row-top`, `.prep-name`, `.prep-row-status` structural elements.
-50. BRANCH_PREP all done without errors transitions status block to "Starting debug sessions…" with spinner.
+60. BRANCH_PREP_START shows prep screen with service rows, branch badges, spinner status, and step-by-step updates (stashing → done → error) — verifies all 3 status block variants.
+61. BRANCH_PREP_START with empty services shows `.org-list-empty` "No services to prepare." placeholder inside `.prep-list`.
+62. DEBUG_CONNECTING from PREPARING_BRANCHES screen transitions to READY with the new session card; prep rows cleared.
+63. BRANCH_PREP_STATUS step variants — verifies checking-out, installing, building, and skipped steps; verifies `.prep-row-top`, `.prep-name`, `.prep-row-status` structural elements.
+64. BRANCH_PREP all done without errors transitions status block to "Starting debug sessions…" with spinner.
 
 ### Setup Credentials Screen (5 tests)
-51. CREDENTIALS_ERROR directly injected shows `.error-box` and re-enables `#btn-save-creds` (bypasses macOS SecretStorage race).
-52. Update mode — verifies "Update Credentials" title, `#btn-cancel-creds` visible, no `.cred-env-hint`, "Update & Continue" save button label; Back to Settings navigation.
-53. CREDENTIALS_REVOKED forces redirect to SETUP_CREDENTIALS with the revocation error in `.error-box`; setup mode (env hint visible, no cancel button, save button enabled — because handler sets `hasCredentials=false`).
-54. CREDENTIALS_STATUS `{hasCredentials:false}` when `prevHad=true` forces redirect to SETUP_CREDENTIALS setup mode; no error box (clean credential-clear path).
-55. Successful credential save without prior mappings navigates to the Region screen.
+65. CREDENTIALS_ERROR directly injected shows `.error-box` and re-enables `#btn-save-creds` (bypasses macOS SecretStorage race).
+66. Update mode — verifies "Update Credentials" title, `#btn-cancel-creds` visible, no `.cred-env-hint`, "Update & Continue" save button label; Back to Settings navigation.
+67. CREDENTIALS_REVOKED forces redirect to SETUP_CREDENTIALS with the revocation error in `.error-box`; setup mode (env hint visible, no cancel button, save button enabled — because handler sets `hasCredentials=false`).
+68. CREDENTIALS_STATUS `{hasCredentials:false}` when `prevHad=true` forces redirect to SETUP_CREDENTIALS setup mode; no error box (clean credential-clear path).
+69. Successful credential save without prior mappings navigates to the Region screen.
 
 ## Mocking strategy
 - Credentials are scenario-based:

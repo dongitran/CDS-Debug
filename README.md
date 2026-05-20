@@ -38,6 +38,7 @@ A sidebar panel connects to your Cloud Foundry environment, shows your running a
 - ☑️ **Multi-select Debug** — tick any started apps and launch all sessions at once
 - 🟢 **Session Status Panel** — watch each app go from *Connecting* → *Debugger Attached* in real time
 - 🔧 **Auto `launch.json`** — configs are merged in, not overwritten; your manual entries stay safe
+- 📦 **Package Browser** — browse loaded npm package sources from attached sessions without requiring a local `node_modules` install
 - 🧩 **Shared CAP Config** — define one global fallback in VS Code user settings instead of copying `cap-debug-config.json` into every workspace
 - 💾 **Persistent Mapping** — org ↔ folder mapping is saved, no re-setup on restart
 - ⚡ **Background Cache** — app list pre-fetched in the background so loading feels instant
