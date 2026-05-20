@@ -142,11 +142,14 @@ pnpm test:report          # Open HTML report
 2. User setting overrides workspace cap config when generating launch.json.
 3. Workspace cap config is used when no user setting is configured.
 4. User can resolve regex remoteRoot to the matching CF service folder.
-5. User can start debug while remoteRoot warmup is in flight and get remoteRoot in the first launch.json.
-6. Per-service cap config overrides both user setting and workspace fallback.
-7. Malformed user setting falls back to workspace cap config.
-8. User can see a security warning instead of executing an unsafe cap config branch.
-9. User can resolve a CF app to a differently-named local folder via appFolderMappings.
+5. User reaches Ready screen without any remote-folder SSH probe — first probe only fires on Start Debug click.
+6. User can start debug for multiple selected services and remote-folder probes run in parallel.
+7. User can stop and start debug for the same service and the cached remote-folder resolution is reused.
+8. User sees a "Discovering remote folder" hint on the app card while the on-demand probe runs.
+9. Per-service cap config overrides both user setting and workspace fallback.
+10. Malformed user setting falls back to workspace cap config.
+11. User can see a security warning instead of executing an unsafe cap config branch.
+12. User can resolve a CF app to a differently-named local folder via appFolderMappings.
 
 ### CF Region / Org
 1. User can switch to region catalog fallback and filter `cf-sync` supplemental SAP endpoints plus the local `us10-004` fallback and China region endpoints after synced topology is ready.

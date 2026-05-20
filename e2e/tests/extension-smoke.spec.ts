@@ -312,6 +312,10 @@ OUT
     ssh_mode="\${3:-}"
     ssh_command="\${4:-}"
     if [[ "$ssh_mode" == "-c" && "$ssh_command" == *package.json* ]]; then
+      # Track every remote-folder probe so lazy-mode tests can assert when (or
+      # whether) the extension is reaching out to CF.
+      touch "$script_dir/.ssh-probe-marker"
+      echo "$app_name" >> "$script_dir/.ssh-probe-count"
       if [[ "$SCENARIO" == "remote-root-race" ]]; then
         if [[ -f "$remote_root_lookup_lock" ]]; then
           echo "mock concurrent remote-root lookup rejected" >&2
@@ -1797,7 +1801,7 @@ test.describe('CAP Debug Config Precedence E2E', () => {
     }
   });
 
-  test('User can start debug while remoteRoot warmup is in flight and get remoteRoot in the first launch.json', async () => {
+  test('User reaches Ready screen without any remote-folder SSH probe — first probe only fires on Start Debug click', async () => {
     const workspaceDir = await createWorkspaceForCapConfigTest({});
 
     try {
@@ -1812,20 +1816,179 @@ test.describe('CAP Debug Config Precedence E2E', () => {
           },
         },
         async (workbenchPage, artifacts) => {
+          const probeMarker = join(artifacts.mockBinDir, '.ssh-probe-marker');
           const webview = await openCdsDebugWebview(workbenchPage);
           await completeMappingToReadyWithFolder(webview, workspaceDir);
 
-          await expect.poll(
-            async () => pathExists(join(artifacts.mockBinDir, '.remote-root-lookup-lock')),
-            { timeout: 10_000 },
-          ).toBe(true);
+          // Give any background tasks a chance to fire. With lazy mode no remote
+          // root probing must happen until the user clicks Start Debug, so the
+          // marker file should remain absent.
+          await delay(2_500);
+          expect(await pathExists(probeMarker)).toBe(false);
 
           await startDebugForApp(webview, 'mock-service-a');
+
+          await expect.poll(
+            async () => pathExists(probeMarker),
+            { timeout: 10_000 },
+          ).toBe(true);
 
           await expect.poll(
             async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
             { timeout: 20_000 },
           ).toBe('/usr/sample-service-a');
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+
+  test('User can start debug for multiple selected services and remote-folder probes run in parallel', async () => {
+    const workspaceDir = await createWorkspaceForCapConfigTest({});
+    // The fixture only creates mock-service-a; add the other started services
+    // so the lazy path resolves a local folder for each selected target.
+    for (const serviceName of ['mock-service-c']) {
+      const serviceDir = join(workspaceDir, serviceName);
+      await mkdir(serviceDir, { recursive: true });
+      await writeFile(
+        join(serviceDir, 'package.json'),
+        JSON.stringify({ name: `sample-${serviceName}` }, null, 2) + '\n',
+        'utf8',
+      );
+    }
+
+    try {
+      await withVsCodeSession(
+        {
+          credentialMode: 'env',
+          cfScenario: 'remote-root-race',
+          userSettings: {
+            'cdsDebug.sharedCapDebugConfig': {
+              remoteRoot: 'regex:^/(usr/)?sample-service-[ac]$',
+            },
+          },
+        },
+        async (workbenchPage, artifacts) => {
+          const probeCountFile = join(artifacts.mockBinDir, '.ssh-probe-count');
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+
+          await webview.locator('input[type="checkbox"][data-app="mock-service-a"]').check();
+          await webview.locator('input[type="checkbox"][data-app="mock-service-c"]').check();
+          await expectButtonEnabled(webview.locator('#btn-start-debug'));
+
+          const probeStart = Date.now();
+          await webview.locator('#btn-start-debug').click();
+
+          await expect.poll(
+            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-a'),
+            { timeout: 20_000 },
+          ).toBe('/usr/sample-service-a');
+          await expect.poll(
+            async () => readManagedRemoteRoot(workspaceDir, 'mock-service-c'),
+            { timeout: 20_000 },
+          ).toBe('/usr/sample-service-c');
+          const probeWallMs = Date.now() - probeStart;
+
+          // remote-root-race sleeps 5 s per cf ssh probe and rejects concurrent
+          // calls only when a lock file is already in place. Two truly parallel
+          // probes therefore observe an empty lock window, finish in roughly 5 s,
+          // and stay well under 10 s wall-clock. Sequential execution would
+          // double that, so 10 s is a safe regression threshold.
+          expect(probeWallMs).toBeLessThan(10_000);
+
+          const probeLog = await readFile(probeCountFile, 'utf8').catch(() => '');
+          const probeLines = probeLog.split('\n').filter((line) => line.length > 0);
+          expect(probeLines).toContain('mock-service-a');
+          expect(probeLines).toContain('mock-service-c');
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+
+  test('User can stop and start debug for the same service and the cached remote-folder resolution is reused', async () => {
+    const workspaceDir = await createWorkspaceForCapConfigTest({});
+
+    try {
+      await withVsCodeSession(
+        {
+          credentialMode: 'env',
+          cfScenario: 'restart-race',
+          userSettings: {
+            'cdsDebug.sharedCapDebugConfig': {
+              remoteRoot: 'regex:^/(usr/)?sample-service-a$',
+            },
+          },
+        },
+        async (workbenchPage, artifacts) => {
+          const probeCountFile = join(artifacts.mockBinDir, '.ssh-probe-count');
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+
+          await startDebugForApp(webview, 'mock-service-a');
+          await expectAttachedSessionCard(webview, 'mock-service-a');
+
+          const firstLog = await readFile(probeCountFile, 'utf8').catch(() => '');
+          const firstProbeCount = firstLog.split('\n').filter((line) => line.length > 0).length;
+          expect(firstProbeCount).toBe(1);
+
+          await stopDebugForApp(webview, 'mock-service-a');
+          await startDebugForApp(webview, 'mock-service-a');
+          await expectAttachedSessionCard(webview, 'mock-service-a');
+
+          // Give the new debug session enough time to settle before we read the
+          // probe log — if the cache were missing, a second probe would append
+          // another line.
+          await delay(1_500);
+
+          const secondLog = await readFile(probeCountFile, 'utf8').catch(() => '');
+          const secondProbeCount = secondLog.split('\n').filter((line) => line.length > 0).length;
+          expect(secondProbeCount).toBe(1);
+        },
+        workspaceDir,
+      );
+    } finally {
+      await removeDirWithRetry(workspaceDir);
+    }
+  });
+
+  test('User sees a "Discovering remote folder" hint on the app card while the on-demand probe runs', async () => {
+    const workspaceDir = await createWorkspaceForCapConfigTest({});
+
+    try {
+      await withVsCodeSession(
+        {
+          credentialMode: 'env',
+          cfScenario: 'remote-root-race',
+          userSettings: {
+            'cdsDebug.sharedCapDebugConfig': {
+              remoteRoot: 'regex:^/(usr/)?sample-service-a$',
+            },
+          },
+        },
+        async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+
+          await startDebugForApp(webview, 'mock-service-a');
+
+          const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
+          // Probe is slowed to ~5 s by remote-root-race so the hint should be
+          // visible quickly after the click. Don't require attach — the success
+          // tunnel for this scenario just sleeps and exits.
+          await expect(activeCard.getByText(/Discovering remote folder/i)).toBeVisible({ timeout: 8_000 });
+
+          // The probe eventually completes and the card moves on (tunnelling
+          // or error). The hint should disappear regardless of attach success.
+          await expect.poll(
+            async () => activeCard.getByText(/Discovering remote folder/i).count(),
+            { timeout: 15_000 },
+          ).toBe(0);
         },
         workspaceDir,
       );

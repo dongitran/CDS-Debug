@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.62-pre.34] — 2026
+
+### Changes
+
+- **Remote-folder SSH discovery is deferred to "Start Debug Sessions"** — Selecting an org/space no longer SSHes into every started app to pre-resolve `regex:` `remoteRoot` settings. The probe now runs only for the apps you tick when you click Start Debug, in parallel and cached for the rest of the VS Code session. A lightweight CF session keepalive after org/space selection is preserved so any token expiry is still handled up front. For spaces with dozens of apps the Output channel and CF audit log stay quiet until you actually debug, and each app card briefly shows "Discovering remote folder…" while its cold lookup runs.
+
+---
+
 ## [0.3.62-pre.33] — 2026
 
 ### Changes

@@ -468,6 +468,7 @@ export type ExtensionMessage =
   | { type: 'REGION_PREFILL'; payload: { regionCode: string; apiEndpoint: string } }
   | { type: 'APPS_ERROR'; payload: { message: string } }
   | { type: 'DEBUG_STARTED'; payload: { count: number } }
+  | { type: 'DEBUG_DISCOVERING_REMOTE_ROOT'; payload: { appNames: string[] } }
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[]; ports: Record<string, number>; unmappedApps?: string[] } }
   | { type: 'APP_DEBUG_STATUS'; payload: { appName: string; status: string; message?: string } }
   | { type: 'DEBUG_ERROR'; payload: { message: string } }

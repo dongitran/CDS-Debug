@@ -126,8 +126,6 @@ import {
   stashChanges,
 } from '../core/gitOperations';
 
-const REMOTE_ROOT_WARMUP_CONCURRENCY = 4;
-
 interface ServiceBranchInfo {
   appName: string;
   folderPath: string;
@@ -163,7 +161,6 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
   // surfaced a "remoteRoot did not resolve" notification, so we do not nag the user during
   // each Start Debug click. Cleared on Reset Configuration / window reload by definition.
   private readonly notifiedUnmatchedRemoteRoots = new Set<string>();
-  private remoteRootWarmupGeneration = 0;
   private readonly warmupPromises = new Map<string, Promise<void>>();
   private scopeChangeQueue: Promise<void> = Promise.resolve();
   private lastWrittenScope: SharedCfScope | undefined;
@@ -890,11 +887,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
 
     const cacheSettings = getCacheSettings();
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? mapping.groupFolderPath;
     if (forceRefresh) {
       const credentialsRevoked = await this.refreshCfSyncSpaceCache(config.apiEndpoint, org, space);
       if (credentialsRevoked) return;
-      const served = await this.tryServeTopologyApps(config.apiEndpoint, org, space, mapping.groupFolderPath, workspaceRoot);
+      const served = await this.tryServeTopologyApps(config.apiEndpoint, org, space);
       if (served) {
         void this.pushCfTopology();
         return;
@@ -902,7 +898,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     }
 
     const topologyServed = !forceRefresh
-      && await this.tryServeTopologyApps(config.apiEndpoint, org, space, mapping.groupFolderPath, workspaceRoot);
+      && await this.tryServeTopologyApps(config.apiEndpoint, org, space);
     if (topologyServed) return;
 
     if (!forceRefresh && cacheSettings.enabled) {
@@ -914,17 +910,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
           logInfo(`Apps served from cache for target: ${org}/${space} (${Math.floor(ageMs / 60_000).toString()}m old).`);
           this.postMessage({ type: 'APPS_LOADED', payload: { apps: cached.apps } });
           await this.writeScopeAfterAppsLoaded(org, space);
-          // Warm up the CF session in the background so that handleStartDebug
-          // never hits an expired token when the app list came from cache.
-          // Failures are silently retried with a full re-login.
-          void this.startRemoteRootWarmupAfterSessionTracked(
-            config.apiEndpoint,
-            org,
-            space,
-            mapping.groupFolderPath,
-            workspaceRoot,
-            cached.apps,
-          );
+          // Refresh the CF token in the background. Avoids an expired-token
+          // pause the first time Start Debug runs after restoring from cache.
+          // Per-app remote folder discovery is deferred to Start Debug click.
+          void this.keepCfSessionAliveTracked(config.apiEndpoint, org, space);
           return;
         }
       }
@@ -938,7 +927,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       logInfo(`Apps loaded: ${apps.length.toString()} total, ${started.toString()} started.`);
       this.postMessage({ type: 'APPS_LOADED', payload: { apps } });
       await this.writeScopeAfterAppsLoaded(org, space);
-      this.startRemoteRootWarmup(config.apiEndpoint, org, space, mapping.groupFolderPath, workspaceRoot, apps);
+      void this.keepCfSessionAliveTracked(config.apiEndpoint, org, space);
     } catch (err: unknown) {
       const msg = extractErrorMessage(err);
       logError(`Failed to load apps for ${org}/${space}: ${msg}`);
@@ -991,8 +980,6 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     apiEndpoint: string,
     org: string,
     space: string,
-    groupPath: string,
-    workspaceRoot: string,
   ): Promise<boolean> {
     const apps = getAppsFromTopologySync(apiEndpoint, org, space);
     if (apps === undefined) return false;
@@ -1001,7 +988,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     await saveCachedApps(apiEndpoint, org, apps, space);
     this.postMessage({ type: 'APPS_LOADED', payload: { apps } });
     await this.writeScopeAfterAppsLoaded(org, space);
-    void this.startRemoteRootWarmupAfterSessionTracked(apiEndpoint, org, space, groupPath, workspaceRoot, apps);
+    void this.keepCfSessionAliveTracked(apiEndpoint, org, space);
     this.refreshStaleTopologySpaceInBackground(apiEndpoint, org, space);
     return true;
   }
@@ -1057,110 +1044,11 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     return null;
   }
 
-  private startRemoteRootWarmup(
-    apiEndpoint: string,
-    org: string,
-    space: string,
-    groupPath: string,
-    workspaceRoot: string,
-    apps: readonly CfApp[],
-  ): void {
-    const generation = this.nextRemoteRootWarmupGeneration();
-    this.runRemoteRootWarmupInBackground(generation, apiEndpoint, org, space, groupPath, workspaceRoot, apps);
-  }
-
-  private startRemoteRootWarmupAfterSession(
-    apiEndpoint: string,
-    org: string,
-    space: string,
-    groupPath: string,
-    workspaceRoot: string,
-    apps: readonly CfApp[],
-  ): Promise<void> {
-    const generation = this.nextRemoteRootWarmupGeneration();
-    return this.ensureCfSession(apiEndpoint, org, space)
-      .then((): void => {
-        if (generation !== this.remoteRootWarmupGeneration) return;
-        this.runRemoteRootWarmupInBackground(generation, apiEndpoint, org, space, groupPath, workspaceRoot, apps);
-      });
-  }
-
-  private nextRemoteRootWarmupGeneration(): number {
-    const generation = this.remoteRootWarmupGeneration + 1;
-    this.remoteRootWarmupGeneration = generation;
-    return generation;
-  }
-
-  private runRemoteRootWarmupInBackground(
-    generation: number,
-    apiEndpoint: string,
-    org: string,
-    space: string,
-    groupPath: string,
-    workspaceRoot: string,
-    apps: readonly CfApp[],
-  ): void {
-    void this.runRemoteRootWarmup(generation, apiEndpoint, org, space, groupPath, workspaceRoot, apps)
-      .catch((err: unknown) => {
-        logWarn(`[RemoteRoot] Warmup failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
-  }
-
-  private async runRemoteRootWarmup(
-    generation: number,
-    apiEndpoint: string,
-    org: string,
-    space: string,
-    groupPath: string,
-    workspaceRoot: string,
-    apps: readonly CfApp[],
-  ): Promise<void> {
-    const fallbackConfig = await resolveSharedCapDebugConfig(workspaceRoot);
-    const appFolderMappings = getAppFolderMappings();
-    const startedApps = apps.filter((app) => app.state === 'started');
-
-    for (let index = 0; index < startedApps.length; index += REMOTE_ROOT_WARMUP_CONCURRENCY) {
-      if (generation !== this.remoteRootWarmupGeneration) return;
-      const batch = startedApps.slice(index, index + REMOTE_ROOT_WARMUP_CONCURRENCY);
-      await Promise.allSettled(batch.map((app) => (
-        this.warmRemoteRootForApp(
-          generation, apiEndpoint, org, space, groupPath, app.name, fallbackConfig, appFolderMappings,
-        )
-      )));
-    }
-  }
-
-  private async warmRemoteRootForApp(
-    generation: number,
-    apiEndpoint: string,
-    org: string,
-    space: string,
-    groupPath: string,
-    appName: string,
-    fallbackConfig: CapDebugConfig | null,
-    appFolderMappings: readonly AppFolderMapping[],
-  ): Promise<void> {
-    const folderPath = await this.resolveLocalFolderPath(groupPath, appName, appFolderMappings);
-    const target = { appName, folderPath: folderPath ?? groupPath, port: 0, noLocalFolder: folderPath === null };
-    const configuredRemoteRoot = await this.getConfiguredRemoteRoot(target, fallbackConfig);
-    if (configuredRemoteRoot === undefined) return;
-    const setting = parseRemoteRootSetting(configuredRemoteRoot);
-    if (setting.kind === 'invalid-regex') {
-      logWarn(`[RemoteRoot] ${appName}: invalid regex (${setting.error})`);
-      return;
-    }
-    if (setting.kind !== 'regex') return;
-
-    const cacheKey = this.remoteRootCacheKey(apiEndpoint, org, space, appName, configuredRemoteRoot);
-    if (this.resolvedRemoteRoots.has(cacheKey)) return;
-
-    try {
-      const result = await this.remoteRootLookupCoordinator.resolve(cacheKey, appName, configuredRemoteRoot);
-      if (generation !== this.remoteRootWarmupGeneration) return;
-      this.storeResolvedRemoteRoot(apiEndpoint, org, space, appName, configuredRemoteRoot, result);
-    } catch (err: unknown) {
-      logWarn(`[RemoteRoot] ${appName}: warmup failed (${extractErrorMessage(err)})`);
-    }
+  // Lightweight CF session keepalive. Refreshes the cf token only — no per-app
+  // SSH discovery happens here. Discovery of remoteRoot is deferred until the
+  // user clicks Start Debug, where it runs in parallel for the selected apps.
+  private keepCfSessionAlive(apiEndpoint: string, org: string, space: string): Promise<void> {
+    return this.ensureCfSession(apiEndpoint, org, space);
   }
 
   private async getConfiguredRemoteRoot(
@@ -1179,10 +1067,16 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     fallbackConfig: CapDebugConfig | null,
   ): Promise<Map<string, string>> {
     const resolved = new Map<string, string>();
-    for (const target of targets) {
-      const configuredRemoteRoot = await this.getConfiguredRemoteRoot(target, fallbackConfig);
-      await this.resolveRemoteRootForTarget(target, apiEndpoint, org, space, configuredRemoteRoot, resolved);
-    }
+    // Probe all targets concurrently. The lookup coordinator dedupes by cacheKey
+    // so duplicate keys still resolve once. allSettled keeps one app's failure
+    // from cancelling the rest — per-target errors are already logged inside
+    // resolveRemoteRootForTarget.
+    await Promise.allSettled(
+      targets.map(async (target) => {
+        const configuredRemoteRoot = await this.getConfiguredRemoteRoot(target, fallbackConfig);
+        await this.resolveRemoteRootForTarget(target, apiEndpoint, org, space, configuredRemoteRoot, resolved);
+      }),
+    );
     return resolved;
   }
 
@@ -1290,19 +1184,18 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     return JSON.stringify([apiEndpoint, org, space]);
   }
 
-  private startRemoteRootWarmupAfterSessionTracked(
+  // Tracked variant so concurrent triggers share a single in-flight keepalive,
+  // and Start Debug can await any in-flight session refresh via awaitWarmupIfRunning.
+  private keepCfSessionAliveTracked(
     apiEndpoint: string,
     org: string,
     space: string,
-    groupPath: string,
-    workspaceRoot: string,
-    apps: readonly CfApp[],
   ): Promise<void> {
     const key = this.warmupKey(apiEndpoint, org, space);
     const existing = this.warmupPromises.get(key);
     if (existing) return existing;
 
-    const warmup = this.startRemoteRootWarmupAfterSession(apiEndpoint, org, space, groupPath, workspaceRoot, apps)
+    const warmup = this.keepCfSessionAlive(apiEndpoint, org, space)
       .finally(() => {
         this.warmupPromises.delete(key);
       });
@@ -1314,35 +1207,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const config = getConfig();
     if (!config) return;
 
-    const key = this.warmupKey(config.apiEndpoint, org, space);
-    const existing = this.warmupPromises.get(key);
-    if (existing) return existing;
-
-    const warmup = this.doWarmupCfSession(config, org, space)
-      .finally(() => {
-        this.warmupPromises.delete(key);
-      });
-    this.warmupPromises.set(key, warmup);
-    await warmup;
-  }
-
-  private async doWarmupCfSession(config: ExtensionConfig, org: string, space: string): Promise<void> {
     const mapping = config.orgGroupMappings.find((m) => mappingMatchesTarget(m, org, space));
     if (!mapping) return;
 
-    const apps = getAppsFromTopologySync(config.apiEndpoint, org, space);
-    if (apps === undefined) return;
+    const hasTopology = getAppsFromTopologySync(config.apiEndpoint, org, space) !== undefined;
+    if (!hasTopology) return;
 
     await this.writeScopeAfterAppsLoaded(org, space);
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? mapping.groupFolderPath;
-    await this.startRemoteRootWarmupAfterSession(
-      config.apiEndpoint,
-      org,
-      space,
-      mapping.groupFolderPath,
-      workspaceRoot,
-      apps,
-    );
+    await this.keepCfSessionAliveTracked(config.apiEndpoint, org, space);
     this.refreshStaleTopologySpaceInBackground(config.apiEndpoint, org, space);
   }
 
@@ -1438,6 +1310,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       // Source maps won't resolve, but the SSH tunnel and debug console will work.
       logWarn(`No local folder found for any selected app. Starting debug in console-only mode (no source maps).`);
       const fallbackTargets = buildFallbackTargets(unmapped, workspaceRoot, existingPorts, usedPorts);
+      this.postDiscoveringRemoteRoot(fallbackTargets);
       const resolvedRemoteRoots = await this.resolveRemoteRootsForTargets(
         fallbackTargets,
         config.apiEndpoint,
@@ -1483,6 +1356,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    this.postDiscoveringRemoteRoot(finalTargets);
     const resolvedRemoteRoots = await this.resolveRemoteRootsForTargets(
       finalTargets,
       config.apiEndpoint,
@@ -1491,6 +1365,19 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       sharedCapConfig,
     );
     await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped, sharedCapConfig, resolvedRemoteRoots);
+  }
+
+  // Notifies the webview that remote-folder resolution is starting for the
+  // listed apps. Posted before resolveRemoteRootsForTargets so the user sees
+  // a "Discovering remote folder…" hint while the cf ssh probe runs (5–10 s
+  // for cold regex lookups). For literal/cached remoteRoots the resolve is
+  // near-instant and the label only flashes briefly.
+  private postDiscoveringRemoteRoot(targets: readonly DebugTarget[]): void {
+    if (targets.length === 0) return;
+    this.postMessage({
+      type: 'DEBUG_DISCOVERING_REMOTE_ROOT',
+      payload: { appNames: targets.map((target) => target.appName) },
+    });
   }
 
   /**

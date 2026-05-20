@@ -5,7 +5,7 @@ import type * as BreakpointSnapshotManagerModule from '../../src/core/breakpoint
 import type * as ProcessManagerModule from '../../src/core/processManager';
 import type * as ScopeSyncModule from '../../src/storage/scopeSync';
 import type * as ShellEnvModule from '../../src/core/shellEnv';
-import type { CapDebugConfig, CfApp, CfTopology, ExtensionConfig, SharedCfScope } from '../../src/types/index';
+import type { CfApp, CfTopology, ExtensionConfig, SharedCfScope } from '../../src/types/index';
 import type {
   CfSyncRegionOrgRefreshResult,
   CfSyncSpaceRefreshResult,
@@ -212,7 +212,6 @@ interface DebugPanelInternals {
   lastWrittenScope: SharedCfScope | undefined;
   pendingExternalScope: SharedCfScope | undefined;
   scopeChangeQueue: Promise<void>;
-  remoteRootWarmupGeneration: number;
   applyPendingExternalScopeIfAny(orgs: string[]): void;
   handleSaveCredentials(email: string, password: string): Promise<void>;
   handleMessage(raw: unknown): Promise<void>;
@@ -222,40 +221,8 @@ interface DebugPanelInternals {
   handleExternalRegionChange(scope: SharedCfScope): Promise<void>;
   stopActiveSessionsForScopeChange(): Promise<void>;
   writeScopeAfterAppsLoaded(org: string, space: string): Promise<void>;
-  runRemoteRootWarmup(
-    generation: number,
-    apiEndpoint: string,
-    org: string,
-    space: string,
-    groupPath: string,
-    workspaceRoot: string,
-    apps: readonly CfApp[],
-  ): Promise<void>;
-  warmRemoteRootForApp(
-    generation: number,
-    apiEndpoint: string,
-    org: string,
-    space: string,
-    groupPath: string,
-    appName: string,
-    fallbackConfig: CapDebugConfig | null,
-  ): Promise<void>;
-  startRemoteRootWarmupAfterSession(
-    apiEndpoint: string,
-    org: string,
-    space: string,
-    groupPath: string,
-    workspaceRoot: string,
-    apps: readonly CfApp[],
-  ): Promise<void>;
-  startRemoteRootWarmupAfterSessionTracked(
-    apiEndpoint: string,
-    org: string,
-    space: string,
-    groupPath: string,
-    workspaceRoot: string,
-    apps: readonly CfApp[],
-  ): Promise<void>;
+  keepCfSessionAlive(apiEndpoint: string, org: string, space: string): Promise<void>;
+  keepCfSessionAliveTracked(apiEndpoint: string, org: string, space: string): Promise<void>;
   awaitWarmupIfRunning(apiEndpoint: string, org: string, space: string): Promise<void>;
 }
 
@@ -1488,12 +1455,12 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     expect(cacheSyncMock.syncSingleRegion).not.toHaveBeenCalled();
   });
 
-  it('handles topology warmup without loading live apps', async () => {
+  it('refreshes only the CF session on topology warmup — no SSH probing of apps', async () => {
     const provider = makeProvider();
     const internals = getInternals(provider);
     const apps: CfApp[] = [{ name: 'sample-service-a', state: 'started', urls: [] }];
     const writeScope = vi.spyOn(internals, 'writeScopeAfterAppsLoaded').mockResolvedValue(undefined);
-    const startWarmup = vi.spyOn(internals, 'startRemoteRootWarmupAfterSession').mockResolvedValue(undefined);
+    const keepAlive = vi.spyOn(internals, 'keepCfSessionAlive').mockResolvedValue(undefined);
     cfTopologyMock.getAppsFromTopologySync.mockReturnValue(apps);
     await saveSessionConfig({
       orgGroupMappings: [{
@@ -1506,13 +1473,10 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     await internals.handleWarmupCfSession('sample-org-alpha', 'app');
 
     expect(writeScope).toHaveBeenCalledWith('sample-org-alpha', 'app');
-    expect(startWarmup).toHaveBeenCalledWith(
+    expect(keepAlive).toHaveBeenCalledWith(
       'https://api.cf.eu10.hana.ondemand.com',
       'sample-org-alpha',
       'app',
-      '/sample/group',
-      '/sample/group',
-      apps,
     );
     expect(cfClientMock.cfTargetAndApps).not.toHaveBeenCalled();
   });
@@ -1521,13 +1485,12 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     const provider = makeProvider();
     const internals = getInternals(provider);
     const apps: CfApp[] = [{ name: 'sample-service-a', state: 'started', urls: [] }];
-    let resolveScope: (() => void) | undefined;
-    const writeScope = vi.spyOn(internals, 'writeScopeAfterAppsLoaded').mockImplementation(
+    let resolveSession: (() => void) | undefined;
+    const keepAlive = vi.spyOn(internals, 'keepCfSessionAlive').mockImplementation(
       () => new Promise<void>((resolve) => {
-        resolveScope = resolve;
+        resolveSession = resolve;
       }),
     );
-    const startWarmup = vi.spyOn(internals, 'startRemoteRootWarmupAfterSession').mockResolvedValue(undefined);
     cfTopologyMock.getAppsFromTopologySync.mockReturnValue(apps);
     await saveSessionConfig({
       orgGroupMappings: [{
@@ -1541,32 +1504,28 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     const second = internals.handleWarmupCfSession('sample-org-alpha', 'app');
 
     await vi.waitFor(() => {
-      expect(writeScope).toHaveBeenCalledTimes(1);
+      expect(keepAlive).toHaveBeenCalledTimes(1);
     });
-    resolveScope?.();
+    resolveSession?.();
     await Promise.all([first, second]);
 
-    expect(startWarmup).toHaveBeenCalledTimes(1);
+    expect(keepAlive).toHaveBeenCalledTimes(1);
   });
 
-  it('tracks extension-started warmups so Start Debug can wait for them', async () => {
+  it('tracks extension-started CF-session keepalive so Start Debug can wait for it', async () => {
     const provider = makeProvider();
     const internals = getInternals(provider);
-    const apps: CfApp[] = [{ name: 'sample-service-a', state: 'started', urls: [] }];
-    let resolveWarmup: (() => void) | undefined;
-    const startWarmup = vi.spyOn(internals, 'startRemoteRootWarmupAfterSession').mockImplementation(
+    let resolveSession: (() => void) | undefined;
+    const keepAlive = vi.spyOn(internals, 'keepCfSessionAlive').mockImplementation(
       () => new Promise<void>((resolve) => {
-        resolveWarmup = resolve;
+        resolveSession = resolve;
       }),
     );
 
-    const tracked = internals.startRemoteRootWarmupAfterSessionTracked(
+    const tracked = internals.keepCfSessionAliveTracked(
       'https://api.cf.eu10.hana.ondemand.com',
       'sample-org-alpha',
       'app',
-      '/sample/group',
-      '/sample/group',
-      apps,
     );
     let waitFinished = false;
     const wait = internals.awaitWarmupIfRunning(
@@ -1579,9 +1538,9 @@ describe('DebugLauncherViewProvider external scope sync', () => {
 
     await Promise.resolve();
     expect(waitFinished).toBe(false);
-    expect(startWarmup).toHaveBeenCalledTimes(1);
+    expect(keepAlive).toHaveBeenCalledTimes(1);
 
-    resolveWarmup?.();
+    resolveSession?.();
     await Promise.all([tracked, wait]);
 
     expect(waitFinished).toBe(true);
@@ -1675,50 +1634,4 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     );
   });
 
-  it('warms remote roots in bounded parallel batches', async () => {
-    const provider = makeProvider();
-    const internals = getInternals(provider);
-    const startedApps: CfApp[] = Array.from({ length: 9 }, (_, index) => ({
-      name: `sample-service-${(index + 1).toString()}`,
-      state: 'started',
-      urls: [],
-    }));
-    const apps: CfApp[] = [
-      ...startedApps,
-      { name: 'sample-service-stopped', state: 'stopped', urls: [] },
-    ];
-    let activeWarmups = 0;
-    let maxActiveWarmups = 0;
-    const warmedApps: string[] = [];
-    internals.remoteRootWarmupGeneration = 1;
-    vi.spyOn(internals, 'warmRemoteRootForApp').mockImplementation(async (
-      _generation,
-      _apiEndpoint,
-      _org,
-      _space,
-      _groupPath,
-      appName,
-    ) => {
-      activeWarmups++;
-      maxActiveWarmups = Math.max(maxActiveWarmups, activeWarmups);
-      warmedApps.push(appName);
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 5);
-      });
-      activeWarmups--;
-    });
-
-    await internals.runRemoteRootWarmup(
-      1,
-      'https://api.cf.eu10.hana.ondemand.com',
-      'sample-org',
-      'app',
-      '/tmp/sample-group',
-      '/tmp/sample-workspace',
-      apps,
-    );
-
-    expect(maxActiveWarmups).toBe(4);
-    expect(warmedApps).toEqual(startedApps.map((app) => app.name));
-  });
 });

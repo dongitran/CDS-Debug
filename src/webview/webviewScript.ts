@@ -973,6 +973,21 @@ export function getScript(nonce: string): string {
           if (state.screen === SCREENS.PREPARING_BRANCHES) render();
           return;
         }
+        case 'DEBUG_DISCOVERING_REMOTE_ROOT': {
+          // Surface the on-demand cf ssh probe on each app card so the user sees
+          // why Start Debug is paused. Only upgrades the optimistic PENDING the
+          // webview set on click — never overwrites TUNNELING/ATTACHED/ERROR.
+          const names = (msg.payload && msg.payload.appNames) || [];
+          for (let i = 0; i < names.length; i++) {
+            const appName = names[i];
+            const session = state.activeSessions[appName];
+            if (!session || session.status === 'PENDING') {
+              state.activeSessions[appName] = { status: 'DISCOVERING', msgPhase: 0 };
+            }
+          }
+          refreshActiveSessionsPanel();
+          return;
+        }
         case 'DEBUG_CONNECTING': {
           let needFullRender = false;
           // If coming from branch prep screen, transition back to ready
@@ -1051,10 +1066,12 @@ export function getScript(nonce: string): string {
           return;
         }
         case 'DEBUG_ERROR':
-          // Clear any optimistically-added PENDING sessions — the start request
-          // failed before any tunnel was established (e.g. cfTarget network error).
+          // Clear any optimistically-added PENDING or DISCOVERING sessions — the
+          // start request failed before any tunnel was established (e.g. cfTarget
+          // network error or remote folder discovery aborted by the user).
           for (const appName of Object.keys(state.activeSessions)) {
-            if (state.activeSessions[appName].status === 'PENDING') {
+            const status = state.activeSessions[appName].status;
+            if (status === 'PENDING' || status === 'DISCOVERING') {
               delete state.activeSessions[appName];
             }
           }
