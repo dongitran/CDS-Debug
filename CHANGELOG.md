@@ -1,12 +1,15 @@
 # Changelog
 
-## [0.4.4] — 2026
+## [0.4.1-pre.2] — 2026
+
+### Reverts
+
+- **Rolled back the leading-`//` UriError fix from 0.4.1 / 0.4.4** — The doubled-slash canonicalization and extension-cache fallback shipped in `0.4.1` (and re-tagged as `0.4.4`) caused breakpoints to stop binding on the affected paths. Restored the code to the `0.4.1-pre.0` baseline so breakpoint binding works again; the previous fix attempts remain in git history for future re-investigation.
+
+## [0.4.1-pre.0] — 2026
 
 ### Fixes
 
-- **Package Browser opens source-mapped `.ts` files without UriError** — Remote `.ts` sources whose path arrives with a doubled leading slash (sourcemap `sourceRoot: "/"` joined with absolute `sources[i]`) are now canonicalized before reaching `asDebugSourceUri`, so VS Code no longer rejects the `debug:` URI with `If a URI does not contain an authority component, then the path cannot begin with two slash characters ("//")`.
-- **Cross-app sourcemap-joined sources are materializable** — When a `.ts` package source whose path prefix names a different CF app container than the user's workspace (typical for pnpm-hoisted helpers) cannot be hosted under any local node_modules, CDS Debug now writes the fetched source content into an extension-scoped cache under `globalStorage/packageSources/<package>/...` and opens it as a real `file:` URI. Runtime `.js` paths still open as `debug:` URIs so the Package browser tab continues to match the runtime-pause tab for TabDedupe.
-- **Breakpoint mirror bridges `/` and `//` path variants** — The lookup that maps a tracked package source to each session's own `sourceReference` now compares paths after collapsing leading slashes, so a breakpoint set on the `.ts` source binds across all worker sessions even when one session reports the path with a single slash and another reports it with two.
 - **Stable Package Browser breakpoints for mapped apps** — Package Browser now avoids inventing or materializing missing package files under a mapped app folder's `node_modules` path. Existing local package files still open normally, while missing package sources keep the debugger's source identity so mapped-app package breakpoints behave like the stable no-src flow.
 - **No double-encoded verified source URIs** — Path-only package sources whose debugger path is already a URI, such as `vscode-remote://...`, are no longer promoted through `asDebugSourceUri()`. This prevents broken `vscode-remote://.../vscode-remote%3A/...` editor focus attempts after breakpoint mirroring verifies the breakpoint.
 

@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type {
   AppFolderMapping,
@@ -658,12 +657,11 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         `Opening source from ${session.name} [${session.id}] path="${source.path ?? source.name ?? 'unknown'}" sourceRef=${String(source.sourceReference ?? 0)}`,
       );
       const localRoot = this.getPackageLocalRoot(appName);
-      const packageCacheRoot = join(this.context.globalStorageUri.fsPath, 'packageSources');
       const openedUri = await openPackageSource(
         session,
         source,
         location,
-        { ...(localRoot ? { localRoot } : {}), appName, packageCacheRoot },
+        { ...(localRoot ? { localRoot } : {}), appName },
       );
       this.logPackageDiagnostic(
         appName,

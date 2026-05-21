@@ -67,29 +67,16 @@ const DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS: Required<LoadPackageEntriesOptions> 
 };
 
 const SOURCE_URI_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
-const LEADING_SLASHES_PATTERN = /^\/{2,}/u;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
-}
-
-// Collapse two-or-more leading slashes to one for POSIX-style absolute paths
-// reported by vscode-js-debug. vscode-js-debug forwards source map joined paths
-// verbatim, so when a sourcemap's `sourceRoot` is `/` and `sources[i]` is also
-// absolute, the joined path lands here as `//app/.../src/file.ts`. Feeding that
-// into `vscode.debug.asDebugSourceUri` throws UriError because the `debug:`
-// scheme has no authority. URI-form paths (`file://`, `vscode-remote://`, etc.)
-// are returned unchanged.
-export function collapseLeadingPosixSlashes(path: string): string {
-  if (SOURCE_URI_PATTERN.test(path)) return path;
-  return path.replace(LEADING_SLASHES_PATTERN, '/');
 }
 
 function normalizeSourcePath(rawPath: string): string {
   const decoded = rawPath.startsWith('file://')
     ? decodeURIComponent(rawPath.slice('file://'.length))
     : decodeURIComponent(rawPath);
-  return collapseLeadingPosixSlashes(decoded.replaceAll('\\', '/'));
+  return decoded.replaceAll('\\', '/');
 }
 
 function toReadableLocalSourcePath(source: LoadedPackageSource): string | null {
@@ -156,10 +143,6 @@ function toLoadedPackageSource(value: unknown): LoadedPackageSource | null {
   if (!isRecord(value)) return null;
   const source: LoadedPackageSource = {};
   if (typeof value.name === 'string') source.name = value.name;
-  // Preserve the original `//`-prefix verbatim: it acts as the sourcemap-joined
-  // marker that gates the extension cache fallback (only sources whose remote
-  // path has no on-disk runtime equivalent should be cached as `file:` URIs).
-  // Downstream consumers that need a normalized form re-run normalizeSourcePath.
   if (typeof value.path === 'string') source.path = value.path;
   if (typeof value.sourceReference === 'number') source.sourceReference = value.sourceReference;
   if (typeof value.origin === 'string') source.origin = value.origin;
@@ -531,7 +514,7 @@ function mergeLoadedSources(batches: readonly LoadedPackageSource[][]): LoadedPa
 async function toOpenUri(
   session: vscode.DebugSession,
   source: LoadedPackageSource,
-  options?: { localRoot?: string; packageCacheRoot?: string },
+  options?: { localRoot?: string },
 ): Promise<vscode.Uri> {
   // Prefer a `file:` URI whenever the source path resolves to a local file on disk,
   // ahead of the `sourceReference > 0` check. Rationale:
@@ -557,7 +540,7 @@ async function toOpenUri(
     session,
     source,
     collectDirectLocalFileCandidates(source),
-    buildMaterializationOptions(options),
+    options?.localRoot === undefined ? {} : { localRoot: options.localRoot },
   );
   if (materialized !== null) return vscode.Uri.file(materialized);
 
@@ -567,7 +550,7 @@ async function toOpenUri(
   // the package was built against one peer-dep resolution but installed against
   // another).
   if (typeof source.sourceReference === 'number' && source.sourceReference > 0) {
-    return vscode.debug.asDebugSourceUri(sanitizeSourceForUri(source), session);
+    return vscode.debug.asDebugSourceUri(source, session);
   }
   if (!source.path) {
     throw new Error('Package source cannot be opened because it has no path.');
@@ -577,28 +560,7 @@ async function toOpenUri(
   }
   const direct = toReadableLocalSourcePath(source);
   if (direct !== null) return vscode.Uri.file(direct);
-  return vscode.Uri.file(collapseLeadingPosixSlashes(source.path));
-}
-
-// Defense-in-depth before handing the source to vscode-js-debug's URI builder:
-// even if `toLoadedPackageSource` already collapsed leading slashes, callers can
-// construct a `LoadedPackageSource` directly (tests, future code paths) with a
-// raw `//app/...` path. asDebugSourceUri would then throw UriError because the
-// `debug:` scheme has no authority component.
-function sanitizeSourceForUri(source: LoadedPackageSource): LoadedPackageSource {
-  if (source.path === undefined) return source;
-  const collapsed = collapseLeadingPosixSlashes(source.path);
-  if (collapsed === source.path) return source;
-  return { ...source, path: collapsed };
-}
-
-function buildMaterializationOptions(
-  options: { localRoot?: string; packageCacheRoot?: string } | undefined,
-): { localRoot?: string; packageCacheRoot?: string } {
-  const materialization: { localRoot?: string; packageCacheRoot?: string } = {};
-  if (options?.localRoot !== undefined) materialization.localRoot = options.localRoot;
-  if (options?.packageCacheRoot !== undefined) materialization.packageCacheRoot = options.packageCacheRoot;
-  return materialization;
+  return vscode.Uri.file(source.path);
 }
 
 function collectDirectLocalFileCandidates(source: LoadedPackageSource): string[] {
@@ -974,7 +936,7 @@ export async function openPackageSource(
   session: vscode.DebugSession,
   source: LoadedPackageSource,
   location?: PackageSourceLocation,
-  options?: { localRoot?: string; appName?: string; packageCacheRoot?: string },
+  options?: { localRoot?: string; appName?: string },
 ): Promise<vscode.Uri> {
   const uri = await toOpenUri(session, source, options);
   logInfo(
