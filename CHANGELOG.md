@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.7-pre.4] — 2026
+
+### Fixes
+
+- **Cache sync recovers after canceled or failed attempts** — Settings still shows the last successful sync plus the latest failed attempt, but retryable failures now schedule an automatic retry outside the normal cache interval. CDS Debug also reconciles stale Settings progress with newer shared `cf-sync` snapshots so an old canceled attempt no longer appears stuck after another tool has produced a fresh topology.
+
 ## [0.4.7-pre.3] — 2026
 
 ### Fixes

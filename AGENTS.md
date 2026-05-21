@@ -161,6 +161,9 @@ pnpm test:report          # Open HTML report
 1. User can change mapping and return to CF Region / Org.
 2. User can change mapping while Sync Now is still running.
 
+### Settings Screen
+1. User can see automatic retry guidance after a canceled cache sync.
+
 ### Shared CF Scope
 1. User can sync the current scope through VS Code global settings.
 2. User can receive an external scope from another region and auto-login to it.

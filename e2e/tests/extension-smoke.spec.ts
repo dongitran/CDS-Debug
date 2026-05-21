@@ -4559,6 +4559,35 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       });
     });
 
+    test('User can see automatic retry guidance after a canceled cache sync', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-sync' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await webview.locator('#btn-gear').click();
+        await expect(webview.getByText('Settings')).toBeVisible();
+        await injectMessage(webview, {
+          type: 'SYNC_STATUS',
+          payload: {
+            isRunning: false,
+            lastCompletedAt: Date.now() - 9 * 24 * 60 * 60 * 1000,
+            lastAttemptedAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
+            lastSkipReason: 'aborted',
+            done: 4,
+            total: 14,
+          },
+        });
+
+        await expect(webview.locator('.sync-status-row.warning')).toContainText('sync was canceled');
+        await expect(webview.locator('.sync-status-row.warning')).toContainText('retry scheduled automatically');
+        await expect(webview.locator('#btn-trigger-sync')).toBeEnabled();
+
+        await webview.locator('#btn-trigger-sync').click();
+        await expect(webview.locator('.sync-status-row.running')).toBeVisible({ timeout: 10_000 });
+        await expect(webview.locator('#btn-trigger-sync')).toBeDisabled();
+      });
+    });
+
     test('Settings shows "Stopping sync" when cache disabled while sync is still running', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);

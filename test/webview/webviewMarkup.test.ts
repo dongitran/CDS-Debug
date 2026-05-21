@@ -713,6 +713,24 @@ describe('webview markup contracts', () => {
     expect(html).toContain('credentials not set');
   });
 
+  it('shows automatic retry copy for retryable sync failures', () => {
+    const now = Date.now();
+    const html = renderSettingsHtml({
+      syncStatus: {
+        isRunning: false,
+        lastCompletedAt: now - 2 * 24 * 60 * 60 * 1000,
+        lastAttemptedAt: now - 60 * 60 * 1000,
+        lastSkipReason: 'aborted',
+        done: 0,
+        total: 5,
+      },
+      cacheConfig: { enabled: true, intervalHours: 24 },
+    });
+
+    expect(html).toContain('sync was canceled');
+    expect(html).toContain('retry scheduled automatically');
+  });
+
   it('keeps the package browser screen minimal', () => {
     const packageScript = getPackageBrowserScriptContent();
 

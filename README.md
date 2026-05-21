@@ -41,7 +41,7 @@ A sidebar panel connects to your Cloud Foundry environment, shows your running a
 - 📦 **Package Browser** — browse loaded npm package sources from attached sessions without requiring a local `node_modules` install
 - 🧩 **Shared CAP Config** — define one global fallback in VS Code user settings instead of copying `cap-debug-config.json` into every workspace
 - 💾 **Persistent Mapping** — org ↔ folder mapping is saved, no re-setup on restart
-- ⚡ **Background Cache** — app list pre-fetched in the background so loading feels instant
+- ⚡ **Background Cache** — app list pre-fetched in the background so loading feels instant, with automatic retry for canceled or failed sync attempts
 - ⚙️ **Settings Panel** — control cache sync interval, trigger a manual sync, or log out
 
 ---

@@ -48,11 +48,13 @@ import { logInfo, logWarn, logError } from './logger';
 export const cacheSyncEvents = new EventEmitter();
 
 const INITIAL_DELAY_MS = 5_000;
+const RETRY_DELAY_MS = 15 * 60 * 1000;
 
 // Tracks in-process sync state. Object wrapper prevents TypeScript control-flow
 // narrowing from treating the booleans as literal false after assignment.
 const _sync = { isSyncing: false, abortRequested: false };
 let _timer: ReturnType<typeof setInterval> | undefined;
+let _retryTimer: ReturnType<typeof setTimeout> | undefined;
 
 function syncIntervalMs(): number {
   return getCacheSettings().intervalHours * 60 * 60 * 1000;
@@ -64,6 +66,85 @@ function pushStatus(progress: SyncProgress): void {
 
 function withLastCompleted(progress: SyncProgress, lastCompletedAt: number | undefined): SyncProgress {
   return lastCompletedAt === undefined ? progress : { ...progress, lastCompletedAt };
+}
+
+function structureSyncedAtMs(structure: CfStructure | undefined): number | undefined {
+  if (structure === undefined) return undefined;
+  const time = new Date(structure.syncedAt).getTime();
+  return Number.isFinite(time) ? time : undefined;
+}
+
+function buildStructureCompletedProgress(lastCompletedAt: number): SyncProgress {
+  const total = getAllRegions().length;
+  return {
+    isRunning: false,
+    lastCompletedAt,
+    done: total,
+    total,
+  };
+}
+
+function reconcileProgressWithStructure(
+  progress: SyncProgress | undefined,
+  structure: CfStructure | undefined,
+): SyncProgress | undefined {
+  const structureTime = structureSyncedAtMs(structure);
+  if (structureTime === undefined) return progress;
+  if (progress === undefined) return buildStructureCompletedProgress(structureTime);
+  if (structureTime <= (progress.lastCompletedAt ?? 0)) return progress;
+
+  const lastAttemptedAt = progress.lastAttemptedAt ?? progress.startedAt ?? 0;
+  if (progress.lastSkipReason !== undefined && lastAttemptedAt >= structureTime) {
+    return { ...progress, isRunning: false, lastCompletedAt: structureTime };
+  }
+
+  return buildStructureCompletedProgress(structureTime);
+}
+
+function isRetryableSkipReason(reason: SyncSkipReason | undefined): boolean {
+  return reason === 'aborted' || reason === 'fatal-error' || reason === 'lock-contention';
+}
+
+function retryDelayForProgress(progress: SyncProgress | undefined, now = Date.now()): number | undefined {
+  if (progress === undefined || progress.isRunning) return undefined;
+  if (!isRetryableSkipReason(progress.lastSkipReason)) return undefined;
+
+  const lastAttemptedAt = progress.lastAttemptedAt ?? progress.startedAt;
+  if (lastAttemptedAt === undefined) return 0;
+  if (lastAttemptedAt <= (progress.lastCompletedAt ?? 0)) return undefined;
+
+  return Math.max(RETRY_DELAY_MS - (now - lastAttemptedAt), 0);
+}
+
+function clearRetryTimer(): void {
+  if (_retryTimer === undefined) return;
+  clearTimeout(_retryTimer);
+  _retryTimer = undefined;
+}
+
+function scheduleRetryFromProgress(progress: SyncProgress | undefined, minimumDelayMs = 0): boolean {
+  clearRetryTimer();
+  if (!getCacheSettings().enabled) return false;
+
+  const retryDelayMs = retryDelayForProgress(progress);
+  if (retryDelayMs === undefined) return false;
+
+  const delayMs = Math.max(retryDelayMs, minimumDelayMs);
+  _retryTimer = setTimeout(() => {
+    _retryTimer = undefined;
+    runCacheSync();
+  }, delayMs);
+  logInfo(`[CacheSync] Retry scheduled in ${Math.ceil(delayMs / 1000).toString()}s.`);
+  return true;
+}
+
+function scheduleInitialSyncIfNeeded(progress: SyncProgress | undefined, intervalMs: number): void {
+  if (scheduleRetryFromProgress(progress, INITIAL_DELAY_MS)) return;
+
+  const lastCompleted = progress?.lastCompletedAt ?? 0;
+  if (Date.now() - lastCompleted >= intervalMs) {
+    setTimeout(() => { runCacheSync(); }, INITIAL_DELAY_MS);
+  }
 }
 
 function buildRunningProgress(
@@ -285,6 +366,8 @@ export async function syncSingleRegion(
     return { status: 'skipped' };
   }
 
+  _sync.abortRequested = false;
+
   const region = getAllRegions().find((candidate) => candidate.key === regionKey);
   if (!region) return { status: 'failed', error: 'unknown-region' };
 
@@ -303,10 +386,10 @@ export async function syncSingleRegion(
   }
 }
 
-async function doSync(): Promise<void> {
+async function doSync(): Promise<SyncProgress | undefined> {
   if (_sync.isSyncing) {
     logInfo('[CacheSync] Already running — skipping duplicate trigger.');
-    return;
+    return undefined;
   }
 
   if (!getCacheSettings().enabled) {
@@ -314,7 +397,7 @@ async function doSync(): Promise<void> {
     const skipped = buildSkippedProgress('cache-disabled', getAllRegions().length, getSyncProgress()?.lastCompletedAt);
     await saveSyncProgress(skipped);
     pushStatus(skipped);
-    return;
+    return skipped;
   }
 
   const { email, password } = await getCredentials();
@@ -323,7 +406,7 @@ async function doSync(): Promise<void> {
     const skipped = buildSkippedProgress('no-credentials', getAllRegions().length, getSyncProgress()?.lastCompletedAt);
     await saveSyncProgress(skipped);
     pushStatus(skipped);
-    return;
+    return skipped;
   }
 
   _sync.isSyncing = true;
@@ -353,7 +436,7 @@ async function doSync(): Promise<void> {
       await saveSyncProgress(final);
       pushStatus(final);
       _sync.isSyncing = false;
-      return;
+      return final;
     }
 
     await initializeRuntimeState(syncId, regionKeys);
@@ -404,6 +487,7 @@ async function doSync(): Promise<void> {
       await saveSyncProgress(final);
       pushStatus(final);
       logInfo('[CacheSync] Sync aborted.');
+      return final;
     } else {
       const completedState = await completeRuntimeState(syncId);
       await writeStructure(completedState.structure);
@@ -420,6 +504,7 @@ async function doSync(): Promise<void> {
       await saveSyncProgress(final);
       pushStatus(final);
       logInfo(`[CacheSync] Sync complete — ${done.toString()}/${total.toString()} regions.`);
+      return final;
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -427,7 +512,8 @@ async function doSync(): Promise<void> {
     const final = buildSkippedProgress('fatal-error', total, previousLastCompletedAt, startedAt);
     await saveSyncProgress(final);
     pushStatus(final);
-    throw err;
+    logError(`[CacheSync] Fatal error: ${message}`);
+    return final;
   } finally {
     if (lockHandle !== undefined) {
       await releaseSyncLock(lockHandle).catch(() => undefined);
@@ -437,14 +523,19 @@ async function doSync(): Promise<void> {
 }
 
 export function runCacheSync(): void {
-  void doSync().catch((err: unknown) => {
-    _sync.isSyncing = false;
+  clearRetryTimer();
+  void doSync().then((progress) => {
+    scheduleRetryFromProgress(progress);
+  }).catch((err: unknown) => {
     const message = err instanceof Error ? err.message : String(err);
     logError(`[CacheSync] Fatal error: ${message}`);
     const total = getAllRegions().length;
     const final = buildSkippedProgress('fatal-error', total, getSyncProgress()?.lastCompletedAt);
-    void saveSyncProgress(final);
+    void saveSyncProgress(final).then(() => {
+      scheduleRetryFromProgress(final);
+    });
     pushStatus(final);
+    _sync.isSyncing = false;
   });
 }
 
@@ -458,16 +549,24 @@ export function getCurrentSyncProgress(): SyncProgress {
 
 export function initCacheSync(): void {
   // Reset stale isRunning flag from a previous session that was interrupted (VS Code crash).
-  const prev = getSyncProgress();
-  if (prev?.isRunning) {
+  let progress = getSyncProgress();
+  if (progress?.isRunning) {
     logInfo('[CacheSync] Previous sync was interrupted — resetting flag.');
-    void saveSyncProgress({ ...prev, isRunning: false });
+    progress = { ...progress, isRunning: false };
+    void saveSyncProgress(progress);
   }
 
   // If a cf-sync structure already exists on disk (e.g. written by the cf-sync CLI or a
   // previous VS Code session), populate VS Code globalState immediately so the extension
   // can serve app lists before the next background sync completes.
   const existingStructure = readStructureSync();
+  const reconciledProgress = reconcileProgressWithStructure(progress, existingStructure);
+  if (reconciledProgress !== progress && reconciledProgress !== undefined) {
+    progress = reconciledProgress;
+    void saveSyncProgress(reconciledProgress);
+    pushStatus(reconciledProgress);
+  }
+
   if (existingStructure) {
     void populateCacheFromStructure(existingStructure).then(() => {
       logInfo('[CacheSync] Loaded existing cf-sync structure from ~/.saptools/.');
@@ -480,21 +579,7 @@ export function initCacheSync(): void {
   }
 
   const intervalMs = syncIntervalMs();
-
-  // Determine staleness: prefer the cf-sync structure timestamp (shared across tools)
-  // over VS Code globalState, since the CLI may have run a fresh sync more recently.
-  let lastCompleted = prev?.lastCompletedAt ?? 0;
-  if (existingStructure) {
-    const structureTime = new Date(existingStructure.syncedAt).getTime();
-    if (structureTime > lastCompleted) {
-      lastCompleted = structureTime;
-    }
-  }
-
-  if (Date.now() - lastCompleted >= intervalMs) {
-    setTimeout(() => { runCacheSync(); }, INITIAL_DELAY_MS);
-  }
-
+  scheduleInitialSyncIfNeeded(progress, intervalMs);
   _timer = setInterval(() => { runCacheSync(); }, intervalMs);
 }
 
@@ -505,6 +590,7 @@ export function restartCacheSyncTimer(): void {
     clearInterval(_timer);
     _timer = undefined;
   }
+  clearRetryTimer();
 
   const settings = getCacheSettings();
   if (!settings.enabled) {
@@ -516,23 +602,21 @@ export function restartCacheSyncTimer(): void {
   const intervalMs = settings.intervalHours * 60 * 60 * 1000;
   _timer = setInterval(() => { runCacheSync(); }, intervalMs);
 
-  const prev = getSyncProgress();
-  let lastCompleted = prev?.lastCompletedAt ?? 0;
+  let progress = getSyncProgress();
   const existingStructure = readStructureSync();
-  if (existingStructure) {
-    const structureTime = new Date(existingStructure.syncedAt).getTime();
-    if (structureTime > lastCompleted) {
-      lastCompleted = structureTime;
-    }
+  const reconciledProgress = reconcileProgressWithStructure(progress, existingStructure);
+  if (reconciledProgress !== progress && reconciledProgress !== undefined) {
+    progress = reconciledProgress;
+    void saveSyncProgress(reconciledProgress);
+    pushStatus(reconciledProgress);
   }
 
-  if (Date.now() - lastCompleted >= intervalMs) {
-    setTimeout(() => { runCacheSync(); }, INITIAL_DELAY_MS);
-  }
+  scheduleInitialSyncIfNeeded(progress, intervalMs);
 }
 
 export function disposeCacheSync(): void {
   requestCacheSyncStop();
+  clearRetryTimer();
   if (_timer !== undefined) {
     clearInterval(_timer);
     _timer = undefined;

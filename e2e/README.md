@@ -86,30 +86,31 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
 51. Cancel app loading returns to **Ready** screen (not Select Folder) when apps were previously loaded — verifies the `state.apps.length > 0` conditional branch.
 52. Refresh Apps bypasses cache and redisplays the latest app list.
 
-### Settings Screen (6 tests)
+### Settings Screen (7 tests)
 53. Keychain credentials section — verifies `.cred-source-badge.keychain`, email display, `#btn-update-credentials`, and `#btn-clear-credentials` via injected CREDENTIALS_STATUS.
 54. No-credentials section — verifies "No credentials configured." text and `#btn-update-credentials` (Set Credentials) when `source: 'none'`.
-55. Stopping-sync state — `.sync-status-row.running` + spinner + "Stopping sync…" when cache disabled but sync still in progress.
-56. Sync running state — verifies `.sync-status-row.running`, spinner, `.progress-bar-wrap`, `.progress-bar-fill`, disabled Sync Now button via injected SYNC_STATUS.
-57. Cache disabled state — verifies unchecked `#chk-cache-enabled`, disabled `#select-interval`, disabled Sync Now, and "Caching disabled" status row via injected CACHE_CONFIG.
-58. Back to Launcher — verifies all 4 sections: SAP Credentials (env badge + email + info icon), Debug Behavior (both toggles + `.pref-state-badge` + `.beta-badge` + `.pref-row .toggle-switch` × 2), App Cache (checked by default, sync interval, enabled Sync Now, "Last sync: Never"), navigation buttons.
+55. Canceled-sync retry guidance — verifies `.sync-status-row.warning` shows "sync was canceled", "retry scheduled automatically", enabled Sync Now, and running state after manual retry.
+56. Stopping-sync state — `.sync-status-row.running` + spinner + "Stopping sync…" when cache disabled but sync still in progress.
+57. Sync running state — verifies `.sync-status-row.running`, spinner, `.progress-bar-wrap`, `.progress-bar-fill`, disabled Sync Now button via injected SYNC_STATUS.
+58. Cache disabled state — verifies unchecked `#chk-cache-enabled`, disabled `#select-interval`, disabled Sync Now, and "Caching disabled" status row via injected CACHE_CONFIG.
+59. Back to Launcher — verifies all 4 sections: SAP Credentials (env badge + email + info icon), Debug Behavior (both toggles + `.pref-state-badge` + `.beta-badge` + `.pref-row .toggle-switch` × 2), App Cache (checked by default, sync interval, enabled Sync Now, "Last sync: Never"), navigation buttons.
 
 ### Select Folder Screen (1 test)
-59. Save and Continue disabled until folder selected — verifies all SELECT_FOLDER elements (step-badge 3/3, org info-box, section label, "No folder selected yet", browse/back buttons).
+60. Save and Continue disabled until folder selected — verifies all SELECT_FOLDER elements (step-badge 3/3, org info-box, section label, "No folder selected yet", browse/back buttons).
 
 ### Preparing Branches Screen (5 tests)
-60. BRANCH_PREP_START shows prep screen with service rows, branch badges, spinner status, and step-by-step updates (stashing → done → error) — verifies all 3 status block variants.
-61. BRANCH_PREP_START with empty services shows `.org-list-empty` "No services to prepare." placeholder inside `.prep-list`.
-62. DEBUG_CONNECTING from PREPARING_BRANCHES screen transitions to READY with the new session card; prep rows cleared.
-63. BRANCH_PREP_STATUS step variants — verifies checking-out, installing, building, and skipped steps; verifies `.prep-row-top`, `.prep-name`, `.prep-row-status` structural elements.
-64. BRANCH_PREP all done without errors transitions status block to "Starting debug sessions…" with spinner.
+61. BRANCH_PREP_START shows prep screen with service rows, branch badges, spinner status, and step-by-step updates (stashing → done → error) — verifies all 3 status block variants.
+62. BRANCH_PREP_START with empty services shows `.org-list-empty` "No services to prepare." placeholder inside `.prep-list`.
+63. DEBUG_CONNECTING from PREPARING_BRANCHES screen transitions to READY with the new session card; prep rows cleared.
+64. BRANCH_PREP_STATUS step variants — verifies checking-out, installing, building, and skipped steps; verifies `.prep-row-top`, `.prep-name`, `.prep-row-status` structural elements.
+65. BRANCH_PREP all done without errors transitions status block to "Starting debug sessions…" with spinner.
 
 ### Setup Credentials Screen (5 tests)
-65. CREDENTIALS_ERROR directly injected shows `.error-box` and re-enables `#btn-save-creds` (bypasses macOS SecretStorage race).
-66. Update mode — verifies "Update Credentials" title, `#btn-cancel-creds` visible, no `.cred-env-hint`, "Update & Continue" save button label; Back to Settings navigation.
-67. CREDENTIALS_REVOKED forces redirect to SETUP_CREDENTIALS with the revocation error in `.error-box`; setup mode (env hint visible, no cancel button, save button enabled — because handler sets `hasCredentials=false`).
-68. CREDENTIALS_STATUS `{hasCredentials:false}` when `prevHad=true` forces redirect to SETUP_CREDENTIALS setup mode; no error box (clean credential-clear path).
-69. Successful credential save without prior mappings navigates to the Region screen.
+66. CREDENTIALS_ERROR directly injected shows `.error-box` and re-enables `#btn-save-creds` (bypasses macOS SecretStorage race).
+67. Update mode — verifies "Update Credentials" title, `#btn-cancel-creds` visible, no `.cred-env-hint`, "Update & Continue" save button label; Back to Settings navigation.
+68. CREDENTIALS_REVOKED forces redirect to SETUP_CREDENTIALS with the revocation error in `.error-box`; setup mode (env hint visible, no cancel button, save button enabled — because handler sets `hasCredentials=false`).
+69. CREDENTIALS_STATUS `{hasCredentials:false}` when `prevHad=true` forces redirect to SETUP_CREDENTIALS setup mode; no error box (clean credential-clear path).
+70. Successful credential save without prior mappings navigates to the Region screen.
 
 ## Mocking strategy
 - Credentials are scenario-based:

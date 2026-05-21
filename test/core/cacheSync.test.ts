@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const MOCK_REGIONS = vi.hoisted(() => [
   { key: 'eu10', label: 'Europe (Frankfurt) - AWS (eu10)', apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com' },
@@ -56,11 +59,14 @@ import {
   cacheSyncEvents,
   populateCacheFromStructure,
   getCurrentSyncProgress,
+  initCacheSync,
+  disposeCacheSync,
   runCacheSync,
   syncSingleRegion,
 } from '../../src/core/cacheSync';
 import {
   completeRuntimeState,
+  cfStructurePath,
   failRuntimeState,
   initializeRuntimeState,
   persistRegion,
@@ -118,6 +124,12 @@ function makeLockHandle(): Exclude<Awaited<ReturnType<typeof tryAcquireSyncLock>
 
 function savedProgressCalls(): SyncProgress[] {
   return vi.mocked(saveSyncProgress).mock.calls.map(([progress]) => progress);
+}
+
+async function flushAsyncWork(): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    await Promise.resolve();
+  }
 }
 
 describe('populateCacheFromStructure', () => {
@@ -585,6 +597,152 @@ describe('runCacheSync progress status', () => {
     expect(failRuntimeState).not.toHaveBeenCalled();
     expect(initializeRuntimeState).not.toHaveBeenCalled();
     expect(cfApi).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule a short retry when credentials are missing', async () => {
+    vi.useFakeTimers();
+    try {
+      runCacheSync();
+
+      await flushAsyncWork();
+      expect(saveSyncProgress).toHaveBeenCalledWith(expect.objectContaining({
+        lastSkipReason: 'no-credentials',
+      }));
+
+      expect(getCredentials).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+      expect(getCredentials).toHaveBeenCalledTimes(1);
+    } finally {
+      disposeCacheSync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('schedules one delayed retry after a fatal sync attempt', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(getCredentials).mockResolvedValue({
+        email: 'sample.user@example.com',
+        password: 'sample-password',
+      });
+      vi.mocked(tryAcquireSyncLock).mockResolvedValue(makeLockHandle());
+      vi.mocked(initializeRuntimeState)
+        .mockRejectedValueOnce(new Error('mock runtime failure'))
+        .mockResolvedValue(makeRuntimeState());
+
+      runCacheSync();
+
+      await flushAsyncWork();
+      expect(saveSyncProgress).toHaveBeenCalledWith(expect.objectContaining({
+        lastSkipReason: 'fatal-error',
+      }));
+      expect(tryAcquireSyncLock).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync((15 * 60 * 1000) - 1);
+      expect(tryAcquireSyncLock).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await flushAsyncWork();
+      expect(tryAcquireSyncLock).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => {
+        expect(savedProgressCalls().at(-1)).toMatchObject({
+          isRunning: false,
+          done: MOCK_REGIONS.length,
+          total: MOCK_REGIONS.length,
+        });
+      });
+    } finally {
+      await flushAsyncWork();
+      disposeCacheSync();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('initCacheSync retry recovery', () => {
+  let tempDir: string;
+  let structurePath: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    tempDir = mkdtempSync(join(tmpdir(), 'cds-debug-cache-sync-test-'));
+    structurePath = join(tempDir, 'cf-structure.json');
+    vi.mocked(cfStructurePath).mockReturnValue(structurePath);
+    vi.mocked(getCacheSettings).mockReturnValue({ enabled: true, intervalHours: 24 });
+    vi.mocked(getCredentials).mockResolvedValue({
+      email: 'sample.user@example.com',
+      password: 'sample-password',
+    });
+    vi.mocked(tryAcquireSyncLock).mockResolvedValue(makeLockHandle());
+    vi.mocked(initializeRuntimeState).mockResolvedValue(makeRuntimeState());
+    vi.mocked(completeRuntimeState).mockResolvedValue(makeRuntimeState({
+      status: 'completed',
+      finishedAt: new Date().toISOString(),
+      structure: makeStructure({ syncedAt: new Date().toISOString() }),
+      completedRegionKeys: [],
+    }));
+  });
+
+  afterEach(() => {
+    disposeCacheSync();
+    vi.useRealTimers();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('retries an old canceled attempt even when the last success is inside the normal interval', async () => {
+    const now = new Date('2026-05-21T08:00:00.000Z').getTime();
+    vi.setSystemTime(now);
+    vi.mocked(getSyncProgress).mockReturnValue({
+      isRunning: false,
+      lastCompletedAt: now - 60 * 60 * 1000,
+      lastAttemptedAt: now - 20 * 60 * 1000,
+      lastSkipReason: 'aborted',
+      done: 2,
+      total: MOCK_REGIONS.length,
+    });
+
+    initCacheSync();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushAsyncWork();
+
+    await vi.waitFor(() => {
+      expect(tryAcquireSyncLock).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(savedProgressCalls().at(-1)).toMatchObject({
+        isRunning: false,
+        done: MOCK_REGIONS.length,
+        total: MOCK_REGIONS.length,
+      });
+    });
+  });
+
+  it('reconciles stale progress when a newer cf-sync structure exists', async () => {
+    const now = new Date('2026-05-21T08:00:00.000Z').getTime();
+    const structureSyncedAt = now - 5 * 60 * 1000;
+    vi.setSystemTime(now);
+    writeFileSync(structurePath, JSON.stringify(makeStructure({
+      syncedAt: new Date(structureSyncedAt).toISOString(),
+    })));
+    vi.mocked(getSyncProgress).mockReturnValue({
+      isRunning: false,
+      lastCompletedAt: now - 9 * 24 * 60 * 60 * 1000,
+      lastAttemptedAt: now - 3 * 24 * 60 * 60 * 1000,
+      lastSkipReason: 'aborted',
+      done: 2,
+      total: MOCK_REGIONS.length,
+    });
+
+    initCacheSync();
+
+    await flushAsyncWork();
+    expect(saveSyncProgress).toHaveBeenCalledWith({
+      isRunning: false,
+      lastCompletedAt: structureSyncedAt,
+      done: MOCK_REGIONS.length,
+      total: MOCK_REGIONS.length,
+    });
   });
 });
 
