@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.7-pre.5] — 2026
+
+### Tests
+
+- **Raises enforced unit coverage above the branch threshold** — Adds focused unit coverage for Package Browser source normalization/search/URI tracking, package breakpoint mirroring failure paths, and safe package source materialization. `pnpm test:coverage` now passes with global branch coverage above 80%.
+
 ## [0.4.7-pre.4] — 2026
 
 ### Fixes

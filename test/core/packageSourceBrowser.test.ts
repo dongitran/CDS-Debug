@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DebugSession } from 'vscode';
+import type { DebugSession, Uri } from 'vscode';
 
 interface MockDebugSession {
   id: string;
@@ -17,6 +17,7 @@ interface MockUri {
   scheme: string;
   path: string;
   fsPath?: string;
+  query?: string;
   toString(): string;
 }
 
@@ -44,7 +45,7 @@ const { vscodeMockState } = vi.hoisted(() => ({
   },
 }));
 
-function createMockUri(raw: string, scheme: string, path: string, fsPath?: string): MockUri {
+function createMockUri(raw: string, scheme: string, path: string, fsPath?: string, query?: string): MockUri {
   const uri: MockUri = {
     scheme,
     path,
@@ -53,11 +54,18 @@ function createMockUri(raw: string, scheme: string, path: string, fsPath?: strin
   if (fsPath !== undefined) {
     uri.fsPath = fsPath;
   }
+  if (query !== undefined) {
+    uri.query = query;
+  }
   return uri;
 }
 
 function asDebugSession(session: MockDebugSession): DebugSession {
   return session as unknown as DebugSession;
+}
+
+function asUri(uri: MockUri): Uri {
+  return uri as unknown as Uri;
 }
 
 vi.mock('vscode', () => ({
@@ -99,11 +107,18 @@ vi.mock('vscode', () => ({
 import {
   buildPackageEntries,
   buildPackageFileTree,
+  clearOpenedPackageUris,
   createPackageSearchIndex,
+  extractSessionIdFromDebugUri,
+  findAppForOpenedPath,
+  findOpenedPackageSourceByUri,
+  getOpenedPackageUris,
   loadPackageEntries,
   loadPackageEntriesFromSessions,
   openPackageSource,
   searchPackageEntries,
+  trackOpenedPackageUri,
+  unregisterOpenedPackageUri,
 } from '../../src/core/packageSourceBrowser';
 import type { LoadedPackageTreeNode } from '../../src/types/index';
 
@@ -176,6 +191,66 @@ async function createTempPackageEntries(
   };
 }
 
+function createMixedLoadedSourcesResponse(): { sources: unknown[] } {
+  return {
+    sources: [
+      null,
+      'not-a-source',
+      { sourceReference: 3 },
+      { name: 'name-only.js' },
+      { name: 'handler.js', path: '/workspace/srv/handler.js' },
+      { name: 'sample-shim', path: '/workspace/node_modules/.bin/sample-shim' },
+      { name: 'scope-root.js', path: '/workspace/node_modules/@sample-org' },
+      { name: 'scope-package-root.js', path: '/workspace/node_modules/@sample-org/demo-kit' },
+      { name: 'package-root.js', path: '/workspace/node_modules/sample-client' },
+      {
+        name: 'main.js',
+        path: '/workspace/node_modules/.pnpm/@sample-org+demo-kit/node_modules/@sample-org/demo-kit/dist/main.js',
+        sourceReference: 11,
+        origin: 'debug-adapter',
+        presentationHint: 'normal',
+      },
+      {
+        name: 'index.js',
+        path: '/workspace/node_modules/.pnpm/sample-broken@/node_modules/sample-broken/index.js',
+      },
+    ],
+  };
+}
+
+function createTrackedPackageUri(): MockUri {
+  const query = createEncodedDebugQuery('session-track', '7');
+  return createMockUri(
+    `debug:/workspace/node_modules/sample-client/src/client.ts?${query}`,
+    'debug',
+    '/workspace/node_modules/sample-client/src/client.ts',
+    undefined,
+    query,
+  );
+}
+
+function createEncodedDebugQuery(sessionId: string, ref?: string): string {
+  const encodedEquals = '%3D';
+  const encodedAmpersand = '%26';
+  const sessionPart = `session${encodedEquals}${sessionId}`;
+  return ref === undefined ? sessionPart : `${sessionPart}${encodedAmpersand}ref${encodedEquals}${ref}`;
+}
+
+function trackSamplePackageUri(uri: MockUri, session: MockDebugSession): void {
+  trackOpenedPackageUri(
+    'sample-service',
+    asUri(uri),
+    {
+      name: 'client.ts',
+      path: uri.path,
+      sourceReference: 7,
+      origin: 'debug-adapter',
+      presentationHint: 'normal',
+    },
+    asDebugSession(session),
+  );
+}
+
 async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path);
@@ -186,6 +261,9 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 beforeEach(() => {
+  clearOpenedPackageUris('sample-service');
+  clearOpenedPackageUris('sample-worker');
+  clearOpenedPackageUris('sample-api');
   vscodeMockState.asDebugSourceUri.mockReset();
   vscodeMockState.openTextDocument.mockReset();
   vscodeMockState.showTextDocument.mockReset();
@@ -254,6 +332,29 @@ describe('packageSourceBrowser', () => {
       'lib/index.d.ts',
       'lib/index.js',
     ]);
+  });
+
+  it('normalizes loadedSources records and ignores incomplete package paths', async () => {
+    const session: MockDebugSession = {
+      id: 'session-normalize-sources',
+      name: 'Debug: sample-service',
+      customRequest: (): Promise<unknown> => Promise.resolve(createMixedLoadedSourcesResponse()),
+    };
+
+    const entries = await loadPackageEntries(asDebugSession(session));
+
+    expect(entries.map((entry) => entry.name)).toEqual([
+      '@sample-org/demo-kit',
+      'sample-broken',
+    ]);
+    expect(entries[0]?.version).toBeUndefined();
+    expect(entries[0]?.files[0]?.source).toEqual(expect.objectContaining({
+      name: 'main.js',
+      sourceReference: 11,
+      origin: 'debug-adapter',
+      presentationHint: 'normal',
+    }));
+    expect(entries[1]?.version).toBeUndefined();
   });
 
   it('builds explorer-style folder trees from package file paths', () => {
@@ -758,6 +859,34 @@ describe('packageSourceBrowser', () => {
     expect(logs.some((message) => message.includes('none matched node_modules package paths'))).toBe(true);
   });
 
+  it('filters package search results with valid regex and ignores invalid regex filters', async () => {
+    const entries = buildPackageEntries([
+      {
+        name: 'index.js',
+        path: '/workspace/node_modules/sample-client/dist/index.js',
+      },
+      {
+        name: 'helper.js',
+        path: '/workspace/node_modules/demo-helper/lib/helper.js',
+      },
+    ]);
+    const index = createPackageSearchIndex(entries);
+
+    const filteredEmptyQuery = await searchPackageEntries(index, '  ', {
+      packageNameFilterRegex: '^sample-',
+    });
+    const invalidRegexResults = await searchPackageEntries(index, '', {
+      packageNameFilterRegex: '[',
+    });
+    const excludedQueryResults = await searchPackageEntries(index, 'index', {
+      packageNameFilterRegex: '^demo-',
+    });
+
+    expect(filteredEmptyQuery.map((entry) => entry.name)).toEqual(['sample-client']);
+    expect(invalidRegexResults.map((entry) => entry.name)).toEqual(['demo-helper', 'sample-client']);
+    expect(excludedQueryResults).toEqual([]);
+  });
+
   it('searches package file contents and records the first matching line and column', async () => {
     const { entries, rootDir } = await createTempPackageEntries([
       {
@@ -876,6 +1005,140 @@ describe('packageSourceBrowser', () => {
       }));
     } finally {
       await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('tracks opened package URIs with cloned source and session metadata', () => {
+    const uri = createTrackedPackageUri();
+    const session: MockDebugSession = {
+      id: 'session-track',
+      name: 'Remote Process [0]',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+
+    trackSamplePackageUri(uri, session);
+
+    expect(getOpenedPackageUris('sample-service').map((openedUri) => openedUri.path)).toEqual([uri.path]);
+    expect(findAppForOpenedPath(uri.path)).toBe('sample-service');
+
+    const firstRecord = findOpenedPackageSourceByUri(asUri(uri));
+    if (firstRecord?.source === undefined) {
+      throw new Error('Expected tracked package source metadata.');
+    }
+    firstRecord.source.path = '/mutated/path.js';
+
+    const clonedRecord = findOpenedPackageSourceByUri(asUri(uri));
+    expect(clonedRecord).toEqual(expect.objectContaining({
+      appName: 'sample-service',
+      sessionId: 'session-track',
+      sessionName: 'Remote Process [0]',
+    }));
+    expect(clonedRecord?.source).toEqual(expect.objectContaining({
+      path: uri.path,
+      sourceReference: 7,
+      origin: 'debug-adapter',
+      presentationHint: 'normal',
+    }));
+
+    trackOpenedPackageUri('sample-service', asUri(uri));
+
+    const retainedRecord = findOpenedPackageSourceByUri(asUri(uri));
+    expect(retainedRecord?.source?.sourceReference).toBe(7);
+    expect(retainedRecord?.sessionId).toBe('session-track');
+
+    clearOpenedPackageUris('sample-service');
+    expect(getOpenedPackageUris('sample-service')).toEqual([]);
+    expect(findOpenedPackageSourceByUri(asUri(uri))).toBeUndefined();
+  });
+
+  it('finds opened package source records by path when the URI string changes', () => {
+    const originalQuery = createEncodedDebugQuery('session-a', '8');
+    const alternateQuery = createEncodedDebugQuery('session-b', '8');
+    const originalUri = createMockUri(
+      `debug:/workspace/node_modules/sample-client/src/index.ts?${originalQuery}`,
+      'debug',
+      '/workspace/node_modules/sample-client/src/index.ts',
+      undefined,
+      originalQuery,
+    );
+    const alternateUri = createMockUri(
+      `debug:/workspace/node_modules/sample-client/src/index.ts?${alternateQuery}`,
+      'debug',
+      originalUri.path,
+      undefined,
+      alternateQuery,
+    );
+
+    trackOpenedPackageUri('sample-service', asUri(originalUri), {
+      name: 'index.ts',
+      path: originalUri.path,
+      sourceReference: 8,
+    });
+
+    const record = findOpenedPackageSourceByUri(asUri(alternateUri));
+
+    expect(record).toEqual(expect.objectContaining({
+      appName: 'sample-service',
+      source: expect.objectContaining({
+        name: 'index.ts',
+        path: originalUri.path,
+      }),
+    }));
+  });
+
+  it('unregisters opened package URIs without disturbing sibling records', () => {
+    const firstQuery = createEncodedDebugQuery('session-one');
+    const secondQuery = createEncodedDebugQuery('session-two');
+    const firstUri = createMockUri(
+      `debug:/workspace/node_modules/sample-client/src/first.ts?${firstQuery}`,
+      'debug',
+      '/workspace/node_modules/sample-client/src/first.ts',
+      undefined,
+      firstQuery,
+    );
+    const secondUri = createMockUri(
+      `debug:/workspace/node_modules/sample-client/src/second.ts?${secondQuery}`,
+      'debug',
+      '/workspace/node_modules/sample-client/src/second.ts',
+      undefined,
+      secondQuery,
+    );
+
+    trackOpenedPackageUri('sample-service', asUri(firstUri));
+    trackOpenedPackageUri('sample-service', asUri(secondUri));
+
+    unregisterOpenedPackageUri('sample-service', asUri(firstUri));
+
+    expect(getOpenedPackageUris('sample-service').map((uri) => uri.path)).toEqual([secondUri.path]);
+
+    unregisterOpenedPackageUri('sample-service', asUri(secondUri));
+    unregisterOpenedPackageUri('sample-api', asUri(secondUri));
+
+    expect(getOpenedPackageUris('sample-service')).toEqual([]);
+  });
+
+  it('extracts debug session ids from raw, encoded, and malformed debug URI queries', () => {
+    const cases: { query?: string; expected: string | null }[] = [
+      { expected: null },
+      { query: '', expected: null },
+      { query: 'session=session-a&ref=7', expected: 'session-a' },
+      { query: createEncodedDebugQuery('session-b', '8'), expected: 'session-b' },
+      { query: 'ref=9&session=session%20c', expected: 'session c' },
+      { query: 'session=session%ZZ', expected: 'session%ZZ' },
+      { query: '%E0%A4%A', expected: null },
+      { query: 'ref-without-value', expected: null },
+    ];
+
+    for (const testCase of cases) {
+      const uri = createMockUri(
+        `debug:/workspace/node_modules/sample-client/src/index.ts?${testCase.query ?? ''}`,
+        'debug',
+        '/workspace/node_modules/sample-client/src/index.ts',
+        undefined,
+        testCase.query,
+      );
+
+      expect(extractSessionIdFromDebugUri(asUri(uri))).toBe(testCase.expected);
     }
   });
 
