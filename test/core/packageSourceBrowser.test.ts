@@ -1,4 +1,5 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -904,109 +905,95 @@ describe('packageSourceBrowser', () => {
     );
   });
 
-  it('materializes missing source-reference package content and opens a file URI', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-materialize-'));
+  it('uses a debug URI for source-reference package content that is missing on disk (mapped folder)', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-mapped-debug-uri-'));
+    const localRoot = join(rootDir, 'apps', 'demo-service');
+    // Source path that would live INSIDE the mapped folder's node_modules, but
+    // pnpm never installs `.ts` source files there. The previous behaviour
+    // would materialize the DAP `source` content onto disk and open it as a
+    // file URI, polluting node_modules and detaching the breakpoint identity
+    // from the runtime's (session, sourceReference) pair.
     const sourcePath = join(
-      rootDir,
+      localRoot,
       'node_modules',
       '.pnpm',
-      'sample-client@1.0.0',
+      '@demo-org+demo-helper@1.0.0',
       'node_modules',
-      'sample-client',
+      '@demo-org',
+      'demo-helper',
       'src',
-      'client.ts',
+      'sample.handler.ts',
     );
-    const sourceContent = 'export function createClient() { return true; }\n';
     const requests: string[] = [];
     const session: MockDebugSession = {
-      id: 'session-materialize',
-      name: 'Debug: sample-service',
+      id: 'session-mapped-debug-uri',
+      name: 'Debug: demo-service',
       customRequest: (command: string, args: unknown): Promise<unknown> => {
         void args;
         requests.push(command);
-        if (command === 'source') return Promise.resolve({ content: sourceContent });
+        if (command === 'source') return Promise.resolve({ content: 'should-not-be-written\n' });
         return Promise.resolve({ sources: [] });
       },
     };
-    vscodeMockState.workspaceFolders = [{ uri: { fsPath: rootDir } }];
+    vscodeMockState.workspaceFolders = [{ uri: { fsPath: localRoot } }];
 
     try {
-      await openPackageSource(asDebugSession(session), {
-        name: 'client.ts',
-        path: sourcePath,
-        sourceReference: 91,
-      });
+      await mkdir(localRoot, { recursive: true });
 
-      await expect(readFile(sourcePath, 'utf8')).resolves.toBe(sourceContent);
-      expect(requests).toEqual(['source']);
-      expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
-      expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scheme: 'file',
+      await openPackageSource(
+        asDebugSession(session),
+        {
+          name: 'sample.handler.ts',
           path: sourcePath,
-        }),
+          sourceReference: 91,
+        },
+        undefined,
+        { localRoot },
+      );
+
+      // The DAP `source` request must NOT be made — no materialization happens.
+      expect(requests).toEqual([]);
+      // File must NOT have been written into node_modules.
+      expect(existsSync(sourcePath)).toBe(false);
+      // The Package browser hands the source to vscode-js-debug's debug URI
+      // builder, identical to the stable "no-src" flow.
+      expect(vscodeMockState.asDebugSourceUri).toHaveBeenCalledTimes(1);
+      expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ scheme: 'debug' }),
       );
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
 
-  it('materializes package content from an ancestor node_modules root outside workspace folders', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-ancestor-'));
-    const localRoot = join(rootDir, 'apps', 'sample-service');
-    const unrelatedWorkspace = join(rootDir, 'workspace-shell');
-    const sourcePath = join(
-      rootDir,
-      'node_modules',
-      '.pnpm',
-      '@sample-org+demo-helper@1.2.3',
-      'node_modules',
-      '@sample-org',
-      'demo-helper',
-      'src',
-      'handler.ts',
-    );
-    const sourceContent = 'export function handleSampleEvent() { return true; }\n';
+  it('uses a debug URI for source-reference package content when localRoot is undefined (no-src flow)', async () => {
     const requests: string[] = [];
     const session: MockDebugSession = {
-      id: 'session-ancestor-materialize',
-      name: 'Debug: sample-service',
+      id: 'session-no-src-debug-uri',
+      name: 'Debug: demo-service',
       customRequest: (command: string, args: unknown): Promise<unknown> => {
         void args;
         requests.push(command);
-        if (command === 'source') return Promise.resolve({ content: sourceContent });
+        if (command === 'source') return Promise.resolve({ content: 'should-not-be-written\n' });
         return Promise.resolve({ sources: [] });
       },
     };
-    vscodeMockState.workspaceFolders = [{ uri: { fsPath: unrelatedWorkspace } }];
 
-    try {
-      await mkdir(localRoot, { recursive: true });
-      await mkdir(unrelatedWorkspace, { recursive: true });
+    await openPackageSource(
+      asDebugSession(session),
+      {
+        name: 'sample.handler.ts',
+        // Remote-container-shaped path that never exists on the dev's disk.
+        path: '/home/vcap/app/node_modules/.pnpm/@demo-org+demo-helper@1.0.0/node_modules/@demo-org/demo-helper/src/sample.handler.ts',
+        sourceReference: 417,
+      },
+    );
 
-      await openPackageSource(
-        asDebugSession(session),
-        {
-          name: 'handler.ts',
-          path: sourcePath,
-          sourceReference: 417,
-        },
-        undefined,
-        { localRoot },
-      );
-
-      await expect(readFile(sourcePath, 'utf8')).resolves.toBe(sourceContent);
-      expect(requests).toEqual(['source']);
-      expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
-      expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scheme: 'file',
-          path: sourcePath,
-        }),
-      );
-    } finally {
-      await rm(rootDir, { recursive: true, force: true });
-    }
+    expect(requests).toEqual([]);
+    expect(vscodeMockState.asDebugSourceUri).toHaveBeenCalledTimes(1);
+    expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ scheme: 'debug' }),
+    );
   });
 
   it('falls back to local file URIs when no sourceReference is available', async () => {

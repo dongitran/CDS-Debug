@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import * as vscode from 'vscode';
 import { logInfo } from './logger';
-import { materializePackageSourceContent } from './packageSourceContent';
 import type {
   LoadedPackageEntry,
   LoadedPackageFile,
@@ -511,11 +510,11 @@ function mergeLoadedSources(batches: readonly LoadedPackageSource[][]): LoadedPa
   return batches.flat();
 }
 
-async function toOpenUri(
+function toOpenUri(
   session: vscode.DebugSession,
   source: LoadedPackageSource,
   options?: { localRoot?: string },
-): Promise<vscode.Uri> {
+): vscode.Uri {
   // Prefer a `file:` URI whenever the source path resolves to a local file on disk,
   // ahead of the `sourceReference > 0` check. Rationale:
   //
@@ -536,19 +535,14 @@ async function toOpenUri(
     if (existsSync(candidate)) return vscode.Uri.file(candidate);
   }
 
-  const materialized = await materializePackageSourceContent(
-    session,
-    source,
-    collectDirectLocalFileCandidates(source),
-    options?.localRoot === undefined ? {} : { localRoot: options.localRoot },
-  );
-  if (materialized !== null) return vscode.Uri.file(materialized);
-
-  // No candidate exists on disk. Fall back to the debug-source URI for sources that
-  // vscode-js-debug serves via embedded `sourcesContent` (common for `.ts` files whose
-  // source-map-embedded path differs from the actual installed pnpm hash, e.g. when
-  // the package was built against one peer-dep resolution but installed against
-  // another).
+  // No candidate exists on disk. Source-mapped `.ts` files served via the debug
+  // adapter's `sourcesContent` are intentionally NOT written into the mapped
+  // folder's `node_modules` — pnpm only installs compiled `.js`, so doing so
+  // would (1) pollute a directory the user did not install and (2) detach the
+  // breakpoint's URI from the `(session, sourceReference)` pair the runtime
+  // uses to verify, which has been observed to make breakpoints flicker
+  // bound/unbound. Falling through to `asDebugSourceUri` matches the stable
+  // "no-src" flow and gives one canonical `debug:` URI per source reference.
   if (typeof source.sourceReference === 'number' && source.sourceReference > 0) {
     return vscode.debug.asDebugSourceUri(source, session);
   }
@@ -561,11 +555,6 @@ async function toOpenUri(
   const direct = toReadableLocalSourcePath(source);
   if (direct !== null) return vscode.Uri.file(direct);
   return vscode.Uri.file(source.path);
-}
-
-function collectDirectLocalFileCandidates(source: LoadedPackageSource): string[] {
-  const direct = toReadableLocalSourcePath(source);
-  return direct === null ? [] : [direct];
 }
 
 function collectLocalFileCandidates(
@@ -938,7 +927,7 @@ export async function openPackageSource(
   location?: PackageSourceLocation,
   options?: { localRoot?: string; appName?: string },
 ): Promise<vscode.Uri> {
-  const uri = await toOpenUri(session, source, options);
+  const uri = toOpenUri(session, source, options);
   logInfo(
     `[PackageBrowser] open scheme=${uri.scheme} path=${uri.path} fsPath=${uri.fsPath} query=${uri.query || '<none>'} sourceRef=${(source.sourceReference ?? 0).toString()} session=${session.id} toString=${uri.toString()}`,
   );

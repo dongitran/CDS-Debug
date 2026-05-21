@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.5-pre.1] — 2026
+
+### Fixes
+
+- **Mapped folder Package Browser no longer writes `.ts` source content into `node_modules`** — Opening a package source from the Package Browser while a local folder is mapped used to materialize the debug adapter's `sourcesContent` into the mapped folder's `node_modules/.pnpm/.../src/<file>.ts`. Pnpm never installs those `.ts` paths, so the side-effect file created a `file:` URI whose identity is detached from the runtime's `(session, sourceReference)` pair — observed as breakpoints flickering between bound and unbound, sometimes not rendering at all. The Package Browser now reuses the same `debug:` URI fallback as the stable "no-src" flow (when the local file is genuinely missing on disk), so breakpoint binding behaves identically with or without a mapped folder, and no file is ever written into `node_modules`. The `packageSourceContent.ts` module is removed along with its tests.
+
 ## [0.4.5-pre.0] — 2026
 
 ### Reverts
