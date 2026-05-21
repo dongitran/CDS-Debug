@@ -1239,4 +1239,106 @@ describe('packageSourceBrowser', () => {
 
     await expect(loadPackageEntries(asDebugSession(session))).rejects.toThrow(/loaded sources/i);
   });
+
+  it('collapses leading double-slash on parsed loadedSources paths', async () => {
+    const session: MockDebugSession = {
+      id: 'session-double-slash-parse',
+      name: 'Debug: sample-service',
+      customRequest: (command: string): Promise<unknown> => {
+        if (command === 'loadedSources') {
+          return Promise.resolve({
+            sources: [
+              {
+                name: 'handler.ts',
+                path: '//sample-app/node_modules/.pnpm/@sample-org+demo-helper@1.2.3/node_modules/@sample-org/demo-helper/src/handler.ts',
+                sourceReference: 595000973,
+              },
+            ],
+          });
+        }
+        return Promise.resolve({ sources: [] });
+      },
+    };
+
+    const entries = await loadPackageEntries(asDebugSession(session));
+    expect(entries).toHaveLength(1);
+    const file = entries[0]?.files[0];
+    expect(file?.source.path).toBe(
+      '/sample-app/node_modules/.pnpm/@sample-org+demo-helper@1.2.3/node_modules/@sample-org/demo-helper/src/handler.ts',
+    );
+  });
+
+  it('opens source-mapped TypeScript paths that start with double slash without throwing UriError', async () => {
+    const session: MockDebugSession = {
+      id: 'session-double-slash-open',
+      name: 'Debug: sample-service',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+    const rawPath = '//sample-app/node_modules/.pnpm/@sample-org+demo-helper@1.2.3/node_modules/@sample-org/demo-helper/src/function/handler.ts';
+
+    await openPackageSource(asDebugSession(session), {
+      name: 'handler.ts',
+      path: rawPath,
+      sourceReference: 595000973,
+    });
+
+    expect(vscodeMockState.asDebugSourceUri).toHaveBeenCalledTimes(1);
+    const passedSource = vscodeMockState.asDebugSourceUri.mock.calls[0]?.[0] as { path?: string } | undefined;
+    expect(passedSource?.path?.startsWith('//')).toBe(false);
+    expect(passedSource?.path).toBe(rawPath.replace(/^\/+/u, '/'));
+    expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ scheme: 'debug' }),
+    );
+  });
+
+  it('materializes cross-app pnpm sources into the extension-scoped cache when localRoot cannot host them', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-cache-fallback-'));
+    const localRoot = join(rootDir, 'apps', 'sample-service-bom');
+    const packageCacheRoot = join(rootDir, '.cache', 'packageSources');
+    const sourceContent = 'export function onPremiseHelper() { return true; }\n';
+    const requests: string[] = [];
+    const session: MockDebugSession = {
+      id: 'session-cross-app-cache',
+      name: 'Debug: sample-service-bom',
+      customRequest: (command: string, args: unknown): Promise<unknown> => {
+        void args;
+        requests.push(command);
+        if (command === 'source') return Promise.resolve({ content: sourceContent });
+        return Promise.resolve({ sources: [] });
+      },
+    };
+    vscodeMockState.workspaceFolders = [{ uri: { fsPath: localRoot } }];
+
+    try {
+      await mkdir(localRoot, { recursive: true });
+
+      await openPackageSource(
+        asDebugSession(session),
+        {
+          name: 'handler.ts',
+          path: '/sample-app-process/node_modules/.pnpm/@sample-org+demo-helper@1.2.3/node_modules/@sample-org/demo-helper/src/function/handler.ts',
+          sourceReference: 595000973,
+        },
+        undefined,
+        { localRoot, packageCacheRoot },
+      );
+
+      const expectedTarget = join(
+        packageCacheRoot,
+        '@sample-org',
+        'demo-helper',
+        'src',
+        'function',
+        'handler.ts',
+      );
+      await expect(readFile(expectedTarget, 'utf8')).resolves.toBe(sourceContent);
+      expect(requests).toEqual(['source']);
+      expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
+      expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ scheme: 'file', path: expectedTarget }),
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });

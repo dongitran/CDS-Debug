@@ -120,6 +120,10 @@ vi.mock('../../src/core/packageSourceBrowser', () => ({
     return undefined;
   },
   trackOpenedPackageUri: vi.fn(),
+  collapseLeadingPosixSlashes: (path: string): string => {
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(path)) return path;
+    return path.replace(/^\/{2,}/u, '/');
+  },
 }));
 
 vi.mock('vscode', () => ({
@@ -272,6 +276,44 @@ describe('packageBreakpointMirror', () => {
     });
     expect(vscodeMockState.addBreakpoints).not.toHaveBeenCalled();
     expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
+  });
+
+  it('matches loadedSources that report the same path with a doubled leading slash', async () => {
+    const appName = 'sample-service';
+    const debugPath = '/sample-app/node_modules/.pnpm/@sample-org+demo-helper@1.2.3/node_modules/@sample-org/demo-helper/src/handler.ts';
+    const debugUri = createUri('debug', debugPath, 'session=remote&ref=42');
+    const breakpoint = createBreakpoint(debugUri);
+    // Worker session reports the same source map path but with the doubled leading
+    // slash that vscode-js-debug forwards from sourceRoot-joined sourcemaps.
+    const session = createVerifyingSession('worker-1', {
+      path: `/${debugPath}`,
+      sourceReference: 4242,
+    });
+    vscodeMockState.breakpoints = [breakpoint];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [session]);
+    packageSourceBrowserMockState.records.set(debugUri.toString(), {
+      appName,
+      uri: debugUri,
+      source: {
+        name: 'handler.ts',
+        path: debugPath,
+        sourceReference: 42,
+      },
+      sessionId: 'remote',
+      sessionName: 'Remote Process',
+    });
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [breakpoint], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(session.customRequest).toHaveBeenCalledWith(
+        'setBreakpoints',
+        expect.objectContaining({
+          source: expect.objectContaining({ sourceReference: 4242 }),
+        }),
+      );
+    });
   });
 
   it('does not promote path-only package breakpoints when the debugger source path is already a URI', async () => {

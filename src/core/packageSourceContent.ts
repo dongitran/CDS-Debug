@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import * as vscode from 'vscode';
 import { logInfo, logWarn } from './logger';
 import type { LoadedPackageSource } from '../types/index';
@@ -10,7 +10,16 @@ interface DapSourceResponse {
 
 interface MaterializationOptions {
   localRoot?: string;
+  // Extension-scoped fallback when no local candidate is safe (e.g. cross-app
+  // pnpm-hoisted packages whose source path prefix points at a different CF app
+  // container than the user's workspace localRoot). Materializing under the
+  // extension's globalStorage keeps the file URI stable across debug sessions
+  // and avoids polluting any workspace tree.
+  packageCacheRoot?: string;
 }
+
+const LEADING_SLASHES_PATTERN = /^\/{2,}/u;
+const UNSAFE_FILENAME_CHARS_PATTERN = /[<>:"|?*]/gu;
 
 export async function materializePackageSourceContent(
   session: vscode.DebugSession,
@@ -19,7 +28,7 @@ export async function materializePackageSourceContent(
   options: MaterializationOptions = {},
 ): Promise<string | null> {
   if (typeof source.sourceReference !== 'number' || source.sourceReference <= 0) return null;
-  const targetPath = selectMaterializationTarget(source, candidatePaths, options.localRoot);
+  const targetPath = selectMaterializationTarget(source, candidatePaths, options.localRoot, options.packageCacheRoot);
   if (targetPath === null) return null;
 
   try {
@@ -39,11 +48,47 @@ function selectMaterializationTarget(
   source: LoadedPackageSource,
   candidatePaths: readonly string[],
   localRoot: string | undefined,
+  packageCacheRoot: string | undefined,
 ): string | null {
   const candidates = collectMaterializationCandidates(source, candidatePaths);
   const target = candidates.find((candidate) => isSafePackageMaterializationPath(candidate, localRoot)) ?? null;
-  if (target === null) logSkippedMaterialization(source, candidates, localRoot);
-  return target;
+  if (target !== null) return target;
+  const cacheTarget = buildPackageCacheTarget(source, packageCacheRoot);
+  if (cacheTarget !== null) {
+    logInfo(`[PackageSource] using extension cache fallback path=${cacheTarget}`);
+    return cacheTarget;
+  }
+  logSkippedMaterialization(source, candidates, localRoot);
+  return null;
+}
+
+// When the remote source path's package root sits outside any local workspace or
+// localRoot ancestor (e.g. pnpm-hoisted package whose path prefix names a
+// different CF app container), there is no safe filesystem destination tied to
+// the user's project. Falling back to a stable extension-scoped cache lets us
+// materialize the source content into a real `file:` URI so the user can read
+// the `.ts` source, set breakpoints, and avoid the `debug:` URI path entirely.
+function buildPackageCacheTarget(
+  source: LoadedPackageSource,
+  packageCacheRoot: string | undefined,
+): string | null {
+  if (packageCacheRoot === undefined) return null;
+  if (!source.path) return null;
+  const normalized = source.path
+    .replaceAll('\\', '/')
+    .replace(LEADING_SLASHES_PATTERN, '/');
+  if (!normalized.includes('/node_modules/')) return null;
+  const marker = '/node_modules/';
+  const lastMarkerIndex = normalized.lastIndexOf(marker);
+  if (lastMarkerIndex === -1) return null;
+  const packagePath = normalized.slice(lastMarkerIndex + marker.length);
+  if (!packagePath || packagePath.startsWith('.bin/')) return null;
+  const safeSegments = packagePath
+    .split('/')
+    .map((segment) => segment.replace(UNSAFE_FILENAME_CHARS_PATTERN, '_'))
+    .filter((segment) => segment.length > 0);
+  if (safeSegments.length === 0) return null;
+  return join(packageCacheRoot, ...safeSegments);
 }
 
 function collectMaterializationCandidates(
@@ -65,7 +110,7 @@ function toLocalSourcePath(source: LoadedPackageSource): string | null {
   if (!source.path) return null;
   if (source.path.startsWith('file://')) return decodeURIComponent(source.path.slice('file://'.length));
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(source.path)) return null;
-  return source.path;
+  return source.path.replace(LEADING_SLASHES_PATTERN, '/');
 }
 
 function isSafePackageMaterializationPath(filePath: string, localRoot: string | undefined): boolean {

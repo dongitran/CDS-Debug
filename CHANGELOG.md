@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1-pre.1] — 2026
+
+### Fixes
+
+- **Package Browser opens source-mapped `.ts` files without UriError** — Remote `.ts` sources whose path arrives with a doubled leading slash (sourcemap `sourceRoot: "/"` joined with absolute `sources[i]`) are now canonicalized before reaching `asDebugSourceUri`, so VS Code no longer rejects the `debug:` URI with `If a URI does not contain an authority component, then the path cannot begin with two slash characters ("//")`.
+- **Cross-app pnpm package sources are materializable** — When a package's path prefix names a different CF app container than the user's workspace (typical for pnpm-hoisted helpers), CDS Debug now writes the fetched source content into an extension-scoped cache under `globalStorage/packageSources/<package>/...` and opens it as a real `file:` URI instead of falling back to a debug-only view.
+- **Breakpoint mirror bridges `/` and `//` path variants** — The lookup that maps a tracked package source to each session's own `sourceReference` now compares paths after collapsing leading slashes, so a breakpoint set on the `.ts` source binds across all worker sessions even when one session reports the path with a single slash and another reports it with two.
+
 ## [0.4.1-pre.0] — 2026
 
 ### Fixes

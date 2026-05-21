@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { getDebugSessionsForApp } from './debugSessionRegistry';
 import { logInfo, logWarn } from './logger';
 import {
+  collapseLeadingPosixSlashes,
   findOpenedPackageSourceByUri,
   trackOpenedPackageUri,
   type OpenedPackageSourceRecord,
@@ -230,7 +231,8 @@ function breakpointMatchesSource(
   if (breakpoint.location.uri.toString() === source.uri.toString()) return true;
   const record = findOpenedPackageSourceByUri(breakpoint.location.uri);
   if (record?.appName !== source.appName) return false;
-  return (record.source?.path ?? breakpoint.location.uri.path) === source.sourcePath;
+  const candidatePath = record.source?.path ?? breakpoint.location.uri.path;
+  return collapseLeadingPosixSlashes(candidatePath) === collapseLeadingPosixSlashes(source.sourcePath);
 }
 
 function hasVerifiedBreakpoint(response: DapSetBreakpointsResponse | undefined): boolean {
@@ -315,7 +317,10 @@ function buildVerifiedDebugUri(source: AffectedPackageSource, target: MirrorTarg
 }
 
 function toLoadedPackageSource(source: AffectedPackageSource, target: MirrorTargetResult): LoadedPackageSource {
-  const loadedSource: LoadedPackageSource = { path: source.sourcePath };
+  // Collapse leading `//` so `asDebugSourceUri` can build a valid `debug:` URI.
+  // Sourcemap-joined paths from vscode-js-debug commonly arrive here with two
+  // leading slashes; the URI builder would otherwise throw UriError.
+  const loadedSource: LoadedPackageSource = { path: collapseLeadingPosixSlashes(source.sourcePath) };
   if (source.sourceName !== undefined) loadedSource.name = source.sourceName;
   if (target.descriptor.sourceReference !== undefined) {
     loadedSource.sourceReference = target.descriptor.sourceReference;
@@ -366,8 +371,14 @@ async function lookupSourceReferenceForPath(
     );
     const sources = response?.sources;
     if (!Array.isArray(sources)) return null;
+    // Compare paths after collapsing leading slashes on both sides. vscode-js-debug
+    // can hand back `/x` for one session's loaded source and `//x` for another
+    // (sourcemap-joined form), and breakpoint mirroring needs both forms to map
+    // to the same logical file.
+    const normalizedPath = collapseLeadingPosixSlashes(path);
     for (const source of sources) {
-      if (typeof source.path !== 'string' || source.path !== path) continue;
+      if (typeof source.path !== 'string') continue;
+      if (collapseLeadingPosixSlashes(source.path) !== normalizedPath) continue;
       const ref = typeof source.sourceReference === 'number' ? source.sourceReference : 0;
       // Return 0 explicitly when the source exists but is path-only — the caller still
       // wants to send the clear with `path` alone.
