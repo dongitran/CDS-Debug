@@ -1240,7 +1240,7 @@ describe('packageSourceBrowser', () => {
     await expect(loadPackageEntries(asDebugSession(session))).rejects.toThrow(/loaded sources/i);
   });
 
-  it('collapses leading double-slash on parsed loadedSources paths', async () => {
+  it('parses package entries from sourcemap-joined paths with a doubled leading slash', async () => {
     const session: MockDebugSession = {
       id: 'session-double-slash-parse',
       name: 'Debug: sample-service',
@@ -1262,10 +1262,11 @@ describe('packageSourceBrowser', () => {
 
     const entries = await loadPackageEntries(asDebugSession(session));
     expect(entries).toHaveLength(1);
-    const file = entries[0]?.files[0];
-    expect(file?.source.path).toBe(
-      '/sample-app/node_modules/.pnpm/@sample-org+demo-helper@1.2.3/node_modules/@sample-org/demo-helper/src/handler.ts',
-    );
+    expect(entries[0]?.name).toBe('@sample-org/demo-helper');
+    expect(entries[0]?.files[0]?.relativePath).toBe('src/handler.ts');
+    // The `//` prefix is preserved verbatim on `source.path` so the cache
+    // fallback can detect sourcemap-joined sources downstream.
+    expect(entries[0]?.files[0]?.source.path?.startsWith('//')).toBe(true);
   });
 
   it('opens source-mapped TypeScript paths that start with double slash without throwing UriError', async () => {
@@ -1291,9 +1292,9 @@ describe('packageSourceBrowser', () => {
     );
   });
 
-  it('materializes cross-app pnpm sources into the extension-scoped cache when localRoot cannot host them', async () => {
+  it('materializes cross-app sourcemap-joined sources into the extension-scoped cache', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-cache-fallback-'));
-    const localRoot = join(rootDir, 'apps', 'sample-service-bom');
+    const unrelatedWorkspace = join(rootDir, 'workspace-shell');
     const packageCacheRoot = join(rootDir, '.cache', 'packageSources');
     const sourceContent = 'export function onPremiseHelper() { return true; }\n';
     const requests: string[] = [];
@@ -1307,20 +1308,24 @@ describe('packageSourceBrowser', () => {
         return Promise.resolve({ sources: [] });
       },
     };
-    vscodeMockState.workspaceFolders = [{ uri: { fsPath: localRoot } }];
+    // Workspace folder is unrelated to the remote path so the local candidate
+    // fails the workspace-safety check and the cache fallback is the only
+    // viable materialization target.
+    vscodeMockState.workspaceFolders = [{ uri: { fsPath: unrelatedWorkspace } }];
 
     try {
-      await mkdir(localRoot, { recursive: true });
+      await mkdir(unrelatedWorkspace, { recursive: true });
 
       await openPackageSource(
         asDebugSession(session),
         {
           name: 'handler.ts',
-          path: '/sample-app-process/node_modules/.pnpm/@sample-org+demo-helper@1.2.3/node_modules/@sample-org/demo-helper/src/function/handler.ts',
+          // Sourcemap-joined path (leading `//`) triggers the extension cache.
+          path: '//sample-app-process/node_modules/.pnpm/@sample-org+demo-helper@1.2.3/node_modules/@sample-org/demo-helper/src/function/handler.ts',
           sourceReference: 595000973,
         },
         undefined,
-        { localRoot, packageCacheRoot },
+        { packageCacheRoot },
       );
 
       const expectedTarget = join(
@@ -1339,6 +1344,38 @@ describe('packageSourceBrowser', () => {
       );
     } finally {
       await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps single-slash sources on the debug: URI fallback (no cache for runtime scripts)', async () => {
+    const session: MockDebugSession = {
+      id: 'session-single-slash-no-cache',
+      name: 'Debug: sample-service',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+    const packageCacheRoot = await mkdtemp(join(tmpdir(), 'cds-debug-no-cache-'));
+
+    try {
+      await openPackageSource(
+        asDebugSession(session),
+        {
+          name: 'handler.js',
+          // Single leading slash — runtime-real path; preserve the existing
+          // debug: URI flow so the Package browser tab matches the runtime
+          // pause tab on `uri.path` for TabDedupe.
+          path: '/sample-app/node_modules/.pnpm/@sample-org+demo-helper@1.2.3/node_modules/@sample-org/demo-helper/dist/function/handler.js',
+          sourceReference: 1700107079,
+        },
+        undefined,
+        { packageCacheRoot },
+      );
+
+      expect(vscodeMockState.asDebugSourceUri).toHaveBeenCalledTimes(1);
+      expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ scheme: 'debug' }),
+      );
+    } finally {
+      await rm(packageCacheRoot, { recursive: true, force: true });
     }
   });
 });

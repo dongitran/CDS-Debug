@@ -62,21 +62,28 @@ function selectMaterializationTarget(
   return null;
 }
 
-// When the remote source path's package root sits outside any local workspace or
+// When the remote source path is a sourcemap-joined `.ts`/`.tsx`/etc. with a
+// leading `//` and the package root sits outside any local workspace or
 // localRoot ancestor (e.g. pnpm-hoisted package whose path prefix names a
 // different CF app container), there is no safe filesystem destination tied to
 // the user's project. Falling back to a stable extension-scoped cache lets us
 // materialize the source content into a real `file:` URI so the user can read
-// the `.ts` source, set breakpoints, and avoid the `debug:` URI path entirely.
+// the source, set breakpoints, and avoid the `debug:` URI path entirely.
+//
+// The `//` prefix is the discriminator. Runtime `.js` scripts arrive with a
+// single leading slash and have a working `debug:` URI path under
+// `asDebugSourceUri`; caching them would split the runtime-pause tab from the
+// Package browser tab because `findAppForOpenedPath` matches on `uri.path`,
+// which differs between the cache file path and the debug URI's remote path.
 function buildPackageCacheTarget(
   source: LoadedPackageSource,
   packageCacheRoot: string | undefined,
 ): string | null {
   if (packageCacheRoot === undefined) return null;
   if (!source.path) return null;
-  const normalized = source.path
-    .replaceAll('\\', '/')
-    .replace(LEADING_SLASHES_PATTERN, '/');
+  const slashed = source.path.replaceAll('\\', '/');
+  if (!LEADING_SLASHES_PATTERN.test(slashed)) return null;
+  const normalized = slashed.replace(LEADING_SLASHES_PATTERN, '/');
   if (!normalized.includes('/node_modules/')) return null;
   const marker = '/node_modules/';
   const lastMarkerIndex = normalized.lastIndexOf(marker);

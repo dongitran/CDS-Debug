@@ -156,7 +156,11 @@ function toLoadedPackageSource(value: unknown): LoadedPackageSource | null {
   if (!isRecord(value)) return null;
   const source: LoadedPackageSource = {};
   if (typeof value.name === 'string') source.name = value.name;
-  if (typeof value.path === 'string') source.path = collapseLeadingPosixSlashes(value.path);
+  // Preserve the original `//`-prefix verbatim: it acts as the sourcemap-joined
+  // marker that gates the extension cache fallback (only sources whose remote
+  // path has no on-disk runtime equivalent should be cached as `file:` URIs).
+  // Downstream consumers that need a normalized form re-run normalizeSourcePath.
+  if (typeof value.path === 'string') source.path = value.path;
   if (typeof value.sourceReference === 'number') source.sourceReference = value.sourceReference;
   if (typeof value.origin === 'string') source.origin = value.origin;
   if (typeof value.presentationHint === 'string') source.presentationHint = value.presentationHint;
