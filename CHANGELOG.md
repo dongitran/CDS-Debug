@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.7-pre.0] — 2026
+
+### Reverts
+
+- **Hard-reset code to the v0.4.1-pre.0 baseline** — Subsequent fix attempts (`9cbe750`, `f02ba3f`, `7907a62`, `b447ac5`) layered on top of the 0.4.1-pre.0 baseline introduced regressions in breakpoint binding for mapped folders. They are preserved on the `attempt/materialize-removal` branch for future re-investigation, while `master` rolls back to the last known-good package handling code (commit `c535d8c`). Only the version is bumped on top of the rolled-back tree to keep the pre-release version monotonically increasing past the previously published `0.4.4`.
+
 ## [0.4.1-pre.0] — 2026
 
 ### Fixes
