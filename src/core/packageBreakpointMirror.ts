@@ -245,7 +245,7 @@ function promoteBreakpointToVerifiedUri(
 ): void {
   const target = findPromotionTarget(source, results);
   if (target === null) return;
-  const targetUri = buildVerifiedDebugUri(source, target);
+  const targetUri = buildVerifiedSourceUri(source, target);
   if (targetUri.toString() === source.uri.toString()) {
     refreshVerifiedBreakpointsOnSameUri(source, targetUri);
     return;
@@ -298,7 +298,7 @@ function findPromotionTarget(
     return referenced;
   }
   if (referenced !== null) return referenced;
-  if (isUriLikeSourcePath(source.sourcePath)) return null;
+  if (isUriLikeSourcePath(source.sourcePath)) return verified.at(-1) ?? null;
   return verified.at(-1) ?? null;
 }
 
@@ -310,7 +310,10 @@ function isUriLikeSourcePath(path: string): boolean {
   return SOURCE_URI_PATTERN.test(path);
 }
 
-function buildVerifiedDebugUri(source: AffectedPackageSource, target: MirrorTargetResult): vscode.Uri {
+function buildVerifiedSourceUri(source: AffectedPackageSource, target: MirrorTargetResult): vscode.Uri {
+  if ((target.descriptor.sourceReference ?? 0) <= 0 && isUriLikeSourcePath(source.sourcePath)) {
+    return vscode.Uri.parse(source.sourcePath);
+  }
   return vscode.debug.asDebugSourceUri(toLoadedPackageSource(source, target), target.session);
 }
 

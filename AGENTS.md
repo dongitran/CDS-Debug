@@ -195,6 +195,7 @@ pnpm test:report          # Open HTML report
 12. User can search package file contents when the debugger reports a remote package path.
 13. User can open mapped package content from an attached source-mapped session.
 14. Debug session package regex filtering still applies before content search results are shown.
+15. User can open a URI-reported package file from a no-src attached session.
 
 ## Debug Cleanup Workflow
 

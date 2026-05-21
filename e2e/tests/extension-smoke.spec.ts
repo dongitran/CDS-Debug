@@ -1431,6 +1431,12 @@ function createFixtureSourcePath(
   version = '1.0.0',
   rootDir = '/workspace',
 ): string {
+  if (rootDir.includes('://')) {
+    const suffix = packageName.startsWith('@')
+      ? ['node_modules', '.pnpm', `${packageName.replace('/', '+')}@${version}`, 'node_modules', packageName, relativePath]
+      : ['node_modules', packageName, relativePath];
+    return [rootDir.replace(/\/+$/u, ''), ...suffix].join('/');
+  }
   if (packageName.startsWith('@')) {
     const encoded = packageName.replace('/', '+');
     return join(rootDir, 'node_modules', '.pnpm', `${encoded}@${version}`, 'node_modules', packageName, relativePath);
@@ -3994,6 +4000,56 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
           await webview.locator('.packages-tree-file-row', { hasText: 'main.js' }).click();
           await expectEditorCursorPosition(workbenchPage, 1, 17);
           await captureStepEvidence(workbenchPage, 'packages-search-remote-content-opened');
+
+          const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+          expect(packageErrorEvents).toEqual([]);
+          await clearPackageFixtures(webview);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
+    });
+
+    test('User can open a URI-reported package file from a no-src attached session', async () => {
+      const workspaceDir = await createTempDirectory('cds-debug-e2e-package-uri-content-');
+
+      try {
+        const contentFixture = await createPackageFixtureInWorkspace(workspaceDir, {
+          name: '@sample-org/demo-kit',
+          version: '1.4.0',
+          files: [{
+            relativePath: 'src/handler.ts',
+            content: 'export function createUriReportedPackageHandler() { return true; }\n',
+          }],
+        }, {
+          reportedRootDir: `vscode-remote://sample-host${workspaceDir}`,
+        });
+
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await waitForObservation();
+
+          await emitDebugConnecting(webview, {
+            appNames: ['mock-service-a'],
+            ports: { 'mock-service-a': 20000 },
+            unmappedApps: ['mock-service-a'],
+          });
+          await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+          await setPackageFixture(webview, 'mock-service-a', [contentFixture], { localRoot: workspaceDir });
+          await startPackagesErrorMonitor(webview);
+
+          const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
+          await expect(activeCard.locator('.active-card-no-src')).toBeVisible({ timeout: 3_000 });
+          await activeCard.locator('.active-packages-btn').click();
+          await expect(webview.locator('#packages-app-select')).toBeVisible();
+          await webview.locator('#packages-search-input').fill('createUriReportedPackageHandler');
+          await expect(webview.locator('.packages-tree-file-row', { hasText: 'handler.ts' })).toBeVisible({ timeout: 5_000 });
+          await captureStepEvidence(workbenchPage, 'packages-uri-reported-no-src-match');
+
+          await webview.locator('.packages-tree-file-row', { hasText: 'handler.ts' }).click();
+          await expectEditorCursorPosition(workbenchPage, 1, 17);
+          await captureStepEvidence(workbenchPage, 'packages-uri-reported-no-src-opened');
 
           const packageErrorEvents = await stopPackagesErrorMonitor(webview);
           expect(packageErrorEvents).toEqual([]);

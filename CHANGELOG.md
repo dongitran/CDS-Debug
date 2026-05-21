@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.7-pre.1] — 2026
+
+### Fixes
+
+- **Stabilizes no-src Package Browser breakpoints on WSL-style paths** — When a Package Browser file opens through a local `file:` fallback but the debugger reports the same package source as `vscode-remote://...`, breakpoint mirroring now promotes the visible breakpoint to that parsed remote URI after the adapter verifies it. This keeps the editor breakpoint identity aligned with the debugger source path without reintroducing the previous double-encoded `debug:` URI issue.
+- **Clears high-severity dev dependency audit findings** — Pins transitive `fast-uri` resolution to the patched `3.1.2` release used under the VSIX packaging toolchain.
+
 ## [0.4.7-pre.0] — 2026
 
 ### Reverts

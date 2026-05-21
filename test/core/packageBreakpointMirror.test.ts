@@ -124,6 +124,18 @@ vi.mock('../../src/core/packageSourceBrowser', () => ({
 
 vi.mock('vscode', () => ({
   SourceBreakpoint: MockSourceBreakpoint,
+  Uri: {
+    parse: (value: string): MockUri => {
+      const parsed = new URL(value);
+      return new vscodeMockState.Uri(
+        value,
+        parsed.protocol.slice(0, -1),
+        decodeURIComponent(parsed.pathname),
+        decodeURIComponent(parsed.pathname),
+        parsed.search.slice(1),
+      );
+    },
+  },
   Location: vscodeMockState.Location,
   debug: {
     get breakpoints(): unknown[] {
@@ -274,7 +286,7 @@ describe('packageBreakpointMirror', () => {
     expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
   });
 
-  it('does not promote path-only package breakpoints when the debugger source path is already a URI', async () => {
+  it('promotes file breakpoints to URI-like debugger source paths without double-encoding them', async () => {
     const appName = 'sample-service';
     const fileUri = createUri('file', '/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.ts');
     const sourcePath = 'vscode-remote://sample-host/home/sample/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.ts';
@@ -301,8 +313,16 @@ describe('packageBreakpointMirror', () => {
       expect(session.customRequest).toHaveBeenCalledWith('setBreakpoints', expect.any(Object));
     });
     expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
-    expect(vscodeMockState.addBreakpoints).not.toHaveBeenCalled();
-    expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
-    expect(vscodeMockState.showTextDocument).not.toHaveBeenCalled();
+    expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
+    const replacements = vscodeMockState.addBreakpoints.mock.calls[0]?.[0] as unknown[];
+    const replacement = replacements[0] as InstanceType<typeof MockSourceBreakpoint> | undefined;
+    expect(replacement?.location.uri.toString()).toBe(sourcePath);
+    expect(replacement?.location.uri.scheme).toBe('vscode-remote');
+    expect(replacement?.location.range).toEqual(breakpoint.location.range);
+    expect(vscodeMockState.removeBreakpoints).toHaveBeenCalledWith([breakpoint]);
+    expect(vscodeMockState.showTextDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ scheme: 'vscode-remote' }),
+      expect.objectContaining({ preview: false, preserveFocus: false }),
+    );
   });
 });
