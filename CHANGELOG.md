@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.7-pre.6] — 2026
+
+### Reverts
+
+- **Reverts the Package Browser breakpoint refresh optimization from `0.4.7-pre.3`** — Restores the previous full-file refresh and all-session mirror completion behavior after real no-src package debugging showed the narrower refresh path was not stable enough. The WSL file-URI anchoring fix remains in place.
+
 ## [0.4.7-pre.5] — 2026
 
 ### Tests

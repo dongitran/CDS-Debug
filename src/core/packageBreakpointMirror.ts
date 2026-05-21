@@ -59,7 +59,6 @@ interface AffectedPackageSource {
   appName: string;
   uri: vscode.Uri;
   sourcePath: string;
-  refreshBreakpointKeys: Set<string>;
   sourceName?: string;
   sourceReference?: number;
   sourceSessionId?: string;
@@ -116,32 +115,18 @@ async function handleBreakpointChange(event: vscode.BreakpointsChangeEvent): Pro
 
 function collectAffectedPackageSources(event: vscode.BreakpointsChangeEvent): Map<string, AffectedPackageSource> {
   const result = new Map<string, AffectedPackageSource>();
-  event.added.forEach((bp) => {
-    addAffectedBreakpoint(result, bp, true);
-  });
-  event.changed.forEach((bp) => {
-    addAffectedBreakpoint(result, bp, true);
-  });
-  event.removed.forEach((bp) => {
-    addAffectedBreakpoint(result, bp, false);
-  });
+  const consider = (bp: vscode.Breakpoint): void => {
+    if (!(bp instanceof vscode.SourceBreakpoint)) return;
+    const uri = bp.location.uri;
+    if (migrationGuardUris.has(uri.toString())) return;
+    const source = toAffectedPackageSource(uri);
+    if (source === undefined) return;
+    result.set(`${source.appName}::${source.sourcePath}::${source.uri.toString()}`, source);
+  };
+  event.added.forEach(consider);
+  event.removed.forEach(consider);
+  event.changed.forEach(consider);
   return result;
-}
-
-function addAffectedBreakpoint(
-  result: Map<string, AffectedPackageSource>,
-  breakpoint: vscode.Breakpoint,
-  shouldRefresh: boolean,
-): void {
-  if (!(breakpoint instanceof vscode.SourceBreakpoint)) return;
-  const uri = breakpoint.location.uri;
-  if (migrationGuardUris.has(uri.toString())) return;
-  const source = toAffectedPackageSource(uri);
-  if (source === undefined) return;
-  const key = `${source.appName}::${source.sourcePath}::${source.uri.toString()}`;
-  const affected = result.get(key) ?? source;
-  if (shouldRefresh) affected.refreshBreakpointKeys.add(toBreakpointRefreshKey(breakpoint));
-  result.set(key, affected);
 }
 
 function toAffectedPackageSource(uri: vscode.Uri): AffectedPackageSource | undefined {
@@ -160,7 +145,6 @@ function buildAffectedPackageSource(
   const affected: AffectedPackageSource = {
     appName: record.appName,
     uri,
-    refreshBreakpointKeys: new Set<string>(),
     sourcePath,
   };
   if (record.source?.name !== undefined) affected.sourceName = record.source.name;
@@ -174,16 +158,9 @@ async function mirrorBreakpointsForSource(source: AffectedPackageSource): Promis
   if (sessions.length === 0) return;
 
   const desired = collectDesiredBreakpoints(source);
-  const promotionState = { promoted: false };
-  const results = await Promise.all(sessions.map(async (session) => {
-    const result = await mirrorBreakpointsToSession(session, source, desired);
-    if (!promotionState.promoted && result?.verified === true && isImmediateRefreshTarget(source, result)) {
-      promotionState.promoted = true;
-      promoteBreakpointToVerifiedUri(source, [result]);
-    }
-    return result;
-  }));
-  if (!promotionState.promoted) promoteBreakpointToVerifiedUri(source, results);
+  const results = await Promise.all(sessions.map((session) =>
+    mirrorBreakpointsToSession(session, source, desired)));
+  promoteBreakpointToVerifiedUri(source, results);
 }
 
 async function mirrorBreakpointsToSession(
@@ -191,7 +168,7 @@ async function mirrorBreakpointsToSession(
   source: AffectedPackageSource,
   desired: DapSourceBreakpoint[],
 ): Promise<MirrorTargetResult | null> {
-  const sourceRef = await resolveSourceReferenceForSession(session, source);
+  const sourceRef = await lookupSourceReferenceForPath(session, source.sourcePath);
   const descriptor = buildSourceDescriptor(session, source, sourceRef);
   if (descriptor === null) return null;
   try {
@@ -207,16 +184,6 @@ async function mirrorBreakpointsToSession(
     logWarn(`[BPMirror ${source.appName}] session=${session.id} setBreakpoints failed for ${source.sourcePath}: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
-}
-
-async function resolveSourceReferenceForSession(
-  session: vscode.DebugSession,
-  source: AffectedPackageSource,
-): Promise<number | null> {
-  if (session.id === source.sourceSessionId && source.sourceReference !== undefined) {
-    return source.sourceReference;
-  }
-  return lookupSourceReferenceForPath(session, source.sourcePath);
 }
 
 function buildSourceDescriptor(
@@ -270,10 +237,6 @@ function hasVerifiedBreakpoint(response: DapSetBreakpointsResponse | undefined):
   const breakpoints = response?.breakpoints;
   if (!Array.isArray(breakpoints)) return false;
   return breakpoints.some((breakpoint) => breakpoint.verified === true);
-}
-
-function isImmediateRefreshTarget(source: AffectedPackageSource, target: MirrorTargetResult): boolean {
-  return buildVerifiedSourceUri(source, target).toString() === source.uri.toString();
 }
 
 function promoteBreakpointToVerifiedUri(
@@ -375,16 +338,8 @@ function collectBreakpointsForMigration(
 }
 
 function collectBreakpointsForRefresh(source: AffectedPackageSource): vscode.SourceBreakpoint[] {
-  if (source.refreshBreakpointKeys.size === 0) return [];
   return vscode.debug.breakpoints.filter((bp): bp is vscode.SourceBreakpoint =>
-    bp instanceof vscode.SourceBreakpoint
-    && source.refreshBreakpointKeys.has(toBreakpointRefreshKey(bp))
-    && breakpointMatchesSource(bp, source));
-}
-
-function toBreakpointRefreshKey(breakpoint: vscode.SourceBreakpoint): string {
-  const { start } = breakpoint.location.range;
-  return `${breakpoint.location.uri.toString()}::${start.line.toString()}:${start.character.toString()}`;
+    bp instanceof vscode.SourceBreakpoint && breakpointMatchesSource(bp, source));
 }
 
 function runWithMigrationGuard(uris: readonly vscode.Uri[], migrate: () => void): void {
