@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.7-pre.2] — 2026
+
+### Fixes
+
+- **Keeps no-src Package Browser breakpoints anchored to local file editors on WSL** — URI-like debugger paths such as `vscode-remote://...` are still mirrored to the debug adapter, but verified path-only package breakpoints now refresh the existing `file:` editor breakpoint instead of migrating it to the remote URI. This preserves VS Code's filesystem-path breakpoint identity so the margin breakpoint stays visible and can bind when the package source executes.
+
 ## [0.4.7-pre.1] — 2026
 
 ### Fixes

@@ -286,7 +286,7 @@ describe('packageBreakpointMirror', () => {
     expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
   });
 
-  it('promotes file breakpoints to URI-like debugger source paths without double-encoding them', async () => {
+  it('refreshes file breakpoints in place for URI-like path-only debugger sources', async () => {
     const appName = 'sample-service';
     const fileUri = createUri('file', '/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.ts');
     const sourcePath = 'vscode-remote://sample-host/home/sample/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.ts';
@@ -312,17 +312,20 @@ describe('packageBreakpointMirror', () => {
     await vi.waitFor(() => {
       expect(session.customRequest).toHaveBeenCalledWith('setBreakpoints', expect.any(Object));
     });
+    expect(session.customRequest).toHaveBeenCalledWith(
+      'setBreakpoints',
+      expect.objectContaining({
+        source: { path: sourcePath },
+      }),
+    );
     expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
     expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
     const replacements = vscodeMockState.addBreakpoints.mock.calls[0]?.[0] as unknown[];
     const replacement = replacements[0] as InstanceType<typeof MockSourceBreakpoint> | undefined;
-    expect(replacement?.location.uri.toString()).toBe(sourcePath);
-    expect(replacement?.location.uri.scheme).toBe('vscode-remote');
+    expect(replacement?.location.uri.toString()).toBe(fileUri.toString());
+    expect(replacement?.location.uri.scheme).toBe('file');
     expect(replacement?.location.range).toEqual(breakpoint.location.range);
     expect(vscodeMockState.removeBreakpoints).toHaveBeenCalledWith([breakpoint]);
-    expect(vscodeMockState.showTextDocument).toHaveBeenCalledWith(
-      expect.objectContaining({ scheme: 'vscode-remote' }),
-      expect.objectContaining({ preview: false, preserveFocus: false }),
-    );
+    expect(vscodeMockState.showTextDocument).not.toHaveBeenCalled();
   });
 });

@@ -312,6 +312,7 @@ function isUriLikeSourcePath(path: string): boolean {
 
 function buildVerifiedSourceUri(source: AffectedPackageSource, target: MirrorTargetResult): vscode.Uri {
   if ((target.descriptor.sourceReference ?? 0) <= 0 && isUriLikeSourcePath(source.sourcePath)) {
+    if (source.uri.scheme === 'file') return source.uri;
     return vscode.Uri.parse(source.sourcePath);
   }
   return vscode.debug.asDebugSourceUri(toLoadedPackageSource(source, target), target.session);
