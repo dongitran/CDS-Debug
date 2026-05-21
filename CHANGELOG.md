@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.7-pre.3] — 2026
+
+### Fixes
+
+- **Reduces Package Browser breakpoint flicker on no-src WSL sessions** — Breakpoint mirroring still sends the full source breakpoint set to the debug adapter, but VS Code now refreshes only the breakpoint that was added or edited instead of removing and re-adding every breakpoint in the package file. The UI also refreshes as soon as the first session verifies the breakpoint, without waiting for slower sibling session source lookups.
+
 ## [0.4.7-pre.2] — 2026
 
 ### Fixes

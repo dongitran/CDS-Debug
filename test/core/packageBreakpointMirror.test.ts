@@ -173,10 +173,30 @@ function createUri(scheme: 'debug' | 'file', path: string, query = ''): MockUri 
   return new vscodeMockState.Uri(raw, scheme, path, path, query);
 }
 
-function createBreakpoint(uri: MockUri): InstanceType<typeof MockSourceBreakpoint> {
+function createBreakpoint(
+  uri: MockUri,
+  line = 4,
+  character = 2,
+): InstanceType<typeof MockSourceBreakpoint> {
   return new MockSourceBreakpoint(
-    new vscodeMockState.Location(uri, { start: { line: 4, character: 2 } }),
+    new vscodeMockState.Location(uri, { start: { line, character } }),
   );
+}
+
+function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolvePromise: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve: (value: T): void => {
+      if (resolvePromise === undefined) {
+        throw new Error('Deferred promise resolver was not initialized.');
+      }
+      resolvePromise(value);
+    },
+  };
 }
 
 function createVerifyingSession(id: string, source: MockLoadedSource = { path: SOURCE_PATH, sourceReference: 41 }): MockSession {
@@ -250,6 +270,7 @@ describe('packageBreakpointMirror', () => {
       }),
       session,
     );
+    expect(session.customRequest).not.toHaveBeenCalledWith('loadedSources', expect.any(Object));
     const replacements = vscodeMockState.addBreakpoints.mock.calls[0]?.[0] as unknown[];
     const replacement = replacements[0] as InstanceType<typeof MockSourceBreakpoint> | undefined;
     expect(replacement?.location.uri.toString()).toBe(fileUri.toString());
@@ -327,5 +348,82 @@ describe('packageBreakpointMirror', () => {
     expect(replacement?.location.range).toEqual(breakpoint.location.range);
     expect(vscodeMockState.removeBreakpoints).toHaveBeenCalledWith([breakpoint]);
     expect(vscodeMockState.showTextDocument).not.toHaveBeenCalled();
+  });
+
+  it('refreshes only the added file breakpoint after verification', async () => {
+    const appName = 'sample-service';
+    const fileUri = createUri('file', SOURCE_PATH);
+    const existingA = createBreakpoint(fileUri, 1);
+    const existingB = createBreakpoint(fileUri, 3);
+    const added = createBreakpoint(fileUri, 5);
+    const session = createVerifyingSession('session-delta-refresh', { path: SOURCE_PATH, sourceReference: 0 });
+    vscodeMockState.breakpoints = [existingA, existingB, added];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [session]);
+    packageSourceBrowserMockState.records.set(fileUri.toString(), {
+      appName,
+      uri: fileUri,
+      source: {
+        name: 'client.ts',
+        path: SOURCE_PATH,
+        sourceReference: 0,
+      },
+      sessionId: session.id,
+      sessionName: session.name,
+    });
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [added], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
+    });
+    const replacements = vscodeMockState.addBreakpoints.mock.calls[0]?.[0] as unknown[];
+    expect(replacements).toHaveLength(1);
+    const replacement = replacements[0] as InstanceType<typeof MockSourceBreakpoint> | undefined;
+    expect(replacement?.location.range).toEqual(added.location.range);
+    expect(vscodeMockState.removeBreakpoints).toHaveBeenCalledWith([added]);
+  });
+
+  it('refreshes after the first verified session without waiting for slow sibling lookup', async () => {
+    const appName = 'sample-service';
+    const fileUri = createUri('file', SOURCE_PATH);
+    const breakpoint = createBreakpoint(fileUri);
+    const fastSession = createVerifyingSession('session-fast', { path: SOURCE_PATH, sourceReference: 0 });
+    const slowLookup = createDeferred<unknown>();
+    const slowSession: MockSession = {
+      id: 'session-slow',
+      name: 'Remote Process slow',
+      type: 'pwa-node',
+      customRequest: vi.fn((command: string): Promise<unknown> => {
+        if (command === 'loadedSources') return slowLookup.promise;
+        if (command === 'setBreakpoints') return Promise.resolve({ breakpoints: [{ verified: true }] });
+        return Promise.resolve(undefined);
+      }),
+    };
+    vscodeMockState.breakpoints = [breakpoint];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [fastSession, slowSession]);
+    packageSourceBrowserMockState.records.set(fileUri.toString(), {
+      appName,
+      uri: fileUri,
+      source: {
+        name: 'client.ts',
+        path: SOURCE_PATH,
+        sourceReference: 0,
+      },
+      sessionId: fastSession.id,
+      sessionName: fastSession.name,
+    });
+
+    try {
+      initializePackageBreakpointMirror();
+      vscodeMockState.breakpointListener?.({ added: [breakpoint], removed: [], changed: [] });
+
+      await vi.waitFor(() => {
+        expect(fastSession.customRequest).toHaveBeenCalledWith('setBreakpoints', expect.any(Object));
+      });
+      expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
+    } finally {
+      slowLookup.resolve({ sources: [] });
+    }
   });
 });
