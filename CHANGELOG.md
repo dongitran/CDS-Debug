@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.7-pre.9] — 2026
+
+### Diagnostics
+
+- **Adds Package Browser breakpoint mirror diagnostics** — Logs breakpoint event counts, session/source lookup timings, per-session `setBreakpoints` verification counts, promotion target selection, same-URI refresh counts, and total mirror duration to make no-src breakpoint flicker and latency diagnosable without changing binding behavior.
+
 ## [0.4.7-pre.8] — 2026
 
 ### Reverts

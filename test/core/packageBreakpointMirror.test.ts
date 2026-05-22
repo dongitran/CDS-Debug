@@ -59,6 +59,7 @@ const {
   vscodeMockState,
   debugSessionRegistryMockState,
   packageSourceBrowserMockState,
+  loggerMockState,
 } = vi.hoisted(() => {
   class HoistedUri {
     constructor(
@@ -109,6 +110,10 @@ const {
     packageSourceBrowserMockState: {
       records: new Map<string, MockOpenedPackageSourceRecord>(),
     },
+    loggerMockState: {
+      logInfo: vi.fn(),
+      logWarn: vi.fn(),
+    },
   };
 });
 
@@ -127,6 +132,11 @@ vi.mock('../../src/core/packageSourceBrowser', () => ({
     return undefined;
   },
   trackOpenedPackageUri: vi.fn(),
+}));
+
+vi.mock('../../src/core/logger', () => ({
+  logInfo: loggerMockState.logInfo,
+  logWarn: loggerMockState.logWarn,
 }));
 
 vi.mock('vscode', () => ({
@@ -322,6 +332,10 @@ function createVerifiedSiblingSession(): MockSession {
   };
 }
 
+function getInfoMessages(): string[] {
+  return loggerMockState.logInfo.mock.calls.map(([message]) => String(message));
+}
+
 beforeEach(() => {
   vscodeMockState.breakpointListener = undefined;
   vscodeMockState.breakpoints = [];
@@ -331,6 +345,8 @@ beforeEach(() => {
   vscodeMockState.showTextDocument.mockReset();
   debugSessionRegistryMockState.sessionsByApp.clear();
   packageSourceBrowserMockState.records.clear();
+  loggerMockState.logInfo.mockReset();
+  loggerMockState.logWarn.mockReset();
   vscodeMockState.asDebugSourceUri.mockImplementation((source: { path?: string; sourceReference?: number }, session: MockSession) => {
     const sourcePath = source.path ?? 'unknown';
     if ((source.sourceReference ?? 0) <= 0 && sourcePath.startsWith('/')) {
@@ -669,6 +685,64 @@ describe('packageBreakpointMirror', () => {
         { preview: false, preserveFocus: false },
       );
     });
+  });
+
+  it('logs mirror diagnostics for event, lookup, set, promotion, and refresh timings', async () => {
+    const appName = 'sample-service';
+    const fileUri = createUri('file', SOURCE_PATH);
+    const first = createBreakpoint(fileUri, 1);
+    const second = createBreakpoint(fileUri, 3);
+    const firstSession = createVerifyingSession('session-diagnostics-a', {
+      path: SOURCE_PATH,
+      sourceReference: 0,
+    });
+    const secondSession = createVerifyingSession('session-diagnostics-b', {
+      path: SOURCE_PATH,
+      sourceReference: 0,
+    });
+    vscodeMockState.breakpoints = [first, second];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [firstSession, secondSession]);
+    packageSourceBrowserMockState.records.set(fileUri.toString(), {
+      appName,
+      uri: fileUri,
+      source: {
+        name: 'client.ts',
+        path: SOURCE_PATH,
+        sourceReference: 0,
+      },
+      sessionId: firstSession.id,
+      sessionName: firstSession.name,
+    });
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [second], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
+    });
+    const messages = getInfoMessages();
+    expect(messages.some((message) =>
+      message.includes('[BPMirror] event added=1 removed=0 changed=0 affected=1'))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] mirror start sessions=2 desired=2`))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] lookup session=${firstSession.id}`)
+      && message.includes('matched=true')
+      && message.includes('duration='))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] session=${secondSession.id} setBreakpoints count=2`)
+      && message.includes('verified=true')
+      && message.includes('verifiedCount=1')
+      && message.includes('duration='))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] promotion target=${secondSession.id}`)
+      && message.includes('duration='))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] refreshed 2 verified file breakpoint(s)`)
+      && message.includes('duration='))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] mirror done sessions=2 desired=2`)
+      && message.includes('duration='))).toBe(true);
   });
 
 });

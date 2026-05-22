@@ -96,6 +96,7 @@ async function handleBreakpointChange(event: vscode.BreakpointsChangeEvent): Pro
   const affected = collectAffectedPackageSources(event);
   if (affected.size === 0) return;
 
+  logInfo(`[BPMirror] event added=${event.added.length.toString()} removed=${event.removed.length.toString()} changed=${event.changed.length.toString()} affected=${affected.size.toString()}`);
   const tasks: Promise<void>[] = [];
   for (const source of affected.values()) {
     const key = `${source.appName}::${source.sourcePath}`;
@@ -154,13 +155,17 @@ function buildAffectedPackageSource(
 }
 
 async function mirrorBreakpointsForSource(source: AffectedPackageSource): Promise<void> {
+  const startedAt = Date.now();
   const sessions = getDebugSessionsForApp(source.appName);
   if (sessions.length === 0) return;
 
   const desired = collectDesiredBreakpoints(source);
+  logInfo(`[BPMirror ${source.appName}] mirror start sessions=${sessions.length.toString()} desired=${desired.length.toString()} uriScheme=${source.uri.scheme} sourceRef=${String(source.sourceReference ?? 0)} path=${source.sourcePath}`);
+  logInfo(`[BPMirror ${source.appName}] mirror sessions ${sessions.map(describeSession).join(' | ')}`);
   const results = await Promise.all(sessions.map((session) =>
     mirrorBreakpointsToSession(session, source, desired)));
   promoteBreakpointToVerifiedUri(source, results);
+  logInfo(`[BPMirror ${source.appName}] mirror done sessions=${sessions.length.toString()} desired=${desired.length.toString()} verifiedSessions=${countVerifiedResults(results).toString()} duration=${elapsedMs(startedAt)} path=${source.sourcePath}`);
 }
 
 async function mirrorBreakpointsToSession(
@@ -168,20 +173,25 @@ async function mirrorBreakpointsToSession(
   source: AffectedPackageSource,
   desired: DapSourceBreakpoint[],
 ): Promise<MirrorTargetResult | null> {
-  const sourceRef = await lookupSourceReferenceForPath(session, source.sourcePath);
+  const sourceRef = await lookupSourceReferenceForPath(session, source.sourcePath, source.appName);
   const descriptor = buildSourceDescriptor(session, source, sourceRef);
-  if (descriptor === null) return null;
+  if (descriptor === null) {
+    logInfo(`[BPMirror ${source.appName}] session=${session.id} skipped no source descriptor path=${source.sourcePath}`);
+    return null;
+  }
+  const startedAt = Date.now();
   try {
     const response = await session.customRequest('setBreakpoints', {
       source: descriptor,
       breakpoints: desired,
       sourceModified: false,
     }) as DapSetBreakpointsResponse | undefined;
-    const verified = hasVerifiedBreakpoint(response);
-    logInfo(`[BPMirror ${source.appName}] session=${session.id} setBreakpoints count=${desired.length.toString()} verified=${verified.toString()} ref=${String(descriptor.sourceReference ?? 0)} path=${source.sourcePath}`);
+    const verifiedCount = countVerifiedBreakpoints(response);
+    const verified = verifiedCount > 0;
+    logInfo(`[BPMirror ${source.appName}] session=${session.id} setBreakpoints count=${desired.length.toString()} verified=${verified.toString()} verifiedCount=${verifiedCount.toString()} returned=${countReturnedBreakpoints(response).toString()} ref=${String(descriptor.sourceReference ?? 0)} duration=${elapsedMs(startedAt)} path=${source.sourcePath}`);
     return { session, descriptor, verified };
   } catch (err: unknown) {
-    logWarn(`[BPMirror ${source.appName}] session=${session.id} setBreakpoints failed for ${source.sourcePath}: ${err instanceof Error ? err.message : String(err)}`);
+    logWarn(`[BPMirror ${source.appName}] session=${session.id} setBreakpoints failed duration=${elapsedMs(startedAt)} path=${source.sourcePath}: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
@@ -233,19 +243,29 @@ function breakpointMatchesSource(
   return (record.source?.path ?? breakpoint.location.uri.path) === source.sourcePath;
 }
 
-function hasVerifiedBreakpoint(response: DapSetBreakpointsResponse | undefined): boolean {
+function countVerifiedBreakpoints(response: DapSetBreakpointsResponse | undefined): number {
   const breakpoints = response?.breakpoints;
-  if (!Array.isArray(breakpoints)) return false;
-  return breakpoints.some((breakpoint) => breakpoint.verified === true);
+  if (!Array.isArray(breakpoints)) return 0;
+  return breakpoints.filter((breakpoint) => breakpoint.verified === true).length;
+}
+
+function countReturnedBreakpoints(response: DapSetBreakpointsResponse | undefined): number {
+  const breakpoints = response?.breakpoints;
+  return Array.isArray(breakpoints) ? breakpoints.length : 0;
 }
 
 function promoteBreakpointToVerifiedUri(
   source: AffectedPackageSource,
   results: readonly (MirrorTargetResult | null)[],
 ): void {
+  const startedAt = Date.now();
   const target = findPromotionTarget(source, results);
-  if (target === null) return;
+  if (target === null) {
+    logInfo(`[BPMirror ${source.appName}] promotion target=none verifiedSessions=${countVerifiedResults(results).toString()} duration=${elapsedMs(startedAt)} path=${source.sourcePath}`);
+    return;
+  }
   const targetUri = buildVerifiedSourceUri(source, target);
+  logInfo(`[BPMirror ${source.appName}] promotion target=${target.session.id} targetScheme=${targetUri.scheme} sameUri=${(targetUri.toString() === source.uri.toString()).toString()} ref=${String(target.descriptor.sourceReference ?? 0)} verifiedSessions=${countVerifiedResults(results).toString()} duration=${elapsedMs(startedAt)} path=${source.sourcePath}`);
   if (targetUri.toString() === source.uri.toString()) {
     refreshVerifiedBreakpointsOnSameUri(source, targetUri);
     return;
@@ -271,6 +291,7 @@ function refreshVerifiedBreakpointsOnSameUri(source: AffectedPackageSource, uri:
   if (source.uri.scheme !== 'file' || (source.sourceReference ?? 0) > 0) return;
   const breakpointsToRefresh = collectBreakpointsForRefresh(source);
   if (breakpointsToRefresh.length === 0) return;
+  const startedAt = Date.now();
   const replacements = breakpointsToRefresh.map((bp) => new vscode.SourceBreakpoint(
     new vscode.Location(uri, bp.location.range),
     bp.enabled,
@@ -282,7 +303,7 @@ function refreshVerifiedBreakpointsOnSameUri(source: AffectedPackageSource, uri:
     vscode.debug.removeBreakpoints(breakpointsToRefresh);
     vscode.debug.addBreakpoints(replacements);
   });
-  logInfo(`[BPMirror ${source.appName}] refreshed ${breakpointsToRefresh.length.toString()} verified file breakpoint(s) path=${source.sourcePath}`);
+  logInfo(`[BPMirror ${source.appName}] refreshed ${breakpointsToRefresh.length.toString()} verified file breakpoint(s) uriScheme=${uri.scheme} duration=${elapsedMs(startedAt)} path=${source.sourcePath}`);
 }
 
 function findPromotionTarget(
@@ -342,6 +363,10 @@ function collectBreakpointsForRefresh(source: AffectedPackageSource): vscode.Sou
     bp instanceof vscode.SourceBreakpoint && breakpointMatchesSource(bp, source));
 }
 
+function countVerifiedResults(results: readonly (MirrorTargetResult | null)[]): number {
+  return results.filter((result) => result?.verified === true).length;
+}
+
 function runWithMigrationGuard(uris: readonly vscode.Uri[], migrate: () => void): void {
   for (const uri of uris) migrationGuardUris.add(uri.toString());
   migrate();
@@ -361,7 +386,9 @@ async function focusVerifiedUri(appName: string, uri: vscode.Uri): Promise<void>
 async function lookupSourceReferenceForPath(
   session: vscode.DebugSession,
   path: string,
+  appName: string,
 ): Promise<number | null> {
+  const startedAt = Date.now();
   try {
     const response = await withTimeout(
       Promise.resolve(session.customRequest('loadedSources', {})) as Promise<DapSourceListResponse | undefined>,
@@ -369,18 +396,32 @@ async function lookupSourceReferenceForPath(
       undefined,
     );
     const sources = response?.sources;
-    if (!Array.isArray(sources)) return null;
+    if (!Array.isArray(sources)) {
+      logInfo(`[BPMirror ${appName}] lookup session=${session.id} matched=false sources=invalid duration=${elapsedMs(startedAt)} path=${path}`);
+      return null;
+    }
     for (const source of sources) {
       if (typeof source.path !== 'string' || source.path !== path) continue;
       const ref = typeof source.sourceReference === 'number' ? source.sourceReference : 0;
       // Return 0 explicitly when the source exists but is path-only — the caller still
       // wants to send the clear with `path` alone.
+      logInfo(`[BPMirror ${appName}] lookup session=${session.id} matched=true ref=${ref.toString()} sources=${sources.length.toString()} duration=${elapsedMs(startedAt)} path=${path}`);
       return ref;
     }
+    logInfo(`[BPMirror ${appName}] lookup session=${session.id} matched=false sources=${sources.length.toString()} duration=${elapsedMs(startedAt)} path=${path}`);
     return null;
   } catch {
+    logWarn(`[BPMirror ${appName}] lookup session=${session.id} failed duration=${elapsedMs(startedAt)} path=${path}`);
     return null;
   }
+}
+
+function describeSession(session: vscode.DebugSession): string {
+  return `${session.name}=${session.id}`;
+}
+
+function elapsedMs(startedAt: number): string {
+  return `${(Date.now() - startedAt).toString()}ms`;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
