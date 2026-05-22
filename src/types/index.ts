@@ -55,6 +55,7 @@ export interface CfApp {
   state: CfAppState;
   runningInstances?: number;
   totalInstances?: number;
+  instanceProcessCount?: number;
   urls?: string[];
 }
 
@@ -411,6 +412,7 @@ export type WebviewMessage =
   | { type: 'LOAD_APPS'; payload: { org: string; space?: string; forceRefresh?: boolean } }
   | { type: 'WARMUP_CF_SESSION'; payload: { org: string; space?: string } }
   | { type: 'START_DEBUG'; payload: { appNames: string[]; org: string; space?: string } }
+  | { type: 'SCALE_APP_INSTANCES'; payload: { appName: string; org: string; space?: string; targetInstances: number } }
   | { type: 'STOP_DEBUG'; payload: { appName: string } }
   | { type: 'STOP_ALL_DEBUG' }
   | { type: 'OPEN_APP_URL'; payload: { url: string; source: 'manual' | 'auto' } }
@@ -473,6 +475,7 @@ export type ExtensionMessage =
   | { type: 'DEBUG_DISCOVERING_REMOTE_ROOT'; payload: { appNames: string[] } }
   | { type: 'DEBUG_CONNECTING'; payload: { appNames: string[]; ports: Record<string, number>; unmappedApps?: string[] } }
   | { type: 'APP_DEBUG_STATUS'; payload: { appName: string; status: string; message?: string } }
+  | { type: 'APP_SCALE_ERROR'; payload: { appName: string; message: string } }
   | { type: 'DEBUG_ERROR'; payload: { message: string } }
   | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }>; credentialStatus: CredentialStatus } }
   | { type: 'SYNC_STATUS'; payload: SyncProgress }

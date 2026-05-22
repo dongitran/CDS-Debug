@@ -76,6 +76,7 @@ const CF_AUTH_RETRIES = 3;
 interface InstanceCounts {
   runningInstances: number;
   totalInstances: number;
+  instanceProcessCount?: number;
 }
 
 export async function cfLogin(
@@ -176,19 +177,37 @@ export function parseApps(stdout: string): CfApp[] {
 function parseInstanceCounts(value: string | undefined): InstanceCounts | undefined {
   if (!value) return undefined;
 
-  const regex = /(?:^|\b)(\d+)\/(\d+)/g;
+  const namedProcessRegex = /(?:^|[,\s])([A-Za-z0-9_.-]+):(\d+)\/(\d+)/g;
   let runningInstances = 0;
   let totalInstances = 0;
-  let matched = false;
+  let instanceProcessCount = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = regex.exec(value)) !== null) {
-    matched = true;
-    runningInstances += Number.parseInt(match[1] ?? '0', 10);
-    totalInstances += Number.parseInt(match[2] ?? '0', 10);
+  while ((match = namedProcessRegex.exec(value)) !== null) {
+    const runningRaw = match[2];
+    const totalRaw = match[3];
+    if (runningRaw === undefined || totalRaw === undefined) continue;
+    instanceProcessCount += 1;
+    runningInstances += Number.parseInt(runningRaw, 10);
+    totalInstances += Number.parseInt(totalRaw, 10);
   }
 
-  return matched ? { runningInstances, totalInstances } : undefined;
+  if (instanceProcessCount > 0) {
+    return { runningInstances, totalInstances, instanceProcessCount };
+  }
+
+  const legacyRegex = /(?:^|\b)(\d+)\/(\d+)/g;
+  let legacyMatched = false;
+  while ((match = legacyRegex.exec(value)) !== null) {
+    const runningRaw = match[1];
+    const totalRaw = match[2];
+    if (runningRaw === undefined || totalRaw === undefined) continue;
+    legacyMatched = true;
+    runningInstances += Number.parseInt(runningRaw, 10);
+    totalInstances += Number.parseInt(totalRaw, 10);
+  }
+
+  return legacyMatched ? { runningInstances, totalInstances } : undefined;
 }
 
 export async function cfApps(cfHome?: string): Promise<CfApp[]> {
@@ -203,6 +222,13 @@ export async function cfTargetAndApps(
 ): Promise<CfApp[]> {
   await cfTarget(org, space, cfHome);
   return cfApps(cfHome);
+}
+
+export async function cfScaleAppInstances(appName: string, instances: number, cfHome?: string): Promise<void> {
+  if (!Number.isInteger(instances) || instances < 0) {
+    throw new Error('Instance count must be a non-negative integer.');
+  }
+  await runCf(['scale', appName, '-i', instances.toString()], cfHome);
 }
 
 export async function cfFindRemotePackageJsonPaths(appName: string, cfHome?: string): Promise<string[]> {

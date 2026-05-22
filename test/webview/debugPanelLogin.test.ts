@@ -19,6 +19,7 @@ const cfClientMock = vi.hoisted(() => ({
   cfOrgs: vi.fn<() => Promise<string[]>>(() => Promise.resolve([])),
   cfTarget: vi.fn<(org: string, space?: string) => Promise<void>>(() => Promise.resolve()),
   cfTargetAndApps: vi.fn<(org: string, space?: string) => Promise<CfApp[]>>(() => Promise.resolve([])),
+  cfScaleAppInstances: vi.fn<(appName: string, instances: number) => Promise<void>>(() => Promise.resolve()),
 }));
 
 const cacheSyncMock = vi.hoisted(() => {
@@ -150,6 +151,7 @@ vi.mock('../../src/core/cfClient', async (importOriginal) => {
     cfOrgs: cfClientMock.cfOrgs,
     cfTarget: cfClientMock.cfTarget,
     cfTargetAndApps: cfClientMock.cfTargetAndApps,
+    cfScaleAppInstances: cfClientMock.cfScaleAppInstances,
   };
 });
 
@@ -200,7 +202,7 @@ vi.mock('../../src/storage/scopeSync', async (importOriginal) => {
 
 import { buildLoginConfig } from '../../src/webview/debugPanel';
 import { DebugLauncherViewProvider } from '../../src/webview/debugPanel';
-import { getCacheSettings, initCacheStore, saveCacheSettings } from '../../src/storage/cacheStore';
+import { getCachedApps, getCacheSettings, initCacheStore, saveCacheSettings } from '../../src/storage/cacheStore';
 import { getConfig, initConfigStore, saveConfig } from '../../src/storage/configStore';
 import * as vscode from 'vscode';
 
@@ -328,6 +330,8 @@ describe('DebugLauncherViewProvider external scope sync', () => {
     cfClientMock.cfTarget.mockResolvedValue(undefined);
     cfClientMock.cfTargetAndApps.mockReset();
     cfClientMock.cfTargetAndApps.mockResolvedValue([]);
+    cfClientMock.cfScaleAppInstances.mockReset();
+    cfClientMock.cfScaleAppInstances.mockResolvedValue(undefined);
     cacheSyncMock.getCurrentSyncProgress.mockClear();
     cacheSyncMock.restartCacheSyncTimer.mockClear();
     cacheSyncMock.runCacheSync.mockClear();
@@ -1453,6 +1457,126 @@ describe('DebugLauncherViewProvider external scope sync', () => {
 
     expect(getCacheSettings()).toEqual({ enabled: false, intervalHours: 24 });
     expect(cacheSyncMock.syncSingleRegion).not.toHaveBeenCalled();
+  });
+
+  it('scales a started app by one instance and refreshes cached apps', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-alpha',
+        cfSpace: 'app',
+        groupFolderPath: '/sample/group',
+      }],
+    });
+    const currentApps: CfApp[] = [{
+      name: 'sample-service-a',
+      state: 'started',
+      runningInstances: 1,
+      totalInstances: 1,
+      instanceProcessCount: 1,
+      urls: ['sample-service-a.cfapps.example.com'],
+    }];
+    const refreshedApps: CfApp[] = [{
+      name: 'sample-service-a',
+      state: 'started',
+      runningInstances: 2,
+      totalInstances: 2,
+      instanceProcessCount: 1,
+      urls: ['sample-service-a.cfapps.example.com'],
+    }];
+    cfClientMock.cfTargetAndApps
+      .mockResolvedValueOnce(currentApps)
+      .mockResolvedValueOnce(refreshedApps);
+
+    await getInternals(provider).handleMessage({
+      type: 'SCALE_APP_INSTANCES',
+      payload: {
+        appName: 'sample-service-a',
+        org: 'sample-org-alpha',
+        space: 'app',
+        targetInstances: 2,
+      },
+    });
+
+    expect(cfClientMock.cfTargetAndApps).toHaveBeenNthCalledWith(1, 'sample-org-alpha', 'app');
+    expect(cfClientMock.cfScaleAppInstances).toHaveBeenCalledWith('sample-service-a', 2);
+    expect(cfClientMock.cfTargetAndApps).toHaveBeenNthCalledWith(2, 'sample-org-alpha', 'app');
+    expect(getCachedApps('https://api.cf.eu10.hana.ondemand.com', 'sample-org-alpha', 'app')?.apps)
+      .toEqual(refreshedApps);
+    expect(postMessage).toHaveBeenCalledWith({ type: 'APPS_LOADED', payload: { apps: refreshedApps } });
+  });
+
+  it('rejects badge scaling for known multi-process apps', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-alpha',
+        cfSpace: 'app',
+        groupFolderPath: '/sample/group',
+      }],
+    });
+    cfClientMock.cfTargetAndApps.mockResolvedValue([{
+      name: 'sample-service-a',
+      state: 'started',
+      runningInstances: 2,
+      totalInstances: 2,
+      instanceProcessCount: 2,
+      urls: [],
+    }]);
+
+    await getInternals(provider).handleMessage({
+      type: 'SCALE_APP_INSTANCES',
+      payload: {
+        appName: 'sample-service-a',
+        org: 'sample-org-alpha',
+        space: 'app',
+        targetInstances: 3,
+      },
+    });
+
+    expect(cfClientMock.cfScaleAppInstances).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'APP_SCALE_ERROR',
+      payload: {
+        appName: 'sample-service-a',
+        message: 'Scaling multiple CF processes is not supported from this badge yet.',
+      },
+    });
+  });
+
+  it('rejects badge scaling while the app is actively debugging', async () => {
+    const provider = makeProvider();
+    const postMessage = vi.spyOn(provider, 'postMessage').mockImplementation(() => undefined);
+    processManagerMock.getActiveAppNames.mockReturnValue(['sample-service-a']);
+    await saveSessionConfig({
+      orgGroupMappings: [{
+        cfOrg: 'sample-org-alpha',
+        cfSpace: 'app',
+        groupFolderPath: '/sample/group',
+      }],
+    });
+
+    await getInternals(provider).handleMessage({
+      type: 'SCALE_APP_INSTANCES',
+      payload: {
+        appName: 'sample-service-a',
+        org: 'sample-org-alpha',
+        space: 'app',
+        targetInstances: 2,
+      },
+    });
+
+    expect(cfClientMock.cfTargetAndApps).not.toHaveBeenCalled();
+    expect(cfClientMock.cfScaleAppInstances).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'APP_SCALE_ERROR',
+      payload: {
+        appName: 'sample-service-a',
+        message: 'Stop debugging this app before scaling instances.',
+      },
+    });
   });
 
   it('refreshes only the CF session on topology warmup — no SSH probing of apps', async () => {

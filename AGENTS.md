@@ -163,6 +163,7 @@ pnpm test:report          # Open HTML report
 
 ### Ready Screen — App List and UI Details
 1. User can see instance count badges (`1/1`, `2/2`, `0/1`) and disabled stopped apps.
+2. User can scale app instances from the badge after confirming.
 
 ### Settings Screen
 1. User can see automatic retry guidance after a canceled cache sync.

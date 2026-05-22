@@ -435,6 +435,10 @@ export function getStyles(): string {
       white-space: nowrap;
       flex-shrink: 0;
     }
+    button.badge {
+      font-family: var(--vscode-font-family);
+      line-height: 1.35;
+    }
     .badge-started {
       background: color-mix(in srgb, var(--vscode-testing-iconPassed) 14%, transparent);
       border: 1px solid var(--vscode-testing-iconPassed);
@@ -448,6 +452,102 @@ export function getStyles(): string {
     .badge-debug {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
+    }
+    .badge-scale {
+      cursor: pointer;
+    }
+    .badge-scale:hover {
+      background: color-mix(in srgb, var(--vscode-testing-iconPassed) 24%, transparent);
+    }
+    .badge-scale:focus {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: 2px;
+    }
+    .badge-scale-disabled {
+      cursor: default;
+    }
+
+    .scale-popover {
+      position: absolute;
+      right: 6px;
+      top: calc(100% + 4px);
+      z-index: 20;
+      width: min(176px, calc(100% - 12px));
+      padding: 8px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+      box-shadow: 0 6px 18px rgba(0,0,0,0.28);
+    }
+    .scale-popover-title {
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .scale-stepper {
+      display: grid;
+      grid-template-columns: 28px 1fr 28px;
+      align-items: center;
+      gap: 6px;
+    }
+    .scale-step-btn {
+      width: 28px;
+      height: 24px;
+      border: 1px solid var(--vscode-button-border, transparent);
+      border-radius: 4px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      cursor: pointer;
+      font: inherit;
+      line-height: 1;
+    }
+    .scale-step-btn:hover:not(:disabled) {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+    .scale-step-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .scale-count {
+      min-width: 0;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: var(--vscode-editor-font-family);
+    }
+    .scale-change {
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      text-align: center;
+    }
+    .scale-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .scale-action {
+      border: none;
+      border-radius: 4px;
+      padding: 4px 8px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+    }
+    .scale-action.primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    .scale-action:hover:not(:disabled) {
+      filter: brightness(1.08);
+    }
+    .scale-action:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
     }
 
     .divider { height: 1px; background: var(--vscode-panel-border); margin: 12px 0; }

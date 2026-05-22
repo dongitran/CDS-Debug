@@ -127,8 +127,10 @@ slow_target_after_apps_ready="$script_dir/.slow-target-after-apps-ready"
 slow_target_after_apps_used="$script_dir/.slow-target-after-apps-used"
 remote_root_lookup_lock="$script_dir/.remote-root-lookup-lock"
 reload_apps_count="$script_dir/.reload-apps-count"
+mock_service_c_instances_file="$script_dir/.mock-service-c-instances"
 current_api_file="$script_dir/.current-api"
 commands_file="$script_dir/.commands"
+mock_service_c_instances="$(cat "$mock_service_c_instances_file" 2>/dev/null || echo 2)"
 
 if [[ -n "$cmd" ]]; then
   echo "$cmd" >> "$commands_file"
@@ -284,28 +286,51 @@ OUT
       next_count=$((count + 1))
       echo "$next_count" > "$reload_apps_count"
       if [[ "$next_count" -eq 1 ]]; then
-        cat <<'OUT'
+        cat <<OUT
 name   requested state   processes   routes
-mock-service-a   started   1/1   mock-service-a.cfapps.example.com
-mock-service-b   stopped   0/1   mock-service-b.cfapps.example.com
-mock-service-c   started   2/2   mock-service-c.cfapps.example.com
+mock-service-a   started   web:1/1   mock-service-a.cfapps.example.com
+mock-service-b   stopped   web:0/1   mock-service-b.cfapps.example.com
+mock-service-c   started   web:$mock_service_c_instances/$mock_service_c_instances   mock-service-c.cfapps.example.com
 OUT
       else
         cat <<'OUT'
 name   requested state   processes   routes
-mock-service-a   started   1/1   mock-service-a.cfapps.example.com
-mock-service-b   stopped   0/1   mock-service-b.cfapps.example.com
-mock-service-d   started   1/1   mock-service-d.cfapps.example.com
+mock-service-a   started   web:1/1   mock-service-a.cfapps.example.com
+mock-service-b   stopped   web:0/1   mock-service-b.cfapps.example.com
+mock-service-d   started   web:1/1   mock-service-d.cfapps.example.com
 OUT
       fi
       exit 0
     fi
-    cat <<'OUT'
+    cat <<OUT
 name   requested state   processes   routes
-mock-service-a   started   1/1   mock-service-a.cfapps.example.com
-mock-service-b   stopped   0/1   mock-service-b.cfapps.example.com
-mock-service-c   started   2/2   mock-service-c.cfapps.example.com
+mock-service-a   started   web:1/1   mock-service-a.cfapps.example.com
+mock-service-b   stopped   web:0/1   mock-service-b.cfapps.example.com
+mock-service-c   started   web:$mock_service_c_instances/$mock_service_c_instances   mock-service-c.cfapps.example.com
 OUT
+    ;;
+  scale)
+    app_name="\${2:-}"
+    instances=""
+    for ((i = 1; i <= $#; i++)); do
+      if [[ "\${!i}" == "-i" ]]; then
+        next=$((i + 1))
+        if [[ "$next" -le "$#" ]]; then
+          instances="\${!next}"
+        fi
+      fi
+    done
+    if [[ -z "$app_name" || -z "$instances" ]]; then
+      echo "mock cf: scale requires app name and -i instances" >&2
+      exit 1
+    fi
+    if [[ "$app_name" != "mock-service-c" ]]; then
+      echo "mock cf: unsupported scale target $app_name" >&2
+      exit 1
+    fi
+    echo "$instances" > "$mock_service_c_instances_file"
+    echo "$app_name $instances" > "$script_dir/.last-scale-command"
+    echo "Scaling app $app_name to $instances instances..."
     ;;
   ssh)
     app_name="\${2:-}"
@@ -3010,6 +3035,26 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         const appList = webview.locator('.app-list');
         await expect(appList.locator('.section-label', { hasText: 'Started' })).toBeVisible();
         await expect(appList.locator('.section-label', { hasText: 'Stopped' })).toBeVisible();
+      });
+    });
+
+    test('User can scale app instances from the badge after confirming', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage, artifacts) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await webview.getByRole('button', { name: 'Scale mock-service-c instances (2/2)' }).click();
+        const dialog = webview.getByRole('dialog', { name: 'Scale mock-service-c instances' });
+        await expect(dialog).toBeVisible();
+        await dialog.getByRole('button', { name: 'Increase instances' }).click();
+        await expect(dialog.getByLabel('Target instances')).toHaveText('3');
+        await dialog.getByRole('button', { name: 'Apply instance scale' }).click();
+
+        await expect(webview.getByRole('button', { name: 'Scale mock-service-c instances (3/3)' }))
+          .toBeVisible({ timeout: 30_000 });
+        await expect.poll(async () => {
+          return readFile(join(artifacts.mockBinDir, '.last-scale-command'), 'utf8').catch(() => '');
+        }).toBe('mock-service-c 3\n');
       });
     });
 

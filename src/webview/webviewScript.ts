@@ -107,6 +107,8 @@ export function getScript(nonce: string): string {
       apps: [],
       selectedApps: new Set(),
       searchQuery: '',
+      instanceScalePopover: null,
+      scalePendingAppName: null,
       error: null,
       activeSessions: {}, // { appName: { status, message, msgPhase, intervalId } }
       syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 0 },
@@ -265,9 +267,101 @@ export function getScript(nonce: string): string {
       state.selectedApps = new Set([...state.selectedApps].filter(name => validNames.has(name)));
     }
 
+    function findAppByName(appName) {
+      return state.apps.find(app => app.name === appName) || null;
+    }
+
+    function hasInstanceCounts(app) {
+      return !!app && typeof app.runningInstances === 'number' && typeof app.totalInstances === 'number';
+    }
+
+    function getScaleDisabledReason(app) {
+      if (!app) return 'App is no longer available';
+      if (state.activeSessions[app.name]) return 'Stop debugging this app before scaling instances';
+      if (state.scalePendingAppName === app.name) return 'Scaling is already in progress';
+      if (!hasInstanceCounts(app)) return 'Current instance counts are unavailable';
+      if (app.state !== 'started') return 'Only started apps can be scaled';
+      if (app.instanceProcessCount !== undefined && app.instanceProcessCount > 1) {
+        return 'Scaling multiple CF processes is not supported from this badge yet';
+      }
+      if (app.runningInstances !== app.totalInstances) return 'Wait until current instances are running before scaling';
+      if (app.totalInstances < 1) return 'Scale from at least one running instance';
+      return '';
+    }
+
+    function canScaleAppInstances(app) {
+      return getScaleDisabledReason(app) === '';
+    }
+
+    function getScaleDraftBounds(app) {
+      const current = hasInstanceCounts(app) ? app.totalInstances : 1;
+      return {
+        min: Math.max(1, current - 1),
+        max: current + 1,
+      };
+    }
+
+    function clampScaleDraft(app, value) {
+      const bounds = getScaleDraftBounds(app);
+      return Math.min(bounds.max, Math.max(bounds.min, value));
+    }
+
+    function getScaleDraftInstances(app) {
+      const popover = state.instanceScalePopover;
+      if (!popover || !app || popover.appName !== app.name) return hasInstanceCounts(app) ? app.totalInstances : 1;
+      return clampScaleDraft(app, popover.draftInstances);
+    }
+
+    function openInstanceScalePopover(appName) {
+      const app = findAppByName(appName);
+      if (!canScaleAppInstances(app)) return;
+      state.instanceScalePopover = {
+        appName,
+        draftInstances: app.totalInstances,
+      };
+      refreshAppListSection();
+    }
+
+    function adjustInstanceScaleDraft(appName, delta) {
+      const app = findAppByName(appName);
+      if (!canScaleAppInstances(app)) return;
+      const currentDraft = getScaleDraftInstances(app);
+      state.instanceScalePopover = {
+        appName,
+        draftInstances: clampScaleDraft(app, currentDraft + delta),
+      };
+      refreshAppListSection();
+    }
+
+    function cancelInstanceScalePopover() {
+      state.instanceScalePopover = null;
+      refreshAppListSection();
+    }
+
+    function applyInstanceScale(appName) {
+      const app = findAppByName(appName);
+      if (!state.selectedOrg || !state.selectedSpace || !canScaleAppInstances(app)) return;
+      const targetInstances = getScaleDraftInstances(app);
+      if (targetInstances === app.totalInstances) return;
+      state.scalePendingAppName = appName;
+      state.instanceScalePopover = null;
+      refreshAppListSection();
+      vscode.postMessage({
+        type: 'SCALE_APP_INSTANCES',
+        payload: {
+          appName,
+          org: state.selectedOrg,
+          space: state.selectedSpace,
+          targetInstances,
+        },
+      });
+    }
+
     function enterReadyWithTopologyApps(org, space, apps) {
       state.apps = apps;
       state.selectedApps = new Set();
+      state.instanceScalePopover = null;
+      state.scalePendingAppName = null;
       state.isRestoringSession = false;
       state.screen = SCREENS.READY;
       state.error = null;
@@ -712,6 +806,41 @@ export function getScript(nonce: string): string {
           const name = cb.dataset.app;
           if (cb.checked) state.selectedApps.add(name);
           else state.selectedApps.delete(name);
+          state.instanceScalePopover = null;
+          refreshAppListSection();
+        });
+        appListEl.addEventListener('click', e => {
+          const scaleBtn = e.target.closest('[data-scale-app]');
+          if (scaleBtn) {
+            e.preventDefault();
+            const appName = scaleBtn.dataset.scaleApp;
+            if (!appName) return;
+            if (scaleBtn.hasAttribute('data-scale-step')) {
+              adjustInstanceScaleDraft(appName, Number(scaleBtn.dataset.scaleStep));
+              return;
+            }
+            if (scaleBtn.hasAttribute('data-scale-apply')) {
+              applyInstanceScale(appName);
+              return;
+            }
+            if (scaleBtn.hasAttribute('data-scale-cancel')) {
+              cancelInstanceScalePopover();
+              return;
+            }
+            openInstanceScalePopover(appName);
+            return;
+          }
+          if (e.target.closest('.scale-popover')) return;
+          if (e.target.closest('input[type="checkbox"][data-app]')) return;
+          const row = e.target.closest('.app-row');
+          if (!row) return;
+          const cb = row.querySelector('input[type="checkbox"][data-app]');
+          if (!cb || cb.disabled) return;
+          cb.checked = !cb.checked;
+          const name = cb.dataset.app;
+          if (cb.checked) state.selectedApps.add(name);
+          else state.selectedApps.delete(name);
+          state.instanceScalePopover = null;
           refreshAppListSection();
         });
       }
@@ -936,6 +1065,8 @@ export function getScript(nonce: string): string {
         case 'APPS_LOADED':
           state.apps = msg.payload.apps;
           state.selectedApps = new Set();
+          state.instanceScalePopover = null;
+          state.scalePendingAppName = null;
           state.isRestoringSession = false;
           state.screen = SCREENS.READY;
           state.error = null;
@@ -1074,6 +1205,16 @@ export function getScript(nonce: string): string {
             if (status === 'PENDING' || status === 'DISCOVERING') {
               delete state.activeSessions[appName];
             }
+          }
+          state.error = msg.payload.message;
+          state.screen = SCREENS.READY;
+          break;
+        case 'APP_SCALE_ERROR':
+          if (state.instanceScalePopover?.appName === msg.payload.appName) {
+            state.instanceScalePopover = null;
+          }
+          if (state.scalePendingAppName === msg.payload.appName) {
+            state.scalePendingAppName = null;
           }
           state.error = msg.payload.message;
           state.screen = SCREENS.READY;

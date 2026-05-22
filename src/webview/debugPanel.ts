@@ -28,6 +28,7 @@ import {
   cfTarget,
   cfTargetAndApps,
   cfTargetOrgAndSpaces,
+  cfScaleAppInstances,
   isCfAuthError,
 } from '../core/cfClient';
 import {
@@ -133,6 +134,8 @@ interface ServiceBranchInfo {
   targetBranch: string | null;
   currentBranch: string | null;
 }
+
+const MIN_BADGE_SCALE_INSTANCES = 1;
 
 export function buildLoginConfig(
   apiEndpoint: string,
@@ -437,6 +440,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
           raw.payload.appNames,
           raw.payload.org,
           raw.payload.space ?? CF_DEFAULT_SPACE,
+        );
+        break;
+
+      case 'SCALE_APP_INSTANCES':
+        await this.handleScaleAppInstances(
+          raw.payload.appName,
+          raw.payload.org,
+          raw.payload.space ?? CF_DEFAULT_SPACE,
+          raw.payload.targetInstances,
         );
         break;
 
@@ -935,6 +947,74 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       if (!revoked) {
         this.postMessage({ type: 'APPS_ERROR', payload: { message: msg } });
       }
+    }
+  }
+
+  private async handleScaleAppInstances(
+    appName: string,
+    org: string,
+    space: string,
+    targetInstances: number,
+  ): Promise<void> {
+    const config = getConfig();
+    if (!config) return;
+
+    const fail = (message: string): void => {
+      this.postMessage({ type: 'APP_SCALE_ERROR', payload: { appName, message } });
+    };
+    const mapping = config.orgGroupMappings.find((m) => mappingMatchesTarget(m, org, space));
+    if (!mapping) {
+      fail(`No local folder mapped for org/space: ${org}/${space}`);
+      return;
+    }
+    if (getActiveAppNames().includes(appName)) {
+      fail('Stop debugging this app before scaling instances.');
+      return;
+    }
+    if (!Number.isInteger(targetInstances) || targetInstances < MIN_BADGE_SCALE_INSTANCES) {
+      fail('Instance target must be an integer of at least 1.');
+      return;
+    }
+
+    try {
+      await this.awaitWarmupIfRunning(config.apiEndpoint, org, space);
+      const currentApps = await this.loadLiveApps(config.apiEndpoint, org, space);
+      const app = currentApps.find((candidate) => candidate.name === appName);
+      const validationError = validateBadgeScaleRequest(app, targetInstances);
+      if (validationError) {
+        fail(validationError);
+        return;
+      }
+
+      logInfo(`[Scale] Scaling ${appName} in ${org}/${space} to ${targetInstances.toString()} instance(s).`);
+      await this.scaleAppInstancesWithAuthRetry(config.apiEndpoint, org, space, appName, targetInstances);
+      const apps = await this.loadLiveApps(config.apiEndpoint, org, space);
+      await saveCachedApps(config.apiEndpoint, org, apps, space);
+      this.postMessage({ type: 'APPS_LOADED', payload: { apps } });
+      void this.keepCfSessionAliveTracked(config.apiEndpoint, org, space);
+    } catch (err: unknown) {
+      const msg = extractErrorMessage(err);
+      logError(`[Scale] Failed to scale ${appName} in ${org}/${space}: ${msg}`);
+      const revoked = await this.handleAuthFailure(err);
+      if (!revoked) fail(`Failed to scale ${appName}: ${msg}`);
+    }
+  }
+
+  private async scaleAppInstancesWithAuthRetry(
+    apiEndpoint: string,
+    org: string,
+    space: string,
+    appName: string,
+    targetInstances: number,
+  ): Promise<void> {
+    try {
+      await cfScaleAppInstances(appName, targetInstances);
+    } catch (err: unknown) {
+      if (!isCfAuthError(err)) throw err;
+      logInfo(`cfScaleAppInstances auth failed — attempting re-login before scaling ${appName}.`);
+      await this.reLogin(apiEndpoint);
+      await cfTarget(org, space);
+      await cfScaleAppInstances(appName, targetInstances);
     }
   }
 
@@ -1774,6 +1854,24 @@ function isWebviewMessage(value: unknown): value is WebviewMessage {
 function extractErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function validateBadgeScaleRequest(app: CfApp | undefined, targetInstances: number): string | null {
+  if (!app) return 'App is no longer available in this space.';
+  if (app.state !== 'started') return 'Only started apps can be scaled from this badge.';
+  if (typeof app.runningInstances !== 'number' || typeof app.totalInstances !== 'number') {
+    return 'Current instance counts are unavailable. Refresh apps and try again.';
+  }
+  if (app.instanceProcessCount !== undefined && app.instanceProcessCount > 1) {
+    return 'Scaling multiple CF processes is not supported from this badge yet.';
+  }
+  if (app.runningInstances !== app.totalInstances) {
+    return 'Wait until current instances are running before scaling.';
+  }
+
+  const delta = targetInstances - app.totalInstances;
+  if (delta !== 1 && delta !== -1) return 'Scale one instance at a time from this badge.';
+  return null;
 }
 
 function normalizeEndpoint(value: string): string {

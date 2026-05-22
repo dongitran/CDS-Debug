@@ -703,13 +703,59 @@ export function getRendererScriptContent(): string {
     function renderAppBadge(app, isActive, isEmpty) {
       if (isActive) return \`<span class="badge badge-debug">debugging</span>\`;
 
-      const hasInstanceCounts = typeof app.runningInstances === 'number' && typeof app.totalInstances === 'number';
+      const hasCounts = hasInstanceCounts(app);
       const fallbackText = isEmpty ? 'started (0)' : app.state;
-      const badgeText = hasInstanceCounts
+      const badgeText = hasCounts
         ? app.runningInstances + '/' + app.totalInstances
         : fallbackText;
       const badgeClass = app.state === 'started' ? 'started' : 'stopped';
-      return \`<span class="badge badge-\${badgeClass}">\${escape(badgeText)}</span>\`;
+      if (state.scalePendingAppName === app.name) {
+        return \`<span class="badge badge-debug">scaling</span>\`;
+      }
+      if (canScaleAppInstances(app)) {
+        const expanded = state.instanceScalePopover?.appName === app.name ? 'true' : 'false';
+        return \`
+          <button type="button" class="badge badge-\${badgeClass} badge-scale"
+            data-scale-app="\${escape(app.name)}"
+            aria-label="Scale \${escape(app.name)} instances (\${escape(badgeText)})"
+            aria-expanded="\${expanded}">
+            \${escape(badgeText)}
+          </button>
+        \`;
+      }
+      const disabledReason = hasCounts ? getScaleDisabledReason(app) : '';
+      const titleAttr = disabledReason ? \` title="\${escape(disabledReason)}"\` : '';
+      const disabledClass = disabledReason ? ' badge-scale-disabled' : '';
+      return \`<span class="badge badge-\${badgeClass}\${disabledClass}"\${titleAttr}>\${escape(badgeText)}</span>\`;
+    }
+
+    function renderInstanceScalePopover(app) {
+      if (state.instanceScalePopover?.appName !== app.name || !canScaleAppInstances(app)) return '';
+      const current = app.totalInstances;
+      const draft = getScaleDraftInstances(app);
+      const bounds = getScaleDraftBounds(app);
+      const decreaseDisabled = draft <= bounds.min ? 'disabled' : '';
+      const increaseDisabled = draft >= bounds.max ? 'disabled' : '';
+      const applyDisabled = draft === current ? 'disabled' : '';
+      return \`
+        <div class="scale-popover" role="dialog" aria-label="Scale \${escape(app.name)} instances">
+          <div class="scale-popover-title">Instances</div>
+          <div class="scale-stepper">
+            <button type="button" class="scale-step-btn" data-scale-app="\${escape(app.name)}"
+              data-scale-step="-1" aria-label="Decrease instances" \${decreaseDisabled}>&minus;</button>
+            <span class="scale-count" aria-label="Target instances">\${draft}</span>
+            <button type="button" class="scale-step-btn" data-scale-app="\${escape(app.name)}"
+              data-scale-step="1" aria-label="Increase instances" \${increaseDisabled}>+</button>
+          </div>
+          <div class="scale-change">\${current} -&gt; \${draft}</div>
+          <div class="scale-actions">
+            <button type="button" class="scale-action" data-scale-app="\${escape(app.name)}"
+              data-scale-cancel aria-label="Cancel instance scale">Cancel</button>
+            <button type="button" class="scale-action primary" data-scale-app="\${escape(app.name)}"
+              data-scale-apply aria-label="Apply instance scale" \${applyDisabled}>Apply</button>
+          </div>
+        </div>
+      \`;
     }
 
     function renderAppRow(app) {
@@ -720,15 +766,17 @@ export function getRendererScriptContent(): string {
       const isChecked = state.selectedApps.has(app.name) && !isDisabled;
       const rowClass = isActive ? 'in-debug' : (isStopped || isEmpty ? 'stopped' : '');
       const badge = renderAppBadge(app, isActive, isEmpty);
+      const popover = renderInstanceScalePopover(app);
       return \`
-        <label class="app-row \${rowClass}">
+        <div class="app-row \${rowClass}" data-app-row="\${escape(app.name)}">
           <input type="checkbox" data-app="\${escape(app.name)}"
             aria-label="Select \${escape(app.name)} for debug"
             \${isChecked ? 'checked' : ''}
             \${isDisabled ? 'disabled' : ''} />
           <span class="app-name" title="\${escape(app.name)}">\${escape(app.name)}</span>
           \${badge}
-        </label>
+          \${popover}
+        </div>
       \`;
     }
 

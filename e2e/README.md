@@ -47,70 +47,71 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
 ### Optimistic UI (1 test)
 21. Clicking Start Debug Sessions shows pending sessions immediately before the network call completes.
 
-### Ready Screen — App List and UI Details (4 tests)
+### Ready Screen — App List and UI Details (5 tests)
 22. User can see instance count badges (`1/1`, `2/2`, `0/1`) and disabled stopped apps; Started/Stopped section labels present.
-23. CF info box shows region (eu10 — Europe (Frankfurt)), org, and space values.
-24. Footer shows "No started apps" and select-all count drops to (0) when all started apps have active sessions.
-25. Active app shows "debugging" badge, disabled checkbox, `.app-row.in-debug` CSS class; select-all count updates; label flips to "Deselect all"; "No apps found" on unmatched search.
+23. User can scale app instances from the badge after confirming.
+24. CF info box shows region (eu10 — Europe (Frankfurt)), org, and space values.
+25. Footer shows "No started apps" and select-all count drops to (0) when all started apps have active sessions.
+26. Active app shows "debugging" badge, disabled checkbox, `.app-row.in-debug` CSS class; select-all count updates; label flips to "Deselect all"; "No apps found" on unmatched search.
 
 ### Active Session Cards — Lifecycle (9 tests)
-26. DEBUG_CONNECTING creates a TUNNELING card with spinner, Active Sessions label, and stop button.
-27. APP_DEBUG_STATUS ATTACHED updates card to "Debugger Attached" and removes spinner.
-28. APP_DEBUG_STATUS EXITED removes the card and re-enables the app checkbox.
-29. APP_DEBUG_STATUS ERROR shows error message and retry button.
-30. Stop single session click removes the active card.
-31. SSH_ENABLING and SSH_RESTARTING show correct spinner + status text; no extra action button beyond stop/retry.
-32. ATTACHED state keeps the Package button and port number in the card title without showing Open App.
-33. ATTACHED with unmappedApps shows `.active-card-no-src` "no src" badge (debug console only, no local source folder).
-34. Stop All button absent with one session; visible with count ≥ 2; disappears again when count drops back to 1 via EXITED.
+27. DEBUG_CONNECTING creates a TUNNELING card with spinner, Active Sessions label, and stop button.
+28. APP_DEBUG_STATUS ATTACHED updates card to "Debugger Attached" and removes spinner.
+29. APP_DEBUG_STATUS EXITED removes the card and re-enables the app checkbox.
+30. APP_DEBUG_STATUS ERROR shows error message and retry button.
+31. Stop single session click removes the active card.
+32. SSH_ENABLING and SSH_RESTARTING show correct spinner + status text; no extra action button beyond stop/retry.
+33. ATTACHED state keeps the Package button and port number in the card title without showing Open App.
+34. ATTACHED with unmappedApps shows `.active-card-no-src` "no src" badge (debug console only, no local source folder).
+35. Stop All button absent with one session; visible with count ≥ 2; disappears again when count drops back to 1 via EXITED.
 
 ### Packages Browser (14 tests)
-35. User can open Packages from an attached session card and browse an inline tree.
-36. User can switch apps inside Packages and see each app package list independently.
-37. Opening Packages immediately after attach waits for sources instead of flashing a false error.
-38. Opening Packages immediately after a started session waits for the child debug session to appear.
-39. Reload becomes clickable again after a hanging package-source request times out.
-40. User can save a debug session package regex filter and apply it before search input filtering.
-41. Invalid debug session package regex is rejected in settings.
-42. Tree expansion keeps the clicked package and folder in place while scrolling.
-43. Search by package name keeps the package collapsible instead of forcing it open.
-44. Search with descendant matches still lets users collapse matching folders.
-45. User can search package file contents and open the matching file at the matched line.
-46. User can search package file contents when the debugger reports a remote package path.
-47. User can open mapped package content from an attached source-mapped session.
-48. Debug session package regex filtering still applies before content search results are shown.
+36. User can open Packages from an attached session card and browse an inline tree.
+37. User can switch apps inside Packages and see each app package list independently.
+38. Opening Packages immediately after attach waits for sources instead of flashing a false error.
+39. Opening Packages immediately after a started session waits for the child debug session to appear.
+40. Reload becomes clickable again after a hanging package-source request times out.
+41. User can save a debug session package regex filter and apply it before search input filtering.
+42. Invalid debug session package regex is rejected in settings.
+43. Tree expansion keeps the clicked package and folder in place while scrolling.
+44. Search by package name keeps the package collapsible instead of forcing it open.
+45. Search with descendant matches still lets users collapse matching folders.
+46. User can search package file contents and open the matching file at the matched line.
+47. User can search package file contents when the debugger reports a remote package path.
+48. User can open mapped package content from an attached source-mapped session.
+49. Debug session package regex filtering still applies before content search results are shown.
 
 ### Ready Screen — Actions and Navigation (4 tests)
-49. DEBUG_ERROR clears PENDING sessions, shows error message, and shows `#btn-retry-apps` alongside the error box.
-50. Change Mapping with no active sessions returns to **CF Region / Org** (step 1/3), not Select CF Org.
-51. Cancel app loading returns to **Ready** screen (not Select Folder) when apps were previously loaded — verifies the `state.apps.length > 0` conditional branch.
-52. Refresh Apps bypasses cache and redisplays the latest app list.
+50. DEBUG_ERROR clears PENDING sessions, shows error message, and shows `#btn-retry-apps` alongside the error box.
+51. Change Mapping with no active sessions returns to **CF Region / Org** (step 1/3), not Select CF Org.
+52. Cancel app loading returns to **Ready** screen (not Select Folder) when apps were previously loaded — verifies the `state.apps.length > 0` conditional branch.
+53. Refresh Apps bypasses cache and redisplays the latest app list.
 
 ### Settings Screen (7 tests)
-53. Keychain credentials section — verifies `.cred-source-badge.keychain`, email display, `#btn-update-credentials`, and `#btn-clear-credentials` via injected CREDENTIALS_STATUS.
-54. No-credentials section — verifies "No credentials configured." text and `#btn-update-credentials` (Set Credentials) when `source: 'none'`.
-55. Canceled-sync retry guidance — verifies `.sync-status-row.warning` shows "sync was canceled", "retry scheduled automatically", enabled Sync Now, and running state after manual retry.
-56. Stopping-sync state — `.sync-status-row.running` + spinner + "Stopping sync…" when cache disabled but sync still in progress.
-57. Sync running state — verifies `.sync-status-row.running`, spinner, `.progress-bar-wrap`, `.progress-bar-fill`, disabled Sync Now button via injected SYNC_STATUS.
-58. Cache disabled state — verifies unchecked `#chk-cache-enabled`, disabled `#select-interval`, disabled Sync Now, and "Caching disabled" status row via injected CACHE_CONFIG.
-59. Back to Launcher — verifies all 4 sections: SAP Credentials (env badge + email + info icon), Debug Behavior (both toggles + `.pref-state-badge` + `.beta-badge` + `.pref-row .toggle-switch` × 2), App Cache (checked by default, sync interval, enabled Sync Now, "Last sync: Never"), navigation buttons.
+54. Keychain credentials section — verifies `.cred-source-badge.keychain`, email display, `#btn-update-credentials`, and `#btn-clear-credentials` via injected CREDENTIALS_STATUS.
+55. No-credentials section — verifies "No credentials configured." text and `#btn-update-credentials` (Set Credentials) when `source: 'none'`.
+56. Canceled-sync retry guidance — verifies `.sync-status-row.warning` shows "sync was canceled", "retry scheduled automatically", enabled Sync Now, and running state after manual retry.
+57. Stopping-sync state — `.sync-status-row.running` + spinner + "Stopping sync…" when cache disabled but sync still in progress.
+58. Sync running state — verifies `.sync-status-row.running`, spinner, `.progress-bar-wrap`, `.progress-bar-fill`, disabled Sync Now button via injected SYNC_STATUS.
+59. Cache disabled state — verifies unchecked `#chk-cache-enabled`, disabled `#select-interval`, disabled Sync Now, and "Caching disabled" status row via injected CACHE_CONFIG.
+60. Back to Launcher — verifies all 4 sections: SAP Credentials (env badge + email + info icon), Debug Behavior (both toggles + `.pref-state-badge` + `.beta-badge` + `.pref-row .toggle-switch` × 2), App Cache (checked by default, sync interval, enabled Sync Now, "Last sync: Never"), navigation buttons.
 
 ### Select Folder Screen (1 test)
-60. Save and Continue disabled until folder selected — verifies all SELECT_FOLDER elements (step-badge 3/3, org info-box, section label, "No folder selected yet", browse/back buttons).
+61. Save and Continue disabled until folder selected — verifies all SELECT_FOLDER elements (step-badge 3/3, org info-box, section label, "No folder selected yet", browse/back buttons).
 
 ### Preparing Branches Screen (5 tests)
-61. BRANCH_PREP_START shows prep screen with service rows, branch badges, spinner status, and step-by-step updates (stashing → done → error) — verifies all 3 status block variants.
-62. BRANCH_PREP_START with empty services shows `.org-list-empty` "No services to prepare." placeholder inside `.prep-list`.
-63. DEBUG_CONNECTING from PREPARING_BRANCHES screen transitions to READY with the new session card; prep rows cleared.
-64. BRANCH_PREP_STATUS step variants — verifies checking-out, installing, building, and skipped steps; verifies `.prep-row-top`, `.prep-name`, `.prep-row-status` structural elements.
-65. BRANCH_PREP all done without errors transitions status block to "Starting debug sessions…" with spinner.
+62. BRANCH_PREP_START shows prep screen with service rows, branch badges, spinner status, and step-by-step updates (stashing → done → error) — verifies all 3 status block variants.
+63. BRANCH_PREP_START with empty services shows `.org-list-empty` "No services to prepare." placeholder inside `.prep-list`.
+64. DEBUG_CONNECTING from PREPARING_BRANCHES screen transitions to READY with the new session card; prep rows cleared.
+65. BRANCH_PREP_STATUS step variants — verifies checking-out, installing, building, and skipped steps; verifies `.prep-row-top`, `.prep-name`, `.prep-row-status` structural elements.
+66. BRANCH_PREP all done without errors transitions status block to "Starting debug sessions…" with spinner.
 
 ### Setup Credentials Screen (5 tests)
-66. CREDENTIALS_ERROR directly injected shows `.error-box` and re-enables `#btn-save-creds` (bypasses macOS SecretStorage race).
-67. Update mode — verifies "Update Credentials" title, `#btn-cancel-creds` visible, no `.cred-env-hint`, "Update & Continue" save button label; Back to Settings navigation.
-68. CREDENTIALS_REVOKED forces redirect to SETUP_CREDENTIALS with the revocation error in `.error-box`; setup mode (env hint visible, no cancel button, save button enabled — because handler sets `hasCredentials=false`).
-69. CREDENTIALS_STATUS `{hasCredentials:false}` when `prevHad=true` forces redirect to SETUP_CREDENTIALS setup mode; no error box (clean credential-clear path).
-70. Successful credential save without prior mappings navigates to the Region screen.
+67. CREDENTIALS_ERROR directly injected shows `.error-box` and re-enables `#btn-save-creds` (bypasses macOS SecretStorage race).
+68. Update mode — verifies "Update Credentials" title, `#btn-cancel-creds` visible, no `.cred-env-hint`, "Update & Continue" save button label; Back to Settings navigation.
+69. CREDENTIALS_REVOKED forces redirect to SETUP_CREDENTIALS with the revocation error in `.error-box`; setup mode (env hint visible, no cancel button, save button enabled — because handler sets `hasCredentials=false`).
+70. CREDENTIALS_STATUS `{hasCredentials:false}` when `prevHad=true` forces redirect to SETUP_CREDENTIALS setup mode; no error box (clean credential-clear path).
+71. Successful credential save without prior mappings navigates to the Region screen.
 
 ## Mocking strategy
 - Credentials are scenario-based:

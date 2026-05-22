@@ -19,6 +19,7 @@ import {
   cfSpaces,
   cfTarget,
   cfTargetAndApps,
+  cfScaleAppInstances,
   cfTargetOrgAndSpaces,
   cfSshEnabled,
   cfEnableSsh,
@@ -133,6 +134,7 @@ describe('cfClient command wrappers', () => {
         state: 'started',
         runningInstances: 1,
         totalInstances: 1,
+        instanceProcessCount: 1,
         urls: ['svc-one.cfapps.br10.hana.ondemand.com'],
       },
     ]);
@@ -154,6 +156,7 @@ describe('cfClient command wrappers', () => {
         state: 'stopped',
         runningInstances: 0,
         totalInstances: 1,
+        instanceProcessCount: 1,
         urls: ['svc-two.cfapps.br10.hana.ondemand.com'],
       },
     ]);
@@ -188,6 +191,7 @@ describe('cfClient command wrappers', () => {
         state: 'started',
         runningInstances: 1,
         totalInstances: 1,
+        instanceProcessCount: 1,
         urls: ['svc-dev.cfapps.br10.hana.ondemand.com'],
       },
     ]);
@@ -203,6 +207,18 @@ describe('cfClient command wrappers', () => {
       'cf',
       ['apps'],
       expect.any(Object),
+    );
+  });
+
+  it('cfScaleAppInstances scales through a shell-safe argument array', async () => {
+    execFileAsyncMock.mockResolvedValue({ stdout: '' });
+
+    await cfScaleAppInstances('svc-one', 3);
+
+    expect(execFileAsyncMock).toHaveBeenCalledWith(
+      'cf',
+      ['scale', 'svc-one', '-i', '3'],
+      expect.objectContaining({ maxBuffer: 10 * 1024 * 1024 }),
     );
   });
 

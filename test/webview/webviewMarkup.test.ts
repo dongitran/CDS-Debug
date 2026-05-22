@@ -586,9 +586,66 @@ describe('webview markup contracts', () => {
     });
 
     const html = harness.getHtml();
-    expect(html).toContain('badge badge-started">1/1</span>');
-    expect(html).toContain('badge badge-stopped">0/1</span>');
+    expect(html).toContain('badge badge-started badge-scale');
+    expect(html).toContain('1/1');
+    expect(html).toContain('>0/1</span>');
     expect(html).not.toContain('badge badge-started">started</span>');
+  });
+
+  it('renders safe instance badges as buttons and keeps stopped badges non-clickable', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+
+    harness.dispatch({
+      type: 'APPS_LOADED',
+      payload: {
+        apps: [
+          {
+            name: 'sample-service-started',
+            state: 'started',
+            runningInstances: 1,
+            totalInstances: 1,
+            instanceProcessCount: 1,
+            urls: [],
+          },
+          {
+            name: 'sample-service-stopped',
+            state: 'stopped',
+            runningInstances: 0,
+            totalInstances: 1,
+            instanceProcessCount: 1,
+            urls: [],
+          },
+          {
+            name: 'sample-service-multi',
+            state: 'started',
+            runningInstances: 2,
+            totalInstances: 2,
+            instanceProcessCount: 2,
+            urls: [],
+          },
+        ],
+      },
+    });
+
+    const html = harness.getHtml();
+    expect(html).toContain('class="badge badge-started badge-scale"');
+    expect(html).toContain('data-scale-app="sample-service-started"');
+    expect(html).toContain('aria-label="Scale sample-service-started instances (1/1)"');
+    expect(html).toContain('class="badge badge-stopped badge-scale-disabled"');
+    expect(html).toContain('>0/1</span>');
+    expect(html).toContain('title="Scaling multiple CF processes is not supported from this badge yet"');
+    expect(html).not.toContain('data-scale-app="sample-service-stopped"');
+    expect(html).not.toContain('data-scale-app="sample-service-multi"');
+  });
+
+  it('wires instance scaling through a confirmation message instead of direct badge action', () => {
+    const script = getScript('test-nonce');
+
+    expect(script).toContain("type: 'SCALE_APP_INSTANCES'");
+    expect(script).toContain('data-scale-apply');
+    expect(script).toContain('state.instanceScalePopover');
+    expect(script).toContain('state.scalePendingAppName');
   });
 
   it('routes SCOPE_SYNCED_NO_MAPPING to folder selection without loading apps', () => {
