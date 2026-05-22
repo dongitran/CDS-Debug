@@ -1431,6 +1431,12 @@ function createFixtureSourcePath(
   version = '1.0.0',
   rootDir = '/workspace',
 ): string {
+  if (rootDir.includes('://')) {
+    const suffix = packageName.startsWith('@')
+      ? ['node_modules', '.pnpm', `${packageName.replace('/', '+')}@${version}`, 'node_modules', packageName, relativePath]
+      : ['node_modules', packageName, relativePath];
+    return [rootDir.replace(/\/+$/u, ''), ...suffix].join('/');
+  }
   if (packageName.startsWith('@')) {
     const encoded = packageName.replace('/', '+');
     return join(rootDir, 'node_modules', '.pnpm', `${encoded}@${version}`, 'node_modules', packageName, relativePath);
@@ -4004,6 +4010,92 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
       }
     });
 
+    test('User can open a URI-reported package file from a no-src attached session', async () => {
+      const workspaceDir = await createTempDirectory('cds-debug-e2e-package-uri-content-');
+
+      try {
+        const contentFixture = await createPackageFixtureInWorkspace(workspaceDir, {
+          name: '@sample-org/demo-kit',
+          version: '1.4.0',
+          files: [{
+            relativePath: 'src/handler.ts',
+            content: 'export function createUriReportedPackageHandler() { return true; }\n',
+          }],
+        }, {
+          reportedRootDir: `vscode-remote://sample-host${workspaceDir}`,
+        });
+
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await waitForObservation();
+
+          await emitDebugConnecting(webview, {
+            appNames: ['mock-service-a'],
+            ports: { 'mock-service-a': 20000 },
+            unmappedApps: ['mock-service-a'],
+          });
+          await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+          await setPackageFixture(webview, 'mock-service-a', [contentFixture], { localRoot: workspaceDir });
+          await startPackagesErrorMonitor(webview);
+
+          const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
+          await expect(activeCard.locator('.active-card-no-src')).toBeVisible({ timeout: 3_000 });
+          await activeCard.locator('.active-packages-btn').click();
+          await expect(webview.locator('#packages-app-select')).toBeVisible();
+          await webview.locator('#packages-search-input').fill('createUriReportedPackageHandler');
+          await expect(webview.locator('.packages-tree-file-row', { hasText: 'handler.ts' })).toBeVisible({ timeout: 5_000 });
+          await captureStepEvidence(workbenchPage, 'packages-uri-reported-no-src-match');
+
+          await webview.locator('.packages-tree-file-row', { hasText: 'handler.ts' }).click();
+          await expectEditorCursorPosition(workbenchPage, 1, 17);
+          await captureStepEvidence(workbenchPage, 'packages-uri-reported-no-src-opened');
+
+          const packageErrorEvents = await stopPackagesErrorMonitor(webview);
+          expect(packageErrorEvents).toEqual([]);
+          await clearPackageFixtures(webview);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
+    });
+
+    test('User can open mapped package content from an attached source-mapped session', async () => {
+      const workspaceDir = await createTempDirectory('cds-debug-e2e-package-mapped-content-');
+
+      try {
+        const contentFixture = await createPackageFixtureInWorkspace(workspaceDir, {
+          name: '@sample-org/demo-helper',
+          version: '1.2.0',
+          files: [{
+            relativePath: 'src/handler.ts',
+            content: 'export function createMappedPackageHandler() { return true; }\n',
+          }],
+        }, { reportedRootDir: '/sample-app' });
+
+        await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
+          const webview = await openCdsDebugWebview(workbenchPage);
+          await completeMappingToReadyWithFolder(webview, workspaceDir);
+          await emitDebugConnecting(webview, { appNames: ['mock-service-a'], ports: { 'mock-service-a': 20000 } });
+          await emitAppDebugStatus(webview, { appName: 'mock-service-a', status: 'ATTACHED' });
+          await setPackageFixture(webview, 'mock-service-a', [contentFixture], { localRoot: workspaceDir });
+
+          const activeCard = webview.locator('.active-card', { hasText: 'mock-service-a' });
+          await expect(activeCard.locator('.active-card-no-src')).toHaveCount(0);
+          await activeCard.locator('.active-packages-btn').click();
+          await expect(webview.locator('#packages-app-select')).toBeVisible();
+          await webview.locator('#packages-search-input').fill('createMappedPackageHandler');
+          await expect(webview.locator('.packages-tree-file-row', { hasText: 'handler.ts' })).toBeVisible({ timeout: 5_000 });
+          await webview.locator('.packages-tree-file-row', { hasText: 'handler.ts' }).click();
+          await expectEditorCursorPosition(workbenchPage, 1, 17);
+          await captureStepEvidence(workbenchPage, 'packages-mapped-content-opened');
+          await clearPackageFixtures(webview);
+        }, workspaceDir);
+      } finally {
+        await removeDirWithRetry(workspaceDir);
+      }
+    });
+
     test('Debug session package regex filtering still applies before content search results are shown', async () => {
       const workspaceDir = await createTempDirectory('cds-debug-e2e-package-filter-');
 
@@ -4464,6 +4556,35 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.locator('#btn-update-credentials')).toBeVisible();
         await expect(webview.locator('#btn-clear-credentials')).toHaveCount(0);
         await clearCredentialStatusOverride(webview);
+      });
+    });
+
+    test('User can see automatic retry guidance after a canceled cache sync', async () => {
+      await withVsCodeSession({ credentialMode: 'env', cfScenario: 'slow-sync' }, async (workbenchPage) => {
+        const webview = await openCdsDebugWebview(workbenchPage);
+        await completeMappingToReady(webview);
+
+        await webview.locator('#btn-gear').click();
+        await expect(webview.getByText('Settings')).toBeVisible();
+        await injectMessage(webview, {
+          type: 'SYNC_STATUS',
+          payload: {
+            isRunning: false,
+            lastCompletedAt: Date.now() - 9 * 24 * 60 * 60 * 1000,
+            lastAttemptedAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
+            lastSkipReason: 'aborted',
+            done: 4,
+            total: 14,
+          },
+        });
+
+        await expect(webview.locator('.sync-status-row.warning')).toContainText('sync was canceled');
+        await expect(webview.locator('.sync-status-row.warning')).toContainText('retry scheduled automatically');
+        await expect(webview.locator('#btn-trigger-sync')).toBeEnabled();
+
+        await webview.locator('#btn-trigger-sync').click();
+        await expect(webview.locator('.sync-status-row.running')).toBeVisible({ timeout: 10_000 });
+        await expect(webview.locator('#btn-trigger-sync')).toBeDisabled();
       });
     });
 

@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.4.0",
+  "version": "0.4.7-pre.10",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -105,9 +105,15 @@
           "scope": "application",
           "markdownDescription": "Currently active Cloud Foundry scope managed by CDS Debug.",
           "properties": {
-            "regionCode": { "type": "string" },
-            "orgName": { "type": "string" },
-            "spaceName": { "type": "string" }
+            "regionCode": {
+              "type": "string"
+            },
+            "orgName": {
+              "type": "string"
+            },
+            "spaceName": {
+              "type": "string"
+            }
           }
         },
         "cdsDebug.sharedCapDebugConfig": {
@@ -134,22 +140,33 @@
             },
             "outFiles": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "markdownDescription": "Replaces the default `outFiles` glob list in generated attach configurations. Use this when the standard CAP folder layout (`srv`, `gen/srv`, `app`, `lib`, `dist`, `build`) does not match your project."
             },
             "outFilesExtra": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "markdownDescription": "Appended to the default `outFiles` glob list. Ignored when `outFiles` is set. Useful for adding extra build folders without redefining the entire list."
             },
             "resolveSourceMapLocations": {
-              "type": ["array", "null"],
-              "items": { "type": "string" },
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              },
               "markdownDescription": "Overrides VS Code's `resolveSourceMapLocations`. Defaults to `null` so source maps with embedded remote paths (e.g. `/home/vcap/app/...`) are not silently dropped during attach. Set an explicit list of globs to re-enable filtering."
             },
             "sourceMapPathOverrides": {
               "type": "object",
-              "additionalProperties": { "type": "string" },
+              "additionalProperties": {
+                "type": "string"
+              },
               "markdownDescription": "Path-mapping overrides merged on top of the extension defaults. Keys are the source-map embedded paths, values are the local replacements (e.g. `\"/home/vcap/app/*\": \"${workspaceFolder}/*\"`)."
             }
           }
@@ -158,11 +175,14 @@
           "type": "array",
           "scope": "application",
           "default": [],
-          "markdownDescription": "Explicit Cloud Foundry app name → local folder name mappings. Use this when a CF app's name differs too much from its local source folder for the automatic `-`↔`_` normalization to find it (otherwise that app falls back to console-only debugging with no source maps). `folderName` is a folder *basename*; CDS Debug searches the mapped group folder recursively (depth ≤ 6) for a folder with that name containing a `package.json`. Has the highest matching priority, ahead of the exact and underscore-normalized name.",
+          "markdownDescription": "Explicit Cloud Foundry app name \u2192 local folder name mappings. Use this when a CF app's name differs too much from its local source folder for the automatic `-`\u2194`_` normalization to find it (otherwise that app falls back to console-only debugging with no source maps). `folderName` is a folder *basename*; CDS Debug searches the mapped group folder recursively (depth \u2264 6) for a folder with that name containing a `package.json`. Has the highest matching priority, ahead of the exact and underscore-normalized name.",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["appName", "folderName"],
+            "required": [
+              "appName",
+              "folderName"
+            ],
             "properties": {
               "appName": {
                 "type": "string",
@@ -212,7 +232,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.2",
-    "@types/vscode": "1.110.0",
+    "@types/vscode": "1.120.0",
     "@vitest/coverage-v8": "^4.1.2",
     "@vscode/vsce": "^3.9.1",
     "cspell": "^10.0.0",
@@ -221,14 +241,15 @@
     "husky": "^9.0.0",
     "lint-staged": "^17.0.5",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.59.1",
+    "typescript-eslint": "^8.59.4",
     "vite": "7.3.2",
     "vitest": "^4.1.2"
   },
   "packageManager": "pnpm@9.15.0",
   "pnpm": {
     "overrides": {
-      "vite": "7.3.2"
+      "vite": "7.3.2",
+      "fast-uri": "3.1.2"
     }
   },
   "dependencies": {

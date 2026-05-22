@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.4.7-pre.9] — 2026
+
+### Diagnostics
+
+- **Adds Package Browser breakpoint mirror diagnostics** — Logs breakpoint event counts, session/source lookup timings, per-session `setBreakpoints` verification counts, promotion target selection, same-URI refresh counts, and total mirror duration to make no-src breakpoint flicker and latency diagnosable without changing binding behavior.
+
+## [0.4.7-pre.8] — 2026
+
+### Reverts
+
+- **Rolls back the unstable `0.4.7-pre.7` Package Browser breakpoint refresh attempt** — Restores the `0.4.7-pre.6` code path after real no-src debugging showed the follow-up refresh/cache change did not improve breakpoint behavior.
+
+## [0.4.7-pre.6] — 2026
+
+### Reverts
+
+- **Reverts the Package Browser breakpoint refresh optimization from `0.4.7-pre.3`** — Restores the previous full-file refresh and all-session mirror completion behavior after real no-src package debugging showed the narrower refresh path was not stable enough. The WSL file-URI anchoring fix remains in place.
+
+## [0.4.7-pre.5] — 2026
+
+### Tests
+
+- **Raises enforced unit coverage above the branch threshold** — Adds focused unit coverage for Package Browser source normalization/search/URI tracking, package breakpoint mirroring failure paths, and safe package source materialization. `pnpm test:coverage` now passes with global branch coverage above 80%.
+
+## [0.4.7-pre.4] — 2026
+
+### Fixes
+
+- **Cache sync recovers after canceled or failed attempts** — Settings still shows the last successful sync plus the latest failed attempt, but retryable failures now schedule an automatic retry outside the normal cache interval. CDS Debug also reconciles stale Settings progress with newer shared `cf-sync` snapshots so an old canceled attempt no longer appears stuck after another tool has produced a fresh topology.
+
+## [0.4.7-pre.3] — 2026
+
+### Fixes
+
+- **Reduces Package Browser breakpoint flicker on no-src WSL sessions** — Breakpoint mirroring still sends the full source breakpoint set to the debug adapter, but VS Code now refreshes only the breakpoint that was added or edited instead of removing and re-adding every breakpoint in the package file. The UI also refreshes as soon as the first session verifies the breakpoint, without waiting for slower sibling session source lookups.
+
+## [0.4.7-pre.2] — 2026
+
+### Fixes
+
+- **Keeps no-src Package Browser breakpoints anchored to local file editors on WSL** — URI-like debugger paths such as `vscode-remote://...` are still mirrored to the debug adapter, but verified path-only package breakpoints now refresh the existing `file:` editor breakpoint instead of migrating it to the remote URI. This preserves VS Code's filesystem-path breakpoint identity so the margin breakpoint stays visible and can bind when the package source executes.
+
+## [0.4.7-pre.1] — 2026
+
+### Fixes
+
+- **Stabilizes no-src Package Browser breakpoints on WSL-style paths** — When a Package Browser file opens through a local `file:` fallback but the debugger reports the same package source as `vscode-remote://...`, breakpoint mirroring now promotes the visible breakpoint to that parsed remote URI after the adapter verifies it. This keeps the editor breakpoint identity aligned with the debugger source path without reintroducing the previous double-encoded `debug:` URI issue.
+- **Clears high-severity dev dependency audit findings** — Pins transitive `fast-uri` resolution to the patched `3.1.2` release used under the VSIX packaging toolchain.
+
+## [0.4.7-pre.0] — 2026
+
+### Reverts
+
+- **Hard-reset code to the v0.4.1-pre.0 baseline** — Subsequent fix attempts (`9cbe750`, `f02ba3f`, `7907a62`, `b447ac5`) layered on top of the 0.4.1-pre.0 baseline introduced regressions in breakpoint binding for mapped folders. They are preserved on the `attempt/materialize-removal` branch for future re-investigation, while `master` rolls back to the last known-good package handling code (commit `c535d8c`). Only the version is bumped on top of the rolled-back tree to keep the pre-release version monotonically increasing past the previously published `0.4.4`.
+
+## [0.4.1-pre.0] — 2026
+
+### Fixes
+
+- **Stable Package Browser breakpoints for mapped apps** — Package Browser now avoids inventing or materializing missing package files under a mapped app folder's `node_modules` path. Existing local package files still open normally, while missing package sources keep the debugger's source identity so mapped-app package breakpoints behave like the stable no-src flow.
+- **No double-encoded verified source URIs** — Path-only package sources whose debugger path is already a URI, such as `vscode-remote://...`, are no longer promoted through `asDebugSourceUri()`. This prevents broken `vscode-remote://.../vscode-remote%3A/...` editor focus attempts after breakpoint mirroring verifies the breakpoint.
+
 ## [0.4.0] — 2026
 
 ### Highlights

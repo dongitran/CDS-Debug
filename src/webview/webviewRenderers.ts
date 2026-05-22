@@ -850,6 +850,10 @@ export function getRendererScriptContent(): string {
       return labels[reason] || 'an error occurred';
     }
 
+    function isRetryableSyncSkipReason(reason) {
+      return reason === 'aborted' || reason === 'fatal-error' || reason === 'lock-contention';
+    }
+
     function renderCompletedSyncStatus(s) {
       const completedText = 'Last sync: <strong>' + escape(formatSyncTime(s.lastCompletedAt)) + '</strong>';
       if (!s.lastSkipReason) {
@@ -864,10 +868,13 @@ export function getRendererScriptContent(): string {
       const attemptText = s.lastAttemptedAt
         ? ' · Last attempt ' + escape(formatSyncTime(s.lastAttemptedAt)) + ': '
         : ' · Last attempt: ';
+      const retryText = state.cacheConfig.enabled && isRetryableSyncSkipReason(s.lastSkipReason)
+        ? ' · retry scheduled automatically'
+        : '';
       return \`
         <div class="sync-status-row warning">
           <span style="color:var(--vscode-inputValidation-warningForeground);margin-right:4px">&#9888;</span>
-          <span>\${completedText}\${attemptText}\${escape(formatSyncSkipReason(s.lastSkipReason))}</span>
+          <span>\${completedText}\${attemptText}\${escape(formatSyncSkipReason(s.lastSkipReason))}\${retryText}</span>
         </div>
       \`;
     }

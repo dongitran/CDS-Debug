@@ -161,6 +161,9 @@ pnpm test:report          # Open HTML report
 1. User can change mapping and return to CF Region / Org.
 2. User can change mapping while Sync Now is still running.
 
+### Settings Screen
+1. User can see automatic retry guidance after a canceled cache sync.
+
 ### Shared CF Scope
 1. User can sync the current scope through VS Code global settings.
 2. User can receive an external scope from another region and auto-login to it.
@@ -179,6 +182,23 @@ pnpm test:report          # Open HTML report
 3. User can opt into the remote inspector reminder with settings.
 4. User can open the first local debugger statement warning match.
 5. User can start debug with the default main-process USR1 signal command.
+
+### Packages Browser
+1. User can open Packages from an attached session card and browse an inline tree.
+2. User can switch apps inside Packages and see each app package list independently.
+3. User can open Packages immediately after attach and wait for sources instead of seeing a false error.
+4. User can open Packages immediately after a started session and wait for the child debug session to appear.
+5. User can retry after a hanging package-source request times out.
+6. User can save a debug session package regex filter and apply it before search input filtering.
+7. User sees invalid debug session package regex rejected in settings.
+8. User can expand package tree rows without scroll jumps.
+9. User can search by package name while keeping the package collapsible.
+10. User can collapse matching folders after descendant search matches.
+11. User can search package file contents and open the matching file at the matched line.
+12. User can search package file contents when the debugger reports a remote package path.
+13. User can open mapped package content from an attached source-mapped session.
+14. Debug session package regex filtering still applies before content search results are shown.
+15. User can open a URI-reported package file from a no-src attached session.
 
 ## Debug Cleanup Workflow
 

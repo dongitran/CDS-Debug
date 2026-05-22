@@ -33,6 +33,13 @@ interface MockLoadedSource {
   sourceReference?: number;
 }
 
+interface MockBreakpointOptions {
+  enabled?: boolean;
+  condition?: string;
+  hitCondition?: string;
+  logMessage?: string;
+}
+
 interface MockOpenedPackageSourceRecord {
   appName: string;
   uri: MockUri;
@@ -52,6 +59,7 @@ const {
   vscodeMockState,
   debugSessionRegistryMockState,
   packageSourceBrowserMockState,
+  loggerMockState,
 } = vi.hoisted(() => {
   class HoistedUri {
     constructor(
@@ -102,6 +110,10 @@ const {
     packageSourceBrowserMockState: {
       records: new Map<string, MockOpenedPackageSourceRecord>(),
     },
+    loggerMockState: {
+      logInfo: vi.fn(),
+      logWarn: vi.fn(),
+    },
   };
 });
 
@@ -122,8 +134,25 @@ vi.mock('../../src/core/packageSourceBrowser', () => ({
   trackOpenedPackageUri: vi.fn(),
 }));
 
+vi.mock('../../src/core/logger', () => ({
+  logInfo: loggerMockState.logInfo,
+  logWarn: loggerMockState.logWarn,
+}));
+
 vi.mock('vscode', () => ({
   SourceBreakpoint: MockSourceBreakpoint,
+  Uri: {
+    parse: (value: string): MockUri => {
+      const parsed = new URL(value);
+      return new vscodeMockState.Uri(
+        value,
+        parsed.protocol.slice(0, -1),
+        decodeURIComponent(parsed.pathname),
+        decodeURIComponent(parsed.pathname),
+        parsed.search.slice(1),
+      );
+    },
+  },
   Location: vscodeMockState.Location,
   debug: {
     get breakpoints(): unknown[] {
@@ -161,9 +190,18 @@ function createUri(scheme: 'debug' | 'file', path: string, query = ''): MockUri 
   return new vscodeMockState.Uri(raw, scheme, path, path, query);
 }
 
-function createBreakpoint(uri: MockUri): InstanceType<typeof MockSourceBreakpoint> {
+function createBreakpoint(
+  uri: MockUri,
+  line = 4,
+  character = 2,
+  options: MockBreakpointOptions = {},
+): InstanceType<typeof MockSourceBreakpoint> {
   return new MockSourceBreakpoint(
-    new vscodeMockState.Location(uri, { start: { line: 4, character: 2 } }),
+    new vscodeMockState.Location(uri, { start: { line, character } }),
+    options.enabled ?? true,
+    options.condition,
+    options.hitCondition,
+    options.logMessage,
   );
 }
 
@@ -184,6 +222,120 @@ function createVerifyingSession(id: string, source: MockLoadedSource = { path: S
   };
 }
 
+function registerOpenedPackageSource(
+  appName: string,
+  uri: MockUri,
+  session: Pick<MockSession, 'id' | 'name'>,
+  source: { name?: string; path?: string; sourceReference?: number } = {
+    name: 'client.ts',
+    path: SOURCE_PATH,
+    sourceReference: 41,
+  },
+): void {
+  packageSourceBrowserMockState.records.set(uri.toString(), {
+    appName,
+    uri,
+    source,
+    sessionId: session.id,
+    sessionName: session.name,
+  });
+}
+
+function createFailingSetSession(): MockSession {
+  return {
+    id: 'session-failing-set',
+    name: 'Remote Process failing set',
+    type: 'pwa-node',
+    customRequest: vi.fn((command: string): Promise<unknown> => {
+      if (command === 'setBreakpoints') return Promise.reject(new Error('adapter refused breakpoints'));
+      return Promise.resolve(undefined);
+    }),
+  };
+}
+
+function createUnverifiedSession(): MockSession {
+  return {
+    id: 'session-unverified',
+    name: 'Remote Process unverified',
+    type: 'pwa-node',
+    customRequest: vi.fn((command: string): Promise<unknown> => {
+      if (command === 'loadedSources') {
+        return Promise.resolve({ sources: [{ path: SOURCE_PATH, sourceReference: 52 }] });
+      }
+      if (command === 'setBreakpoints') {
+        return Promise.resolve({ breakpoints: [{ verified: false }, {}] });
+      }
+      return Promise.resolve(undefined);
+    }),
+  };
+}
+
+function createPathOnlyLookupSession(): MockSession {
+  return {
+    id: 'session-path-only',
+    name: 'Remote Process path only',
+    type: 'pwa-node',
+    customRequest: vi.fn((command: string): Promise<unknown> => {
+      if (command === 'loadedSources') {
+        return Promise.resolve({
+          sources: [
+            { path: 42, sourceReference: 90 },
+            { path: '/workspace/node_modules/sample-client/src/other.ts', sourceReference: 91 },
+            { path: SOURCE_PATH, sourceReference: 'not-a-number' },
+          ],
+        });
+      }
+      if (command === 'setBreakpoints') return Promise.resolve({ breakpoints: [{ verified: true }] });
+      return Promise.resolve(undefined);
+    }),
+  };
+}
+
+function createInvalidSourceListSession(): MockSession {
+  return {
+    id: 'session-invalid-list',
+    name: 'Remote Process invalid list',
+    type: 'pwa-node',
+    customRequest: vi.fn((command: string): Promise<unknown> => {
+      if (command === 'loadedSources') return Promise.resolve({ bad: true });
+      if (command === 'setBreakpoints') return Promise.resolve({ breakpoints: [{ verified: true }] });
+      return Promise.resolve(undefined);
+    }),
+  };
+}
+
+function createFailingLookupSession(): MockSession {
+  return {
+    id: 'session-failing-lookup',
+    name: 'Remote Process failing lookup',
+    type: 'pwa-node',
+    customRequest: vi.fn((command: string): Promise<unknown> => {
+      if (command === 'loadedSources') return Promise.reject(new Error('adapter closed'));
+      if (command === 'setBreakpoints') return Promise.resolve({ breakpoints: [{ verified: true }] });
+      return Promise.resolve(undefined);
+    }),
+  };
+}
+
+function createVerifiedSiblingSession(): MockSession {
+  return {
+    id: 'session-verified',
+    name: 'Remote Process verified',
+    type: 'pwa-node',
+    customRequest: vi.fn((command: string): Promise<unknown> => {
+      if (command === 'loadedSources') {
+        return Promise.resolve({ sources: [{ path: SOURCE_PATH, sourceReference: 55 }] });
+      }
+      if (command === 'setBreakpoints') return Promise.resolve({ breakpoints: [{ verified: true }] });
+      return Promise.resolve(undefined);
+    }),
+  };
+}
+
+function getInfoMessages(): string[] {
+  return loggerMockState.logInfo.mock.calls.map(([message]) => String(message));
+}
+
 beforeEach(() => {
   vscodeMockState.breakpointListener = undefined;
   vscodeMockState.breakpoints = [];
@@ -193,6 +345,8 @@ beforeEach(() => {
   vscodeMockState.showTextDocument.mockReset();
   debugSessionRegistryMockState.sessionsByApp.clear();
   packageSourceBrowserMockState.records.clear();
+  loggerMockState.logInfo.mockReset();
+  loggerMockState.logWarn.mockReset();
   vscodeMockState.asDebugSourceUri.mockImplementation((source: { path?: string; sourceReference?: number }, session: MockSession) => {
     const sourcePath = source.path ?? 'unknown';
     if ((source.sourceReference ?? 0) <= 0 && sourcePath.startsWith('/')) {
@@ -273,4 +427,322 @@ describe('packageBreakpointMirror', () => {
     expect(vscodeMockState.addBreakpoints).not.toHaveBeenCalled();
     expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
   });
+
+  it('ignores non-source and untracked breakpoint changes', async () => {
+    const appName = 'sample-service';
+    const session = createVerifyingSession('session-ignore');
+    const untracked = createBreakpoint(createUri('debug', SOURCE_PATH, 'session=session-ignore&ref=41'));
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [session]);
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({
+      added: [{ enabled: true }, untracked],
+      removed: [],
+      changed: [],
+    });
+    await Promise.resolve();
+
+    expect(session.customRequest).not.toHaveBeenCalled();
+    expect(vscodeMockState.addBreakpoints).not.toHaveBeenCalled();
+    expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
+  });
+
+  it('leaves tracked package breakpoints untouched when no app sessions are active', async () => {
+    const appName = 'sample-service';
+    const debugUri = createUri('debug', SOURCE_PATH, 'session=session-ended&ref=41');
+    const breakpoint = createBreakpoint(debugUri);
+    vscodeMockState.breakpoints = [breakpoint];
+    registerOpenedPackageSource(appName, debugUri, {
+      id: 'session-ended',
+      name: 'Remote Process ended',
+    });
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [breakpoint], removed: [], changed: [] });
+    await Promise.resolve();
+
+    expect(vscodeMockState.addBreakpoints).not.toHaveBeenCalled();
+    expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
+    expect(vscodeMockState.showTextDocument).not.toHaveBeenCalled();
+  });
+
+  it('clears mirrored package breakpoints when the tracked breakpoint is removed', async () => {
+    const appName = 'sample-service';
+    const debugUri = createUri('debug', SOURCE_PATH, 'session=session-remove&ref=41');
+    const removedBreakpoint = createBreakpoint(debugUri);
+    const session = createVerifyingSession('session-remove');
+    vscodeMockState.breakpoints = [];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [session]);
+    registerOpenedPackageSource(appName, debugUri, session);
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [], removed: [removedBreakpoint], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(session.customRequest).toHaveBeenCalledWith(
+        'setBreakpoints',
+        expect.objectContaining({
+          breakpoints: [],
+          source: {
+            path: SOURCE_PATH,
+            sourceReference: 41,
+          },
+        }),
+      );
+    });
+    expect(vscodeMockState.addBreakpoints).not.toHaveBeenCalled();
+    expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
+  });
+
+  it('keeps breakpoint state unchanged when sessions fail or do not verify mirrored breakpoints', async () => {
+    const appName = 'sample-service';
+    const debugUri = createUri('debug', SOURCE_PATH, 'session=session-failing-set&ref=41');
+    const breakpoint = createBreakpoint(debugUri);
+    const failingSetSession = createFailingSetSession();
+    const unverifiedSession = createUnverifiedSession();
+    vscodeMockState.breakpoints = [breakpoint];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [failingSetSession, unverifiedSession]);
+    registerOpenedPackageSource(appName, debugUri, failingSetSession);
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [breakpoint], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(unverifiedSession.customRequest).toHaveBeenCalledWith('setBreakpoints', expect.any(Object));
+    });
+    expect(failingSetSession.customRequest).toHaveBeenCalledWith('setBreakpoints', expect.any(Object));
+    expect(vscodeMockState.addBreakpoints).not.toHaveBeenCalled();
+    expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
+    expect(vscodeMockState.showTextDocument).not.toHaveBeenCalled();
+  });
+
+  it('mirrors only enabled matching breakpoints with their DAP conditions', async () => {
+    const appName = 'sample-service';
+    const debugUri = createUri('debug', SOURCE_PATH, 'session=session-conditions&ref=41');
+    const otherUri = createUri('debug', '/workspace/node_modules/sample-client/src/other.ts', 'session=session-conditions&ref=42');
+    const active = createBreakpoint(debugUri, 6, 3, {
+      condition: 'sampleFlag === true',
+      hitCondition: '3',
+      logMessage: 'sample hit',
+    });
+    const disabled = createBreakpoint(debugUri, 9, 1, { enabled: false });
+    const otherSource = createBreakpoint(otherUri, 12, 1);
+    const session = createVerifyingSession('session-conditions');
+    vscodeMockState.breakpoints = [active, disabled, otherSource];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [session]);
+    registerOpenedPackageSource(appName, debugUri, session);
+    registerOpenedPackageSource(
+      appName,
+      otherUri,
+      session,
+      {
+        name: 'other.ts',
+        path: otherUri.path,
+        sourceReference: 42,
+      },
+    );
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [active], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(session.customRequest).toHaveBeenCalledWith(
+        'setBreakpoints',
+        expect.objectContaining({
+          breakpoints: [
+            {
+              line: 7,
+              column: 4,
+              condition: 'sampleFlag === true',
+              hitCondition: '3',
+              logMessage: 'sample hit',
+            },
+          ],
+        }),
+      );
+    });
+  });
+
+  it('refreshes file breakpoints in place for URI-like path-only debugger sources', async () => {
+    const appName = 'sample-service';
+    const fileUri = createUri('file', '/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.ts');
+    const sourcePath = 'vscode-remote://sample-host/home/sample/workspace/sample-service/node_modules/.pnpm/@sample-org+demo-kit@1.4.0/node_modules/@sample-org/demo-kit/dist/main.ts';
+    const breakpoint = createBreakpoint(fileUri);
+    const session = createVerifyingSession('session-uri-path', { path: sourcePath, sourceReference: 0 });
+    vscodeMockState.breakpoints = [breakpoint];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [session]);
+    packageSourceBrowserMockState.records.set(fileUri.toString(), {
+      appName,
+      uri: fileUri,
+      source: {
+        name: 'main.ts',
+        path: sourcePath,
+        sourceReference: 0,
+      },
+      sessionId: session.id,
+      sessionName: session.name,
+    });
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [breakpoint], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(session.customRequest).toHaveBeenCalledWith('setBreakpoints', expect.any(Object));
+    });
+    expect(session.customRequest).toHaveBeenCalledWith(
+      'setBreakpoints',
+      expect.objectContaining({
+        source: { path: sourcePath },
+      }),
+    );
+    expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
+    expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
+    const replacements = vscodeMockState.addBreakpoints.mock.calls[0]?.[0] as unknown[];
+    const replacement = replacements[0] as InstanceType<typeof MockSourceBreakpoint> | undefined;
+    expect(replacement?.location.uri.toString()).toBe(fileUri.toString());
+    expect(replacement?.location.uri.scheme).toBe('file');
+    expect(replacement?.location.range).toEqual(breakpoint.location.range);
+    expect(vscodeMockState.removeBreakpoints).toHaveBeenCalledWith([breakpoint]);
+    expect(vscodeMockState.showTextDocument).not.toHaveBeenCalled();
+  });
+
+  it('uses sibling loadedSources defensively when mirroring across sessions', async () => {
+    const appName = 'sample-service';
+    const debugUri = createUri('debug', SOURCE_PATH, 'session=session-owner&ref=41');
+    const breakpoint = createBreakpoint(debugUri);
+    const ownerSession = createVerifyingSession('session-owner');
+    const pathOnlySession = createPathOnlyLookupSession();
+    const invalidSourceListSession = createInvalidSourceListSession();
+    const failingLookupSession = createFailingLookupSession();
+    vscodeMockState.breakpoints = [breakpoint];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [
+      ownerSession,
+      pathOnlySession,
+      invalidSourceListSession,
+      failingLookupSession,
+    ]);
+    registerOpenedPackageSource(appName, debugUri, ownerSession);
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [breakpoint], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(pathOnlySession.customRequest).toHaveBeenCalledWith(
+        'setBreakpoints',
+        expect.objectContaining({
+          source: { path: SOURCE_PATH },
+        }),
+      );
+    });
+    expect(ownerSession.customRequest).toHaveBeenCalledWith(
+      'setBreakpoints',
+      expect.objectContaining({
+        source: {
+          path: SOURCE_PATH,
+          sourceReference: 41,
+        },
+      }),
+    );
+    expect(invalidSourceListSession.customRequest).not.toHaveBeenCalledWith('setBreakpoints', expect.any(Object));
+    expect(failingLookupSession.customRequest).not.toHaveBeenCalledWith('setBreakpoints', expect.any(Object));
+  });
+
+  it('migrates breakpoints to a verified sibling URI even when focusing the editor fails', async () => {
+    const appName = 'sample-service';
+    const staleUri = createUri('debug', SOURCE_PATH, 'session=session-stale&ref=9');
+    const breakpoint = createBreakpoint(staleUri);
+    const verifiedSession = createVerifiedSiblingSession();
+    vscodeMockState.breakpoints = [breakpoint];
+    vscodeMockState.showTextDocument.mockRejectedValue(new Error('editor unavailable'));
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [verifiedSession]);
+    registerOpenedPackageSource(
+      appName,
+      staleUri,
+      {
+        id: 'session-stale',
+        name: 'Remote Process stale',
+      },
+      {
+        name: 'client.ts',
+        path: SOURCE_PATH,
+        sourceReference: 9,
+      },
+    );
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [breakpoint], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
+    });
+    const replacements = vscodeMockState.addBreakpoints.mock.calls[0]?.[0] as unknown[];
+    const replacement = replacements[0] as InstanceType<typeof MockSourceBreakpoint> | undefined;
+    expect(replacement?.location.uri.toString()).toBe(`debug:${SOURCE_PATH}?session=session-verified&ref=55`);
+    expect(vscodeMockState.removeBreakpoints).toHaveBeenCalledWith([breakpoint]);
+    await vi.waitFor(() => {
+      expect(vscodeMockState.showTextDocument).toHaveBeenCalledWith(
+        replacement?.location.uri,
+        { preview: false, preserveFocus: false },
+      );
+    });
+  });
+
+  it('logs mirror diagnostics for event, lookup, set, promotion, and refresh timings', async () => {
+    const appName = 'sample-service';
+    const fileUri = createUri('file', SOURCE_PATH);
+    const first = createBreakpoint(fileUri, 1);
+    const second = createBreakpoint(fileUri, 3);
+    const firstSession = createVerifyingSession('session-diagnostics-a', {
+      path: SOURCE_PATH,
+      sourceReference: 0,
+    });
+    const secondSession = createVerifyingSession('session-diagnostics-b', {
+      path: SOURCE_PATH,
+      sourceReference: 0,
+    });
+    vscodeMockState.breakpoints = [first, second];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [firstSession, secondSession]);
+    packageSourceBrowserMockState.records.set(fileUri.toString(), {
+      appName,
+      uri: fileUri,
+      source: {
+        name: 'client.ts',
+        path: SOURCE_PATH,
+        sourceReference: 0,
+      },
+      sessionId: firstSession.id,
+      sessionName: firstSession.name,
+    });
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [second], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
+    });
+    const messages = getInfoMessages();
+    expect(messages.some((message) =>
+      message.includes('[BPMirror] event added=1 removed=0 changed=0 affected=1'))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] mirror start sessions=2 desired=2`))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] lookup session=${firstSession.id}`)
+      && message.includes('matched=true')
+      && message.includes('duration='))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] session=${secondSession.id} setBreakpoints count=2`)
+      && message.includes('verified=true')
+      && message.includes('verifiedCount=1')
+      && message.includes('duration='))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] promotion target=${secondSession.id}`)
+      && message.includes('duration='))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] refreshed 2 verified file breakpoint(s)`)
+      && message.includes('duration='))).toBe(true);
+    expect(messages.some((message) =>
+      message.includes(`[BPMirror ${appName}] mirror done sessions=2 desired=2`)
+      && message.includes('duration='))).toBe(true);
+  });
+
 });
