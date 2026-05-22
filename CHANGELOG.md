@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.7-pre.8] — 2026
+
+### Reverts
+
+- **Rolls back the unstable `0.4.7-pre.7` Package Browser breakpoint refresh attempt** — Restores the `0.4.7-pre.6` code path after real no-src debugging showed the follow-up refresh/cache change did not improve breakpoint behavior.
+
 ## [0.4.7-pre.6] — 2026
 
 ### Reverts
