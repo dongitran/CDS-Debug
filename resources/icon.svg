@@ -1,7 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <rect x="2" y="4" width="20" height="18" rx="3" stroke="currentColor" stroke-width="1.6" fill="none"/>
-  <path d="M8.8 11.2h.01M15.2 11.2h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-  <path d="M9.2 15.2c.93.78 4.67.78 5.6 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-  <path d="M2 10H0M24 10h-2M2 14H0M24 14h-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-  <circle cx="12" cy="1.5" r="1.5" fill="currentColor"/>
+  <g transform="translate(1.2 1.2) scale(0.9)">
+    <rect x="2" y="4" width="20" height="18" rx="3" stroke="currentColor" stroke-width="1.6" fill="none"/>
+    <path d="M8.8 11.2h.01M15.2 11.2h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M9.2 15.2c.93.78 4.67.78 5.6 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M2 10H0M24 10h-2M2 14H0M24 14h-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    <circle cx="12" cy="1.5" r="1.5" fill="currentColor"/>
+  </g>
 </svg>
