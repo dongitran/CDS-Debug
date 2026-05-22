@@ -571,6 +571,26 @@ describe('webview markup contracts', () => {
     expect(harness.getHtml()).not.toContain('sample-service-old');
   });
 
+  it('renders instance count badges instead of started text when counts are available', () => {
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+
+    harness.dispatch({
+      type: 'APPS_LOADED',
+      payload: {
+        apps: [
+          { name: 'sample-service-started', state: 'started', runningInstances: 1, totalInstances: 1, urls: [] },
+          { name: 'sample-service-empty', state: 'empty', runningInstances: 0, totalInstances: 1, urls: [] },
+        ],
+      },
+    });
+
+    const html = harness.getHtml();
+    expect(html).toContain('badge badge-started">1/1</span>');
+    expect(html).toContain('badge badge-stopped">0/1</span>');
+    expect(html).not.toContain('badge badge-started">started</span>');
+  });
+
   it('routes SCOPE_SYNCED_NO_MAPPING to folder selection without loading apps', () => {
     const harness = createWebviewScriptHarness();
     moveHarnessToReadyScreen(harness);

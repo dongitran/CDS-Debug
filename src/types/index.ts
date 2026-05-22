@@ -53,6 +53,8 @@ export type CfAppState = 'started' | 'stopped' | 'empty';
 export interface CfApp {
   name: string;
   state: CfAppState;
+  runningInstances?: number;
+  totalInstances?: number;
   urls?: string[];
 }
 

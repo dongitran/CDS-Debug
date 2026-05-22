@@ -98,6 +98,23 @@ describe('parseApps', () => {
     expect(apps).toHaveLength(4);
   });
 
+  it('preserves running and total instance counts from cf apps output', () => {
+    const apps = parseApps(sampleOutput);
+
+    expect(apps.find((a) => a.name === 'myapp-svc-one')).toMatchObject({
+      runningInstances: 1,
+      totalInstances: 1,
+    });
+    expect(apps.find((a) => a.name === 'myapp-svc-two')).toMatchObject({
+      runningInstances: 0,
+      totalInstances: 1,
+    });
+    expect(apps.find((a) => a.name === 'myapp-db-one')).toMatchObject({
+      runningInstances: 0,
+      totalInstances: 0,
+    });
+  });
+
   it('parses urls for apps that have routes', () => {
     const apps = parseApps(sampleOutput);
     const svcOne = apps.find((a) => a.name === 'myapp-svc-one');
@@ -150,22 +167,27 @@ describe('parseApps', () => {
     // Both web and worker have running instances
     const output1 = 'name  requested state  processes\nmy-app  started  web:1/1, worker:2/2\n';
     expect(parseApps(output1)[0]?.state).toBe('started');
+    expect(parseApps(output1)[0]).toMatchObject({ runningInstances: 3, totalInstances: 3 });
 
     // Only worker has running instances
     const output2 = 'name  requested state  processes\nmy-app  started  web:0/1, worker:1/1\n';
     expect(parseApps(output2)[0]?.state).toBe('started');
+    expect(parseApps(output2)[0]).toMatchObject({ runningInstances: 1, totalInstances: 2 });
 
     // Neither has running instances
     const output3 = 'name  requested state  processes\nmy-app  started  web:0/1, worker:0/2\n';
     expect(parseApps(output3)[0]?.state).toBe('empty');
+    expect(parseApps(output3)[0]).toMatchObject({ runningInstances: 0, totalInstances: 3 });
   });
 
   it('handles older CF v7 instance format correctly', () => {
     const output = 'name  requested state  instances\nmy-app  started  1/1\n';
     expect(parseApps(output)[0]?.state).toBe('started');
+    expect(parseApps(output)[0]).toMatchObject({ runningInstances: 1, totalInstances: 1 });
 
     const output2 = 'name  requested state  instances\nmy-app  started  0/1\n';
     expect(parseApps(output2)[0]?.state).toBe('empty');
+    expect(parseApps(output2)[0]).toMatchObject({ runningInstances: 0, totalInstances: 1 });
   });
 
   it('defaults to empty when processes column has unexpected format but state is started', () => {

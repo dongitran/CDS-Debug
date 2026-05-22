@@ -161,6 +161,9 @@ pnpm test:report          # Open HTML report
 1. User can change mapping and return to CF Region / Org.
 2. User can change mapping while Sync Now is still running.
 
+### Ready Screen — App List and UI Details
+1. User can see instance count badges (`1/1`, `2/2`, `0/1`) and disabled stopped apps.
+
 ### Settings Screen
 1. User can see automatic retry guidance after a canceled cache sync.
 

@@ -73,6 +73,11 @@ function buildCfCliErrorMessage(error: NodeJS.ErrnoException & { stderr?: string
 
 const CF_AUTH_RETRIES = 3;
 
+interface InstanceCounts {
+  runningInstances: number;
+  totalInstances: number;
+}
+
 export async function cfLogin(
   apiEndpoint: string,
   email: string,
@@ -157,22 +162,33 @@ export function parseApps(stdout: string): CfApp[] {
         urls = maybeUrls.split(',').map((u) => u.trim());
       }
 
+      const instanceCounts = parseInstanceCounts(parts[2]?.trim());
       let parsedState: CfAppState = 'stopped';
       if (state === 'started') {
-        const instancesPart = parts[2]?.trim();
-        let runningCount = 0;
-        if (instancesPart) {
-          const regex = /(?:^|\b)(\d+)\/\d+/g;
-          let match: RegExpExecArray | null;
-          while ((match = regex.exec(instancesPart)) !== null) {
-            runningCount += parseInt(match[1] ?? '0', 10);
-          }
-        }
+        const runningCount = instanceCounts?.runningInstances ?? 0;
         parsedState = runningCount > 0 ? 'started' : 'empty';
       }
 
-      return [{ name, state: parsedState, urls } satisfies CfApp];
+      return [{ name, state: parsedState, ...(instanceCounts ?? {}), urls } satisfies CfApp];
     });
+}
+
+function parseInstanceCounts(value: string | undefined): InstanceCounts | undefined {
+  if (!value) return undefined;
+
+  const regex = /(?:^|\b)(\d+)\/(\d+)/g;
+  let runningInstances = 0;
+  let totalInstances = 0;
+  let matched = false;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(value)) !== null) {
+    matched = true;
+    runningInstances += Number.parseInt(match[1] ?? '0', 10);
+    totalInstances += Number.parseInt(match[2] ?? '0', 10);
+  }
+
+  return matched ? { runningInstances, totalInstances } : undefined;
 }
 
 export async function cfApps(cfHome?: string): Promise<CfApp[]> {

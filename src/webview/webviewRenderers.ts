@@ -700,6 +700,18 @@ export function getRendererScriptContent(): string {
       statusEl.innerHTML = getStatusInnerHtml(session);
     }
 
+    function renderAppBadge(app, isActive, isEmpty) {
+      if (isActive) return \`<span class="badge badge-debug">debugging</span>\`;
+
+      const hasInstanceCounts = typeof app.runningInstances === 'number' && typeof app.totalInstances === 'number';
+      const fallbackText = isEmpty ? 'started (0)' : app.state;
+      const badgeText = hasInstanceCounts
+        ? app.runningInstances + '/' + app.totalInstances
+        : fallbackText;
+      const badgeClass = app.state === 'started' ? 'started' : 'stopped';
+      return \`<span class="badge badge-\${badgeClass}">\${escape(badgeText)}</span>\`;
+    }
+
     function renderAppRow(app) {
       const isActive = !!state.activeSessions[app.name];
       const isStopped = app.state === 'stopped';
@@ -707,11 +719,7 @@ export function getRendererScriptContent(): string {
       const isDisabled = isStopped || isEmpty || isActive;
       const isChecked = state.selectedApps.has(app.name) && !isDisabled;
       const rowClass = isActive ? 'in-debug' : (isStopped || isEmpty ? 'stopped' : '');
-      const badge = isActive
-        ? \`<span class="badge badge-debug">debugging</span>\`
-        : (isEmpty
-            ? \`<span class="badge badge-stopped">started (0)</span>\`
-            : \`<span class="badge badge-\${app.state}">\${app.state}</span>\`);
+      const badge = renderAppBadge(app, isActive, isEmpty);
       return \`
         <label class="app-row \${rowClass}">
           <input type="checkbox" data-app="\${escape(app.name)}"

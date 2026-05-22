@@ -10,6 +10,8 @@ export function toCachedApp(app: AppNode): CfApp {
   return {
     name: app.name,
     state: toCachedAppState(app),
+    ...(app.runningInstances !== undefined ? { runningInstances: app.runningInstances } : {}),
+    ...(app.totalInstances !== undefined ? { totalInstances: app.totalInstances } : {}),
     urls: [...(app.routes ?? [])],
   };
 }

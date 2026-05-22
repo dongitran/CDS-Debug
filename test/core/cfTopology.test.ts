@@ -153,12 +153,22 @@ describe('cfTopology', () => {
             {
               name: 'sample-service-started',
               state: 'started',
+              runningInstances: 1,
+              totalInstances: 1,
               urls: ['sample-service-started.cfapps.example.com'],
             },
-            { name: 'sample-service-empty', state: 'empty', urls: [] },
+            {
+              name: 'sample-service-empty',
+              state: 'empty',
+              runningInstances: 0,
+              totalInstances: 1,
+              urls: [],
+            },
             {
               name: 'sample-service-stopped',
               state: 'stopped',
+              runningInstances: 0,
+              totalInstances: 1,
               urls: ['sample-service-stopped.cfapps.example.com'],
             },
           ],
@@ -219,7 +229,7 @@ describe('cfTopology', () => {
     );
 
     expect(getAppsFromTopologySync(EU10_ENDPOINT, 'demo-org-a', 'app')).toEqual([
-      { name: 'sample-service-started', state: 'started', urls: [] },
+      { name: 'sample-service-started', state: 'started', runningInstances: 1, urls: [] },
     ]);
     expect(getAppsFromTopologySync(EU10_ENDPOINT, 'demo-org-a', 'missing')).toBeUndefined();
   });

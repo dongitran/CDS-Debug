@@ -2984,17 +2984,23 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
   // ─── Ready Screen — App List and UI Details ────────────────────────────────
 
   test.describe('Ready Screen — App List and UI Details', () => {
-    test('Stopped app has disabled checkbox and stopped badge', async () => {
+    test('User can see instance count badges and disabled stopped apps', async () => {
       await withVsCodeSession({ credentialMode: 'env', cfScenario: 'success' }, async (workbenchPage) => {
         const webview = await openCdsDebugWebview(workbenchPage);
         await completeMappingToReady(webview);
 
+        const startedRow = webview.locator('.app-row', { hasText: 'mock-service-a' });
+        await expect(startedRow.locator('.badge-started')).toHaveText('1/1');
+        const scaledRow = webview.locator('.app-row', { hasText: 'mock-service-c' });
+        await expect(scaledRow.locator('.badge-started')).toHaveText('2/2');
+
         // mock-service-b is stopped — checkbox must be disabled
         await expect(webview.locator('input[type="checkbox"][data-app="mock-service-b"]')).toBeDisabled();
 
-        // The stopped app row carries a "stopped" badge and the "stopped" CSS class
+        // The stopped app row carries its instance count badge and the "stopped" CSS class
         const stoppedRow = webview.locator('.app-row', { hasText: 'mock-service-b' });
         await expect(stoppedRow.locator('.badge-stopped')).toBeVisible();
+        await expect(stoppedRow.locator('.badge-stopped')).toHaveText('0/1');
         await expect(webview.locator('.app-row.stopped', { hasText: 'mock-service-b' })).toBeVisible();
         await expect(stoppedRow.locator('.badge-started')).toHaveCount(0);
         await expect(stoppedRow.locator('.badge-debug')).toHaveCount(0);

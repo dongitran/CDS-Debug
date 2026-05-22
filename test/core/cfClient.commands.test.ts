@@ -131,6 +131,8 @@ describe('cfClient command wrappers', () => {
       {
         name: 'svc-one',
         state: 'started',
+        runningInstances: 1,
+        totalInstances: 1,
         urls: ['svc-one.cfapps.br10.hana.ondemand.com'],
       },
     ]);
@@ -150,6 +152,8 @@ describe('cfClient command wrappers', () => {
       {
         name: 'svc-two',
         state: 'stopped',
+        runningInstances: 0,
+        totalInstances: 1,
         urls: ['svc-two.cfapps.br10.hana.ondemand.com'],
       },
     ]);
@@ -182,6 +186,8 @@ describe('cfClient command wrappers', () => {
       {
         name: 'svc-dev',
         state: 'started',
+        runningInstances: 1,
+        totalInstances: 1,
         urls: ['svc-dev.cfapps.br10.hana.ondemand.com'],
       },
     ]);

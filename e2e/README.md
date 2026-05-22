@@ -48,7 +48,7 @@ Current suite validates end-to-end user behavior with comprehensive per-screen e
 21. Clicking Start Debug Sessions shows pending sessions immediately before the network call completes.
 
 ### Ready Screen — App List and UI Details (4 tests)
-22. Stopped app has disabled checkbox, stopped badge, `.app-row.stopped` CSS class; Started/Stopped section labels present.
+22. User can see instance count badges (`1/1`, `2/2`, `0/1`) and disabled stopped apps; Started/Stopped section labels present.
 23. CF info box shows region (eu10 — Europe (Frankfurt)), org, and space values.
 24. Footer shows "No started apps" and select-all count drops to (0) when all started apps have active sessions.
 25. Active app shows "debugging" badge, disabled checkbox, `.app-row.in-debug` CSS class; select-all count updates; label flips to "Deselect all"; "No apps found" on unmatched search.
