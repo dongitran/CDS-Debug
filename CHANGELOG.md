@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.7-pre.13] — 2026
+
+### Fixed
+
+- **Stopping a debug session no longer leaves Package Browser breakpoints stuck in the remote Node inspector** — `clearBreakpointsBeforeStop` now clears `file:` package breakpoints (opened from the Package Browser) using each session's own `sourceReference` against the original source path the breakpoint mirror bound, broadcast to every app session, instead of a path-only clear of the local `fsPath`. The path-only clear silently missed reference-bound copies, leaving the app paused at the breakpoint until a `cf restart`.
+
+### Changed
+
+- **CDS Debug no longer writes package source files into `node_modules`** — The Package Browser previously materialized a `.ts` served only via `sourcesContent` to disk. It now opens an already-existing local file read-only when present, otherwise a `debug:` URI served by the debugger; breakpoints there bind by `sourceReference` and are cleared on stop. This removes the `node_modules` pollution and the instability tied to writing files on Windows/WSL.
+
 ## [0.4.7-pre.9] — 2026
 
 ### Diagnostics

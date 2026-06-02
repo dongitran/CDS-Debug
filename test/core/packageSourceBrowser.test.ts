@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -1167,8 +1167,12 @@ describe('packageSourceBrowser', () => {
     );
   });
 
-  it('materializes missing source-reference package content and opens a file URI', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-materialize-'));
+  it('never writes a sourcesContent-only .ts to disk and opens a debug URI instead', async () => {
+    // Option A: CDS Debug must NOT materialize package source to disk. A `.ts` that the
+    // debugger only serves via `sourcesContent` (no on-disk file) is opened through a
+    // `debug:` URI, where vscode-js-debug binds the breakpoint by `sourceReference` and
+    // the pre-stop cleanup clears it — no node_modules pollution.
+    const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-no-write-'));
     const sourcePath = join(
       rootDir,
       'node_modules',
@@ -1179,15 +1183,14 @@ describe('packageSourceBrowser', () => {
       'src',
       'client.ts',
     );
-    const sourceContent = 'export function createClient() { return true; }\n';
     const requests: string[] = [];
     const session: MockDebugSession = {
-      id: 'session-materialize',
+      id: 'session-no-write',
       name: 'Debug: sample-service',
       customRequest: (command: string, args: unknown): Promise<unknown> => {
         void args;
         requests.push(command);
-        if (command === 'source') return Promise.resolve({ content: sourceContent });
+        if (command === 'source') return Promise.resolve({ content: 'must not be written' });
         return Promise.resolve({ sources: [] });
       },
     };
@@ -1200,21 +1203,21 @@ describe('packageSourceBrowser', () => {
         sourceReference: 91,
       });
 
-      await expect(readFile(sourcePath, 'utf8')).resolves.toBe(sourceContent);
-      expect(requests).toEqual(['source']);
-      expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
+      // No file created on disk.
+      await expect(access(sourcePath)).rejects.toMatchObject({ code: 'ENOENT' });
+      // No DAP `source` content fetch — there is nothing to write.
+      expect(requests).not.toContain('source');
+      // Opened via a debug: URI.
+      expect(vscodeMockState.asDebugSourceUri).toHaveBeenCalledTimes(1);
       expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scheme: 'file',
-          path: sourcePath,
-        }),
+        expect.objectContaining({ scheme: 'debug' }),
       );
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
 
-  it('materializes package content from an ancestor node_modules root outside workspace folders', async () => {
+  it('never writes to an ancestor node_modules root and opens a debug URI instead', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'cds-debug-package-ancestor-'));
     const localRoot = join(rootDir, 'apps', 'sample-service');
     const unrelatedWorkspace = join(rootDir, 'workspace-shell');
@@ -1229,15 +1232,14 @@ describe('packageSourceBrowser', () => {
       'src',
       'handler.ts',
     );
-    const sourceContent = 'export function handleSampleEvent() { return true; }\n';
     const requests: string[] = [];
     const session: MockDebugSession = {
-      id: 'session-ancestor-materialize',
+      id: 'session-ancestor-no-write',
       name: 'Debug: sample-service',
       customRequest: (command: string, args: unknown): Promise<unknown> => {
         void args;
         requests.push(command);
-        if (command === 'source') return Promise.resolve({ content: sourceContent });
+        if (command === 'source') return Promise.resolve({ content: 'must not be written' });
         return Promise.resolve({ sources: [] });
       },
     };
@@ -1258,14 +1260,11 @@ describe('packageSourceBrowser', () => {
         { localRoot },
       );
 
-      await expect(readFile(sourcePath, 'utf8')).resolves.toBe(sourceContent);
-      expect(requests).toEqual(['source']);
-      expect(vscodeMockState.asDebugSourceUri).not.toHaveBeenCalled();
+      await expect(access(sourcePath)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(requests).not.toContain('source');
+      expect(vscodeMockState.asDebugSourceUri).toHaveBeenCalledTimes(1);
       expect(vscodeMockState.openTextDocument).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scheme: 'file',
-          path: sourcePath,
-        }),
+        expect.objectContaining({ scheme: 'debug' }),
       );
     } finally {
       await rm(rootDir, { recursive: true, force: true });

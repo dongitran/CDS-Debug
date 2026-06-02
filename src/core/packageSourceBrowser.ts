@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import * as vscode from 'vscode';
 import { logInfo } from './logger';
-import { materializePackageSourceContent } from './packageSourceContent';
 import type {
   LoadedPackageEntry,
   LoadedPackageFile,
@@ -511,13 +510,13 @@ function mergeLoadedSources(batches: readonly LoadedPackageSource[][]): LoadedPa
   return batches.flat();
 }
 
-async function toOpenUri(
+function toOpenUri(
   session: vscode.DebugSession,
   source: LoadedPackageSource,
   options?: { localRoot?: string },
-): Promise<vscode.Uri> {
-  // Prefer a `file:` URI whenever the source path resolves to a local file on disk,
-  // ahead of the `sourceReference > 0` check. Rationale:
+): vscode.Uri {
+  // Prefer a `file:` URI whenever the source path ALREADY resolves to a local file on
+  // disk, ahead of the `sourceReference > 0` check. Rationale:
   //
   // vscode-js-debug, when a paused frame's source path exists locally, advertises that
   // source in `stackTrace` with `sourceReference = 0` and the resolvable local path,
@@ -531,24 +530,20 @@ async function toOpenUri(
   // package symlinks. The generated launch config maps remote package paths to
   // `${localRoot}/node_modules/...`; opening that same URI gives VS Code's breakpoint
   // verifier the same path identity that js-debug receives from source-map overrides.
+  //
+  // NOTE: we only OPEN files that already exist — CDS Debug never writes package source
+  // to disk. A `.ts` that exists only as `sourcesContent` (no on-disk file) falls through
+  // to the `debug:` URI below, where vscode-js-debug binds the breakpoint by
+  // `sourceReference` and the pre-stop cleanup (clearBreakpointsBeforeStop) clears it.
   const localCandidates = collectLocalFileCandidates(source, options?.localRoot);
   for (const candidate of localCandidates) {
     if (existsSync(candidate)) return vscode.Uri.file(candidate);
   }
 
-  const materialized = await materializePackageSourceContent(
-    session,
-    source,
-    collectDirectLocalFileCandidates(source),
-    options?.localRoot === undefined ? {} : { localRoot: options.localRoot },
-  );
-  if (materialized !== null) return vscode.Uri.file(materialized);
-
-  // No candidate exists on disk. Fall back to the debug-source URI for sources that
-  // vscode-js-debug serves via embedded `sourcesContent` (common for `.ts` files whose
-  // source-map-embedded path differs from the actual installed pnpm hash, e.g. when
-  // the package was built against one peer-dep resolution but installed against
-  // another).
+  // No file exists on disk. Use the debug-source URI for sources that vscode-js-debug
+  // serves via embedded `sourcesContent` (common for `.ts` files whose source-map-embedded
+  // path differs from the actual installed pnpm hash, e.g. when the package was built
+  // against one peer-dep resolution but installed against another).
   if (typeof source.sourceReference === 'number' && source.sourceReference > 0) {
     return vscode.debug.asDebugSourceUri(source, session);
   }
@@ -561,11 +556,6 @@ async function toOpenUri(
   const direct = toReadableLocalSourcePath(source);
   if (direct !== null) return vscode.Uri.file(direct);
   return vscode.Uri.file(source.path);
-}
-
-function collectDirectLocalFileCandidates(source: LoadedPackageSource): string[] {
-  const direct = toReadableLocalSourcePath(source);
-  return direct === null ? [] : [direct];
 }
 
 function collectLocalFileCandidates(
@@ -938,7 +928,7 @@ export async function openPackageSource(
   location?: PackageSourceLocation,
   options?: { localRoot?: string; appName?: string },
 ): Promise<vscode.Uri> {
-  const uri = await toOpenUri(session, source, options);
+  const uri = toOpenUri(session, source, options);
   logInfo(
     `[PackageBrowser] open scheme=${uri.scheme} path=${uri.path} fsPath=${uri.fsPath} query=${uri.query || '<none>'} sourceRef=${(source.sourceReference ?? 0).toString()} session=${session.id} toString=${uri.toString()}`,
   );

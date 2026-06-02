@@ -134,6 +134,33 @@ import {
   notifyRemoteInspectorStillOpen,
   scanAndWarnForDebuggerLiterals,
 } from '../../src/core/remoteInspectorCleanup';
+// Real module (not mocked here) — drives the opened-package-URI registry that
+// clearBreakpointsBeforeStop reads to recognize Package-browser file: URIs.
+import {
+  clearOpenedPackageUris,
+  trackOpenedPackageUri,
+} from '../../src/core/packageSourceBrowser';
+
+interface TrackedFileUri {
+  scheme: string;
+  path: string;
+  fsPath: string;
+  toString(): string;
+}
+
+function makePackageFileUri(fsPath: string): TrackedFileUri {
+  const raw = `file://${fsPath}`;
+  return { scheme: 'file', path: fsPath, fsPath, toString: () => raw };
+}
+
+function loadedSourcesFor(path: string, ref: number): ReturnType<typeof vi.fn> {
+  return vi.fn((command: string): Promise<unknown> => {
+    if (command === 'loadedSources') {
+      return Promise.resolve({ sources: [{ path, sourceReference: ref }] });
+    }
+    return Promise.resolve(undefined);
+  });
+}
 
 function createSession(customRequest?: ReturnType<typeof vi.fn>): MockDebugSession {
   return {
@@ -452,6 +479,72 @@ describe('clearBreakpointsBeforeStop', () => {
     // different extension/session.
     expect(session.customRequest).not.toHaveBeenCalled();
     expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
+  });
+
+  it("clears a tracked package file: URI by each session's own sourceReference and keeps it in VS Code state", async () => {
+    // The Package browser materialized a `.ts` under node_modules and opened it as a `file:`
+    // URI. VS Code binds it by the LOCAL fsPath, but the breakpoint mirror also bound the
+    // Node inspector by the ORIGINAL remote source path + each session's own sourceReference.
+    // A path-only fsPath clear (the legacy behavior) misses those ref-bound copies, leaving
+    // the inspector paused until `cf restart`. The fix must broadcast a ref-keyed clear for
+    // the remote path to every session, and must NOT drop the breakpoint from VS Code state
+    // because the local file still exists and stays valid for the next session.
+    const fsPath = '/home/me/code/node_modules/.pnpm/sample-kit@1/node_modules/sample-kit/dist/client.ts';
+    const remotePath = '/home/vcap/app/node_modules/.pnpm/sample-kit@1/node_modules/sample-kit/dist/client.ts';
+    const uri = makePackageFileUri(fsPath);
+
+    clearOpenedPackageUris('pkg-file-app');
+    trackOpenedPackageUri(
+      'pkg-file-app',
+      uri as unknown as Parameters<typeof trackOpenedPackageUri>[1],
+      { path: remotePath, sourceReference: 7 },
+    );
+
+    const breakpoint = new MockSourceBreakpoint(fsPath);
+    (breakpoint as unknown as { location: { uri: TrackedFileUri } }).location.uri = uri;
+    vscodeMockState.breakpoints = [breakpoint];
+
+    const rootRequest = loadedSourcesFor(remotePath, 7);
+    const childRequest = loadedSourcesFor(remotePath, 13);
+    debugSessionRegistryMockState.sessionsByApp.set('pkg-file-app', [
+      { id: 'root-id', name: 'root', customRequest: rootRequest },
+      { id: 'child-id', name: 'child', customRequest: childRequest },
+    ]);
+
+    try {
+      await clearBreakpointsBeforeStop(
+        'pkg-file-app',
+        { customRequest: rootRequest } as unknown as Parameters<typeof clearBreakpointsBeforeStop>[1],
+      );
+
+      // Each session receives a clear keyed by ITS OWN reference for the remote source path.
+      expect(rootRequest).toHaveBeenCalledWith('setBreakpoints', {
+        source: { path: remotePath, sourceReference: 7 },
+        breakpoints: [],
+        sourceModified: false,
+      });
+      expect(childRequest).toHaveBeenCalledWith('setBreakpoints', {
+        source: { path: remotePath, sourceReference: 13 },
+        breakpoints: [],
+        sourceModified: false,
+      });
+      // Path-only fallback for the remote path is broadcast to every session too.
+      expect(rootRequest).toHaveBeenCalledWith('setBreakpoints', {
+        source: { path: remotePath },
+        breakpoints: [],
+        sourceModified: false,
+      });
+      // The wrong-session reference must NOT be sent to root (would silently miss/mismatch).
+      expect(rootRequest).not.toHaveBeenCalledWith('setBreakpoints', {
+        source: { path: remotePath, sourceReference: 13 },
+        breakpoints: [],
+        sourceModified: false,
+      });
+      // file: package breakpoint is kept — the local file still exists.
+      expect(vscodeMockState.removeBreakpoints).not.toHaveBeenCalled();
+    } finally {
+      clearOpenedPackageUris('pkg-file-app');
+    }
   });
 });
 

@@ -5,7 +5,11 @@ import { scanForDebuggerLiterals, type DebuggerLiteralMatch } from './debuggerLi
 import { getDebugSessionsForApp } from './debugSessionRegistry';
 import { logError, logInfo, logWarn, showLogChannel } from './logger';
 import { incrementLocalTelemetryCounter } from './localTelemetry';
-import { clearOpenedPackageUris, getOpenedPackageUris } from './packageSourceBrowser';
+import {
+  clearOpenedPackageUris,
+  findOpenedPackageSourceByUri,
+  getOpenedPackageUris,
+} from './packageSourceBrowser';
 import { getRemoteInspectorCleanupSettings } from './remoteInspectorSettings';
 
 const RESTART_ACTION = 'Restart App';
@@ -99,11 +103,24 @@ export async function clearBreakpointsBeforeStop(
   //    session, and a path-only fallback for sibling sessions where the same source may
   //    have been propagated by `autoAttachChildProcesses`.
   //
-  // 3. Anything else (rare) — best-effort clear by URI path.
+  // 3. Package-browser `file:` URIs (materialized `.ts` under node_modules) — VS Code binds
+  //    by the local fsPath, but the breakpoint mirror additionally binds the inspector by
+  //    the ORIGINAL source path + per-session `sourceReference`. A path-only fsPath clear
+  //    misses those copies, so we run the mirror-bound paths through the same ref-aware
+  //    broadcast as category 2 (but keep the breakpoint in VS Code state — the file exists).
+  //
+  // 4. Anything else (rare) — best-effort clear by URI path.
   const sessions = collectAppSessions(appName, session);
   const appSessionIds = new Set(sessions.map((s) => s.id));
   const workspacePaths = new Set<string>();
   const debugBreakpoints: DebugUriBreakpointRecord[] = [];
+  // Logical source paths the breakpoint mirror may have bound for Package-browser `file:`
+  // URIs (materialized `.ts` under node_modules). VS Code binds these by the local fsPath,
+  // but the mirror ALSO binds them in the Node inspector keyed by the ORIGINAL remote
+  // source path + a session-scoped sourceReference. Those ref-bound copies survive a
+  // path-only fsPath clear, so we collect every path the mirror may have used and run them
+  // through the same ref-aware broadcast as `debug:` URIs.
+  const trackedFilePackagePaths = new Set<string>();
 
   // Pre-build the set of URI string forms that the Package browser opened for this app.
   // Any breakpoint on one of these URIs must be cleared on Stop regardless of whether the
@@ -122,10 +139,16 @@ export async function clearBreakpointsBeforeStop(
     const isTrackedPackageUri = trackedPackageUriStrings.has(uri.toString());
 
     if (uri.scheme === 'file') {
+      if (isTrackedPackageUri) {
+        // Package-browser `file:` URI (e.g. a materialized `.ts`). Route every path the
+        // mirror may have bound through the ref-aware broadcast below; do NOT add it to
+        // VS Code's orphan-removal set because the local file still exists and the
+        // breakpoint stays valid for the next session.
+        for (const candidate of collectMirrorBoundPaths(uri)) trackedFilePackagePaths.add(candidate);
+        continue;
+      }
       // Workspace files use path-based binding via vscode-js-debug's source registry.
-      // Include the path either if it is inside the workspace OR if Package browser opened
-      // this URI for the current app.
-      if (isInsideWorkspace(uri.fsPath) || isTrackedPackageUri) workspacePaths.add(uri.fsPath);
+      if (isInsideWorkspace(uri.fsPath)) workspacePaths.add(uri.fsPath);
       continue;
     }
 
@@ -147,6 +170,9 @@ export async function clearBreakpointsBeforeStop(
   }
 
   logBreakpointCleanupSummary(appName, sessions, workspacePaths, debugBreakpoints);
+  if (trackedFilePackagePaths.size > 0) {
+    logInfo(`[BreakpointCleanup ${appName}] trackedFilePackagePaths=${trackedFilePackagePaths.size.toString()} paths: ${[...trackedFilePackagePaths].join(', ')}`);
+  }
   logInfo(`[BreakpointCleanup ${appName}] session ids: ${sessions.map((s) => `${s.name}=${s.id}`).join(' | ')}`);
 
   const requests: Promise<boolean>[] = [];
@@ -163,7 +189,8 @@ export async function clearBreakpointsBeforeStop(
   // session uses that session's OWN sourceReference for the same file. Skip the query
   // entirely when there are no debug-URI breakpoints — only those bound by reference
   // need session-specific descriptors.
-  const sessionSourceMaps = debugBreakpoints.length > 0
+  const needsSessionSourceMaps = debugBreakpoints.length > 0 || trackedFilePackagePaths.size > 0;
+  const sessionSourceMaps = needsSessionSourceMaps
     ? await loadSessionSourceMaps(sessions)
     : new Map<string, Map<string, number>>();
   if (debugBreakpoints.length > 0) {
@@ -203,6 +230,23 @@ export async function clearBreakpointsBeforeStop(
       // Always send the path-only fallback too — covers adapters that bind by path and
       // the (rare) case where loadedSources returned 0/undefined for sourceReference.
       requests.push(clearBreakpointsForSourceDescriptor(target, { path: record.remotePath }));
+    }
+  }
+
+  // Package-browser `file:` URIs: the mirror bound these by the original source path +
+  // each session's own sourceReference, so a path-only clear of the local fsPath misses.
+  // Broadcast both a ref-keyed clear (when the session knows the source) and a path-only
+  // clear to every session, mirroring the `debug:` URI handling above.
+  for (const remotePath of trackedFilePackagePaths) {
+    for (const target of sessions) {
+      const sessionRef = sessionSourceMaps.get(target.id)?.get(remotePath);
+      if (sessionRef !== undefined) {
+        requests.push(clearBreakpointsForSourceDescriptor(target, {
+          path: remotePath,
+          sourceReference: sessionRef,
+        }));
+      }
+      requests.push(clearBreakpointsForSourceDescriptor(target, { path: remotePath }));
     }
   }
 
@@ -429,6 +473,21 @@ function logBreakpointCleanupSummary(
     const tagged = record.taggedSessionId ?? 'untagged';
     logInfo(`[BreakpointCleanup ${appName}] scheme=${record.scheme} path=${record.remotePath} ref=${ref} taggedSession=${tagged}`);
   }
+}
+
+// Every logical source path the breakpoint mirror may have used to bind a Package-browser
+// `file:` URI. The mirror keys its `setBreakpoints` by `record.source.path` (the original
+// loadedSources path — often a remote POSIX path or a `vscode-remote:` URI) and falls back
+// to the URI's own path, so we clear all of them to guarantee the inspector copy is removed.
+function collectMirrorBoundPaths(uri: vscode.Uri): string[] {
+  const paths: string[] = [];
+  const pushUnique = (value: string | undefined): void => {
+    if (typeof value === 'string' && value.length > 0 && !paths.includes(value)) paths.push(value);
+  };
+  pushUnique(findOpenedPackageSourceByUri(uri)?.source?.path);
+  pushUnique(uri.fsPath);
+  pushUnique(uri.path);
+  return paths;
 }
 
 function isInsideWorkspace(sourcePath: string): boolean {
