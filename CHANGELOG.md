@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.7-pre.14] — 2026
+
+### Fixed
+
+- **node_modules breakpoints now show as verified (red) instead of staying gray after the script loads** — When a CAP handler in `node_modules` loads lazily, `BreakpointResolver` already re-bound the breakpoint via a `customRequest` (working around vscode-js-debug#1510) so execution paused — but a `customRequest` does not update VS Code's gutter, so the dot stayed gray. It now also removes and re-adds the matching `file:` breakpoint **once per session** (deduped by session + path + line, so no repeated flicker), forcing VS Code to re-issue its own `setBreakpoints` against the now-loaded script and flip the dot to red. `debug:` URIs are left to the Package Browser mirror.
+
 ## [0.4.7-pre.13] — 2026
 
 ### Fixed

@@ -15,6 +15,11 @@ interface PendingReresolve {
 const pendingBySession = new Map<string, PendingReresolve>();
 let trackerRegistration: vscode.Disposable | undefined;
 
+// Tracks which (session, file, line) breakpoints we have already nudged VS Code to
+// re-verify, so the remove+add "poke" fires at most once per breakpoint per session —
+// no repeated flicker. See `refreshBreakpointsForUiVerification`.
+const uiVerifiedKeys = new Set<string>();
+
 /**
  * Re-sends `setBreakpoints` for any user breakpoint whose source matches a
  * script that just loaded inside the running debug session.
@@ -81,6 +86,7 @@ export function disposeBreakpointResolver(): void {
     clearTimeout(pending.timer);
   }
   pendingBySession.clear();
+  uiVerifiedKeys.clear();
 }
 
 function isCdsDebugSession(session: vscode.DebugSession): boolean {
@@ -138,7 +144,53 @@ async function runReresolve(session: vscode.DebugSession, paths: ReadonlySet<str
       const message = err instanceof Error ? err.message : String(err);
       logWarn(`[BreakpointResolver] setBreakpoints failed for ${sourcePath}: ${message}`);
     }
+    // The `customRequest` above binds the breakpoint in the inspector (so execution
+    // pauses), but VS Code only updates the gutter's verified state from its OWN
+    // setBreakpoints round-trips — a customRequest never flips the dot from gray to red.
+    // Now that the script has loaded (this runs on `loadedSource` reason=new), nudge VS
+    // Code to re-send its own setBreakpoints by removing and re-adding the breakpoint.
+    // Gated to once per (session, file, line) so it cannot flicker on repeated loads.
+    refreshBreakpointsForUiVerification(session, sourcePath);
   }
+}
+
+// Force VS Code to re-issue its own `setBreakpoints` for matching `file:` breakpoints by
+// removing and re-adding them. This is the only public API that updates the gutter's
+// verified state; `customRequest` cannot. Scoped to `file:` URIs (debug: URIs are owned
+// by the Package-browser breakpoint mirror) and to one poke per breakpoint per session.
+function refreshBreakpointsForUiVerification(session: vscode.DebugSession, sourcePath: string): void {
+  const toRefresh: vscode.SourceBreakpoint[] = [];
+  for (const breakpoint of vscode.debug.breakpoints) {
+    if (!(breakpoint instanceof vscode.SourceBreakpoint)) continue;
+    if (!breakpoint.enabled) continue;
+    const uri = breakpoint.location.uri;
+    if (uri.scheme !== 'file') continue;
+    if (!filesystemPathsEqual(uri.fsPath, sourcePath)) continue;
+    const key = uiVerificationKey(session.id, breakpoint);
+    if (uiVerifiedKeys.has(key)) continue;
+    uiVerifiedKeys.add(key);
+    toRefresh.push(breakpoint);
+  }
+  if (toRefresh.length === 0) return;
+
+  // Remove first, then add — adding an identical breakpoint while the original is still
+  // present risks VS Code collapsing it by location, which would leave the old (unverified)
+  // one in place. The package mirror uses the same ordering.
+  const replacements = toRefresh.map((breakpoint) => new vscode.SourceBreakpoint(
+    breakpoint.location,
+    breakpoint.enabled,
+    breakpoint.condition,
+    breakpoint.hitCondition,
+    breakpoint.logMessage,
+  ));
+  vscode.debug.removeBreakpoints(toRefresh);
+  vscode.debug.addBreakpoints(replacements);
+  logInfo(`[BreakpointResolver] UI re-verify: re-added ${toRefresh.length.toString()} file breakpoint(s) for ${sourcePath}`);
+}
+
+function uiVerificationKey(sessionId: string, breakpoint: vscode.SourceBreakpoint): string {
+  const { start } = breakpoint.location.range;
+  return `${sessionId}::${breakpoint.location.uri.fsPath}::${start.line.toString()}:${start.character.toString()}`;
 }
 
 interface DapSourceBreakpoint {
