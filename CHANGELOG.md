@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.23-pre.0] — 2026
+
+### Fixed
+
+- **The Package Browser returns to the launcher when its debug session ends** — Stopping the debugger from VS Code (or the remote server detaching/crashing/reconnecting) while the Package Browser was open used to leave an empty Packages screen with no sources. CDS Debug now detects that the browsed app is no longer attached and navigates back to the app-selection (launcher) screen automatically.
+
 ## [0.4.23] — 2026
 
 Stable release consolidating the `0.4.7-pre.x` line (changes since `0.4.4`).

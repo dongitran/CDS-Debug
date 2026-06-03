@@ -277,29 +277,31 @@ export function getPackageBrowserScriptContent(): string {
       vscode.postMessage({ type: 'LOAD_PACKAGE_SOURCES', payload: { appName: appName } });
     }
 
+    function returnToLauncherFromPackages() {
+      state.screen = SCREENS.READY;
+      state.packageBrowserAppName = null;
+      state.packageBrowserLoading = false;
+      state.packageBrowserError = null;
+      state.packageBaseEntries = [];
+      state.packageEntries = [];
+      resetPackageSearchState();
+      resetPackageTreeState();
+      render();
+    }
+
     function syncPackageBrowserAppSelection() {
       if (state.screen !== SCREENS.PACKAGES) return;
       var appNames = getPackageBrowserAppNames();
-      if (appNames.length === 0) {
-        state.packageBrowserAppName = null;
-        state.packageBrowserLoading = false;
-        state.packageBrowserError = null;
-        state.packageBaseEntries = [];
-        state.packageEntries = [];
-        resetPackageSearchState();
-        resetPackageTreeState();
-        render();
-        return;
-      }
+      // Stay on the Packages screen while the app we are browsing is still attached.
       if (state.packageBrowserAppName && appNames.indexOf(state.packageBrowserAppName) !== -1) {
         render();
         return;
       }
-      var nextAppName = appNames[0];
-      if (!nextAppName) return;
-      beginPackageSourceLoad(nextAppName, false);
-      render();
-      vscode.postMessage({ type: 'LOAD_PACKAGE_SOURCES', payload: { appName: nextAppName } });
+      // The app whose package sources we were browsing is no longer attached — debug was
+      // stopped from VS Code, the remote server detached or crashed, or a reconnect is in
+      // progress. Its loaded sources are gone, so return to the launcher (app selection)
+      // instead of stranding the user on an empty Packages screen.
+      returnToLauncherFromPackages();
     }
 
     function findTreeRowById(panel, nodeId) {

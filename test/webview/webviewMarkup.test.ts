@@ -846,3 +846,110 @@ describe('webview markup contracts', () => {
     expect(packageStyles).not.toContain('.packages-tree-badge');
   });
 });
+
+function runPackageBrowserScript(state: Record<string, unknown>): {
+  readonly call: (fn: string) => void;
+  readonly posted: PostedMessage[];
+  readonly renderCount: () => number;
+} {
+  let renders = 0;
+  const posted: PostedMessage[] = [];
+  const context: Record<string, unknown> = {
+    state,
+    SCREENS: { PACKAGES: 'packages', READY: 'ready' },
+    render: (): void => { renders += 1; },
+    vscode: {
+      postMessage: (message: PostedMessage): void => { posted.push(message); },
+    },
+  };
+  // The package browser script is a series of function declarations, so running it in a
+  // fresh context exposes each helper as a context property we can call directly.
+  vm.runInNewContext(getPackageBrowserScriptContent(), context, { timeout: 1000 });
+  return {
+    call: (fn: string): void => {
+      const target = context[fn];
+      if (typeof target !== 'function') throw new Error(`Function ${fn} was not defined`);
+      (target as () => void)();
+    },
+    posted,
+    renderCount: (): number => renders,
+  };
+}
+
+function makePackagesState(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    screen: 'packages',
+    packageBrowserAppName: 'sample-service',
+    packageBrowserSearchQuery: '',
+    packageBrowserLoading: false,
+    packageBrowserError: null,
+    packageBaseEntries: [],
+    packageEntries: [],
+    packageSearchRequestId: 0,
+    packageSearchPending: false,
+    expandedPackageBranchIds: [],
+    searchPackageBranchStates: {},
+    selectedPackageFileId: null,
+    activeSessions: { 'sample-service': { status: 'ATTACHED' } },
+    ...overrides,
+  };
+}
+
+describe('package browser returns to launcher when the session ends', () => {
+  it('stays on the Packages screen while the browsed app is still attached', () => {
+    const state = makePackagesState();
+    const harness = runPackageBrowserScript(state);
+
+    harness.call('syncPackageBrowserAppSelection');
+
+    expect(state.screen).toBe('packages');
+    expect(state.packageBrowserAppName).toBe('sample-service');
+  });
+
+  it('returns to the launcher when the browsed app debug session exits', () => {
+    const state = makePackagesState({ activeSessions: {} });
+    const harness = runPackageBrowserScript(state);
+
+    harness.call('syncPackageBrowserAppSelection');
+
+    expect(state.screen).toBe('ready');
+    expect(state.packageBrowserAppName).toBeNull();
+    expect(state.packageEntries).toEqual([]);
+    expect(state.packageBaseEntries).toEqual([]);
+  });
+
+  it('returns to the launcher when the browsed app drops to a non-attached status (crash/reconnect)', () => {
+    const state = makePackagesState({
+      activeSessions: { 'sample-service': { status: 'TUNNELING' } },
+    });
+    const harness = runPackageBrowserScript(state);
+
+    harness.call('syncPackageBrowserAppSelection');
+
+    expect(state.screen).toBe('ready');
+    expect(state.packageBrowserAppName).toBeNull();
+  });
+
+  it('returns to the launcher even if a different app is still attached', () => {
+    const state = makePackagesState({
+      activeSessions: { 'other-service': { status: 'ATTACHED' } },
+    });
+    const harness = runPackageBrowserScript(state);
+
+    harness.call('syncPackageBrowserAppSelection');
+
+    // Does not silently switch to another app — goes back to app selection.
+    expect(state.screen).toBe('ready');
+    expect(state.packageBrowserAppName).toBeNull();
+  });
+
+  it('does nothing when not on the Packages screen', () => {
+    const state = makePackagesState({ screen: 'ready', activeSessions: {} });
+    const harness = runPackageBrowserScript(state);
+
+    harness.call('syncPackageBrowserAppSelection');
+
+    expect(state.screen).toBe('ready');
+    expect(harness.renderCount()).toBe(0);
+  });
+});
