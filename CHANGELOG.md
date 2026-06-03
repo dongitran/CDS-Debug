@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.23-pre.1] — 2026
+
+### Fixed
+
+- **Package Browser (`debug:`) breakpoints now turn verified (red) once bound** — Breakpoints set in `node_modules`/package sources opened from the Package Browser as `debug:` URIs (when the `.ts` is not on disk) were bound and paused execution, but VS Code's gutter stayed gray because the bind happened via `customRequest`, which the gutter ignores. The breakpoint mirror now nudges VS Code to re-issue its own `setBreakpoints` by re-adding the breakpoint once per verifying session (keyed by session + path + line, so no repeated flicker), flipping the dot to red. This complements the `file:` re-verify fix from `0.4.22`.
+
 ## [0.4.23-pre.0] — 2026
 
 ### Fixed

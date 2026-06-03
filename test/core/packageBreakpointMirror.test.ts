@@ -745,4 +745,57 @@ describe('packageBreakpointMirror', () => {
       && message.includes('duration='))).toBe(true);
   });
 
+  it('nudges a debug: URI package breakpoint once so VS Code re-verifies it (gray → red)', async () => {
+    const appName = 'sample-service';
+    const debugUri = createUri('debug', SOURCE_PATH, 'session=session-nudge&ref=41');
+    const breakpoint = createBreakpoint(debugUri);
+    const session = createVerifyingSession('session-nudge');
+    vscodeMockState.breakpoints = [breakpoint];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [session]);
+    registerOpenedPackageSource(appName, debugUri, session);
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [breakpoint], removed: [], changed: [] });
+
+    await vi.waitFor(() => {
+      expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
+    });
+    // The mirror verified the breakpoint on the debug: URI but VS Code's gutter only updates
+    // from its own setBreakpoints, so the breakpoint is removed + re-added on the same URI to
+    // force a re-verify.
+    expect(vscodeMockState.removeBreakpoints).toHaveBeenCalledWith([breakpoint]);
+    const replacements = vscodeMockState.addBreakpoints.mock.calls[0]?.[0] as InstanceType<typeof MockSourceBreakpoint>[];
+    expect(replacements[0]?.location.uri.toString()).toBe(debugUri.toString());
+    expect(replacements[0]?.location.uri.scheme).toBe('debug');
+    expect(replacements[0]?.location.range).toEqual(breakpoint.location.range);
+  });
+
+  it('does not re-nudge the same debug: URI breakpoint after the migration guard clears', async () => {
+    const appName = 'sample-service';
+    const debugUri = createUri('debug', SOURCE_PATH, 'session=session-nudge-once&ref=41');
+    const breakpoint = createBreakpoint(debugUri);
+    const session = createVerifyingSession('session-nudge-once');
+    vscodeMockState.breakpoints = [breakpoint];
+    debugSessionRegistryMockState.sessionsByApp.set(appName, [session]);
+    registerOpenedPackageSource(appName, debugUri, session);
+
+    initializePackageBreakpointMirror();
+    vscodeMockState.breakpointListener?.({ added: [breakpoint], removed: [], changed: [] });
+    await vi.waitFor(() => {
+      expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
+    });
+
+    const callsAfterFirst = session.customRequest.mock.calls.length;
+    // Wait past MIGRATION_GUARD_MS so the next event is not suppressed by the guard — proving
+    // the one-time key (not just the guard) prevents a second nudge.
+    await new Promise((resolve) => { setTimeout(resolve, 600); });
+    vscodeMockState.breakpointListener?.({ added: [], removed: [], changed: [breakpoint] });
+    await vi.waitFor(() => {
+      expect(session.customRequest.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+    });
+
+    // The mirror re-ran, but the one-time nudge did not fire again.
+    expect(vscodeMockState.addBreakpoints).toHaveBeenCalledTimes(1);
+  });
+
 });

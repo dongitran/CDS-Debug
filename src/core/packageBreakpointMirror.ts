@@ -77,6 +77,10 @@ const SOURCE_URI_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
 let listener: vscode.Disposable | undefined;
 const inFlightByKey = new Map<string, Promise<void>>();
 const migrationGuardUris = new Set<string>();
+// Tracks which (verifying session, source, line) breakpoints we have already nudged VS Code
+// to re-verify on a `debug:` URI, so the remove+add poke fires at most once per breakpoint
+// per session — no repeated flicker. See `nudgeDebugUriBreakpointsForUiVerificationOnce`.
+const uiVerifiedKeys = new Set<string>();
 
 export function initializePackageBreakpointMirror(): void {
   if (listener !== undefined) return;
@@ -90,6 +94,7 @@ export function disposePackageBreakpointMirror(): void {
   listener = undefined;
   inFlightByKey.clear();
   migrationGuardUris.clear();
+  uiVerifiedKeys.clear();
 }
 
 async function handleBreakpointChange(event: vscode.BreakpointsChangeEvent): Promise<void> {
@@ -267,7 +272,11 @@ function promoteBreakpointToVerifiedUri(
   const targetUri = buildVerifiedSourceUri(source, target);
   logInfo(`[BPMirror ${source.appName}] promotion target=${target.session.id} targetScheme=${targetUri.scheme} sameUri=${(targetUri.toString() === source.uri.toString()).toString()} ref=${String(target.descriptor.sourceReference ?? 0)} verifiedSessions=${countVerifiedResults(results).toString()} duration=${elapsedMs(startedAt)} path=${source.sourcePath}`);
   if (targetUri.toString() === source.uri.toString()) {
-    refreshVerifiedBreakpointsOnSameUri(source, targetUri);
+    if (source.uri.scheme === 'file') {
+      refreshVerifiedBreakpointsOnSameUri(source, targetUri);
+    } else {
+      nudgeDebugUriBreakpointsForUiVerificationOnce(source, target);
+    }
     return;
   }
   const breakpointsToMigrate = collectBreakpointsForMigration(source, targetUri);
@@ -304,6 +313,42 @@ function refreshVerifiedBreakpointsOnSameUri(source: AffectedPackageSource, uri:
     vscode.debug.addBreakpoints(replacements);
   });
   logInfo(`[BPMirror ${source.appName}] refreshed ${breakpointsToRefresh.length.toString()} verified file breakpoint(s) uriScheme=${uri.scheme} duration=${elapsedMs(startedAt)} path=${source.sourcePath}`);
+}
+
+// VS Code only flips a breakpoint's gutter to "verified" (red) from its OWN setBreakpoints
+// round-trips; the mirror binds via `customRequest`, which the gutter ignores. For `debug:`
+// URIs — package sources opened from the Package Browser when the `.ts` is not on disk —
+// there is no local file to anchor to, so the breakpoint stays gray even though it is bound
+// (execution pauses). Nudge VS Code to re-send its own setBreakpoints by removing and
+// re-adding the breakpoint on the same `debug:` URI. Gated to once per (verifying session,
+// source, line) so it cannot flicker on repeated breakpoint-change events.
+function nudgeDebugUriBreakpointsForUiVerificationOnce(
+  source: AffectedPackageSource,
+  target: MirrorTargetResult,
+): void {
+  const startedAt = Date.now();
+  const toRefresh = vscode.debug.breakpoints.filter((bp): bp is vscode.SourceBreakpoint => {
+    if (!(bp instanceof vscode.SourceBreakpoint)) return false;
+    if (!breakpointMatchesSource(bp, source)) return false;
+    const { start } = bp.location.range;
+    const key = `${target.session.id}::${source.sourcePath}::${start.line.toString()}:${start.character.toString()}`;
+    if (uiVerifiedKeys.has(key)) return false;
+    uiVerifiedKeys.add(key);
+    return true;
+  });
+  if (toRefresh.length === 0) return;
+  const replacements = toRefresh.map((bp) => new vscode.SourceBreakpoint(
+    new vscode.Location(source.uri, bp.location.range),
+    bp.enabled,
+    bp.condition,
+    bp.hitCondition,
+    bp.logMessage,
+  ));
+  runWithMigrationGuard([source.uri], () => {
+    vscode.debug.removeBreakpoints(toRefresh);
+    vscode.debug.addBreakpoints(replacements);
+  });
+  logInfo(`[BPMirror ${source.appName}] UI re-verify nudge: re-added ${toRefresh.length.toString()} breakpoint(s) uriScheme=${source.uri.scheme} duration=${elapsedMs(startedAt)} path=${source.sourcePath}`);
 }
 
 function findPromotionTarget(
