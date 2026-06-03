@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.23] — 2026
+
+Stable release consolidating the `0.4.7-pre.x` line (changes since `0.4.4`).
+
+### Highlights
+
+- **No-install package debugging** — the Package Browser opens dependency sources from the running app and no longer writes files into `node_modules`.
+- **Reliable package breakpoints** — breakpoints in `node_modules`/package sources show as verified (red) once their script loads; stopping a session clears remote breakpoints so the app no longer stays paused in the Node inspector (no `cf restart`).
+- **CF instance counts & safe scaling** from the panel, and **auto-retrying background topology sync** after a failed or canceled run.
+
 ## [0.4.7-pre.14] — 2026
 
 ### Fixed

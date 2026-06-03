@@ -20,32 +20,32 @@ interface ChangelogVersion {
 
 const CHANGELOG: ChangelogVersion[] = [
   {
-    version: '0.4.0',
-    label: 'v0.4.0',
+    version: '0.4.23',
+    label: 'v0.4.23',
     features: [
       {
+        icon: '📦',
+        title: 'No-Install Package Debugging',
+        description:
+          'Open and debug dependency sources straight from the running app via the Package Browser — CDS Debug no longer writes any files into your <code>node_modules</code>.',
+      },
+      {
         icon: '🎯',
-        title: 'Reliable Breakpoints',
+        title: 'Accurate Breakpoint State',
         description:
-          'Breakpoints now bind more consistently on first attach across CAP workers, lazy-loaded scripts, package sources, source maps, and Windows path casing edge cases.',
+          'Breakpoints in <code>node_modules</code> and package sources now turn verified (red) once their script loads, and stopping a session clears them reliably so the app no longer stays paused.',
       },
       {
-        icon: '⚡',
-        title: 'Faster CF Navigation',
+        icon: '📊',
+        title: 'CF Instance Insight & Scaling',
         description:
-          '<code>cf-sync</code> topology now powers more org, space, and app navigation, refreshes orgs during login, and keeps the 50-region catalog current.',
+          'See Cloud Foundry app instance counts and scale instances safely, right from the panel.',
       },
       {
-        icon: '🧭',
-        title: 'Shared Scope & Mapping',
+        icon: '🔄',
+        title: 'Self-Healing Background Sync',
         description:
-          '<code>sapCap.currentScope</code> sync and explicit app-folder mappings keep Cloud Foundry region, org, space, and local source context aligned.',
-      },
-      {
-        icon: '🛡️',
-        title: 'Safer Debug Stop',
-        description:
-          'Stop and restart now clean ports, breakpoints, stale tunnels, and target the likely main Node process by default.',
+          'The Cloud Foundry topology cache now retries automatically after a failed or canceled sync, keeping org, space, and app navigation current.',
       },
     ],
     fixes: [],
