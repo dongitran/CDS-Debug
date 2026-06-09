@@ -21,6 +21,13 @@ interface LoadPackageEntriesOptions {
   maxAttempts?: number;
   emptyRetryDelayMs?: number;
   loadedSourcesRequestTimeoutMs?: number;
+  makeWakeSignal?: () => Promise<void>;
+}
+
+interface NormalizedLoadPackageEntriesOptions {
+  maxAttempts: number;
+  emptyRetryDelayMs: number;
+  loadedSourcesRequestTimeoutMs: number;
 }
 
 interface ParsedPackageFile {
@@ -59,7 +66,7 @@ export interface OpenedPackageSourceRecord {
   sessionName?: string;
 }
 
-const DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS: Required<LoadPackageEntriesOptions> = {
+const DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS: NormalizedLoadPackageEntriesOptions = {
   maxAttempts: 60,
   emptyRetryDelayMs: 1_000,
   loadedSourcesRequestTimeoutMs: 10_000,
@@ -431,7 +438,7 @@ function stampSourceSession(
 
 function normalizeLoadPackageEntriesOptions(
   options: LoadPackageEntriesOptions | undefined,
-): Required<LoadPackageEntriesOptions> {
+): NormalizedLoadPackageEntriesOptions {
   const maxAttempts = options?.maxAttempts ?? DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS.maxAttempts;
   const emptyRetryDelayMs = options?.emptyRetryDelayMs ?? DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS.emptyRetryDelayMs;
   const loadedSourcesRequestTimeoutMs = options?.loadedSourcesRequestTimeoutMs
@@ -700,6 +707,7 @@ export async function loadPackageEntriesFromSessions(
   }
 
   const resolvedOptions = normalizeLoadPackageEntriesOptions(options);
+  const makeWakeSignal = options?.makeWakeSignal;
   let lastNonTimeoutError: string | null = null;
   let sawAnySessions = false;
 
@@ -776,7 +784,9 @@ export async function loadPackageEntriesFromSessions(
         `[Packages] Package sources are not ready yet for ${appName}. Retrying in ${resolvedOptions.emptyRetryDelayMs.toString()}ms.`,
       );
       if (resolvedOptions.emptyRetryDelayMs > 0) {
-        await delay(resolvedOptions.emptyRetryDelayMs);
+        const waitDelay = delay(resolvedOptions.emptyRetryDelayMs);
+        const wakeSignal = makeWakeSignal?.();
+        await (wakeSignal ? Promise.race([waitDelay, wakeSignal]) : waitDelay);
       }
       continue;
     }

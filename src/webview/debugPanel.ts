@@ -705,7 +705,21 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const rootSession = getE2eActiveDebugSessionForApp(appName) ?? getActiveDebugSessionForApp(appName);
     log(`Packages requested. Root session: ${rootSession ? `${rootSession.name} [${rootSession.id}]` : 'none'}`);
 
-    const packages = await loadPackageEntriesFromSessions(appName, resolveSessions, log);
+    const pendingWakeResolvers: (() => void)[] = [];
+    const sessionDisposable = vscode.debug.onDidStartDebugSession(() => {
+      for (const resolve of pendingWakeResolvers.splice(0)) resolve();
+    });
+    const makeWakeSignal = (): Promise<void> =>
+      new Promise<void>((resolve) => { pendingWakeResolvers.push(resolve); });
+
+    let packages: LoadedPackageEntry[];
+    try {
+      packages = await loadPackageEntriesFromSessions(appName, resolveSessions, log, { makeWakeSignal });
+    } finally {
+      sessionDisposable.dispose();
+      for (const resolve of pendingWakeResolvers.splice(0)) resolve();
+    }
+
     this.packageEntriesByApp.set(appName, packages);
     this.packageSearchIndexByApp.set(appName, this.createPackageSearchIndexForApp(appName, packages));
     return packages;
