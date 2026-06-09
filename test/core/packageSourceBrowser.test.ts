@@ -624,7 +624,7 @@ describe('packageSourceBrowser', () => {
     expect(entries[0]?.files[0]?.source.debugSessionId).toBe('session-child-delayed-child');
   });
 
-  it('uses a 15-attempt one-second default package warm-up interval', async () => {
+  it('uses a 30-attempt one-second default package warm-up interval', async () => {
     const logs: string[] = [];
     const parentSession: MockDebugSession = {
       id: 'session-parent-default-retry',
@@ -664,7 +664,7 @@ describe('packageSourceBrowser', () => {
     );
 
     expect(entries).toHaveLength(1);
-    expect(logs).toContain('[Packages] Attempt 1/15 for sample-service.');
+    expect(logs).toContain('[Packages] Attempt 1/30 for sample-service.');
     expect(logs.some((message) => message.includes('Retrying in 1000ms'))).toBe(true);
   });
 
