@@ -62,7 +62,7 @@ export interface OpenedPackageSourceRecord {
 const DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS: Required<LoadPackageEntriesOptions> = {
   maxAttempts: 15,
   emptyRetryDelayMs: 1_000,
-  loadedSourcesRequestTimeoutMs: 1_500,
+  loadedSourcesRequestTimeoutMs: 10_000,
 };
 
 const SOURCE_URI_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
