@@ -8,8 +8,15 @@ const MAX_RESPONSE_BYTES = 64 * 1024;
 // Probes the Node inspector HTTP endpoint through the local end of the SSH tunnel.
 // A plain TCP "is port listening" probe was insufficient because `cf ssh -L` binds the
 // local port the moment the SSH session is up — even when the remote inspector on 9229
-// has not yet finished initializing. Hitting `/json/version` exercises the forwarded
-// channel end-to-end, so success means the remote inspector is reachable and ready.
+// has not yet finished initializing.
+//
+// We hit `/json/list` (not `/json/version`) on purpose: `/json/version` returns inspector
+// metadata as soon as the inspector HTTP server is up, but vscode-js-debug attaches by
+// fetching `/json/list` and connecting to a target's `webSocketDebuggerUrl`. That list can
+// still be empty for a moment after `/json/version` answers (no debuggable execution
+// context yet). Waiting for a non-empty `/json/list` means that when we hand off to
+// js-debug, it finds a target immediately and the child "Remote Process" session appears
+// reliably instead of after js-debug's own internal retries.
 export async function waitInspectorReady(
   port: number,
   timeoutMs: number,
@@ -44,7 +51,7 @@ function probeInspectorOnce(port: number): Promise<boolean> {
       {
         host: '127.0.0.1',
         port,
-        path: '/json/version',
+        path: '/json/list',
         method: 'GET',
         timeout: PROBE_REQUEST_TIMEOUT_MS,
       },
@@ -66,7 +73,7 @@ function probeInspectorOnce(port: number): Promise<boolean> {
           }
           body += chunk;
         });
-        res.on('end', () => { finish(looksLikeInspectorMetadata(body)); });
+        res.on('end', () => { finish(hasDebuggableTarget(body)); });
         res.on('error', () => { finish(false); });
       },
     );
@@ -80,14 +87,19 @@ function probeInspectorOnce(port: number): Promise<boolean> {
   });
 }
 
-function looksLikeInspectorMetadata(body: string): boolean {
+function hasDebuggableTarget(body: string): boolean {
   try {
     const parsed: unknown = JSON.parse(body);
-    if (typeof parsed !== 'object' || parsed === null) return false;
-    // Node inspector `/json/version` returns an object including at least "Browser"
-    // (e.g. "node.js/v20.11.0") and "webSocketDebuggerUrl". We accept either field as
-    // proof the response came from the inspector and not from some other HTTP server.
-    return 'Browser' in parsed || 'webSocketDebuggerUrl' in parsed;
+    // Node inspector `/json/list` returns an array of targets, each with a
+    // `webSocketDebuggerUrl`. A non-empty array with at least one such URL means there is
+    // a real execution context ready for js-debug to attach to. An empty array means the
+    // inspector is up but has no target yet, so we keep waiting.
+    if (!Array.isArray(parsed)) return false;
+    return parsed.some(
+      (entry) => typeof entry === 'object'
+        && entry !== null
+        && typeof (entry as { webSocketDebuggerUrl?: unknown }).webSocketDebuggerUrl === 'string',
+    );
   } catch {
     return false;
   }

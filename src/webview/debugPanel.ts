@@ -105,6 +105,7 @@ import {
   searchPackageEntries,
   type PackageSearchIndex,
 } from '../core/packageSourceBrowser';
+import { getLoadedSourcesForSessionIds, onLoadedSourceChanged } from '../core/loadedSourceRegistry';
 import {
   applyE2eBridgeCommand,
   getE2eActiveDebugSessionForApp,
@@ -705,19 +706,33 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     const rootSession = getE2eActiveDebugSessionForApp(appName) ?? getActiveDebugSessionForApp(appName);
     log(`Packages requested. Root session: ${rootSession ? `${rootSession.name} [${rootSession.id}]` : 'none'}`);
 
+    // Push-collected sources for whichever sessions currently belong to the app. Resolved
+    // lazily each attempt so child "Remote Process" sessions that appear mid-warm-up are
+    // included as soon as they exist.
+    const getExtraSources = (): readonly LoadedPackageSource[] =>
+      getLoadedSourcesForSessionIds(resolveSessions().map((session) => session.id));
+
+    // Wake the warm-up retry the instant a new session starts OR a loadedSource event
+    // arrives, instead of sleeping the full poll interval.
     const pendingWakeResolvers: (() => void)[] = [];
-    const sessionDisposable = vscode.debug.onDidStartDebugSession(() => {
-      for (const resolve of pendingWakeResolvers.splice(0)) resolve();
-    });
+    const wakeAll = (): void => { for (const resolve of pendingWakeResolvers.splice(0)) resolve(); };
+    const sessionDisposable = vscode.debug.onDidStartDebugSession(wakeAll);
+    const loadedSourceDisposable = onLoadedSourceChanged(wakeAll);
     const makeWakeSignal = (): Promise<void> =>
       new Promise<void>((resolve) => { pendingWakeResolvers.push(resolve); });
 
     let packages: LoadedPackageEntry[];
     try {
-      packages = await loadPackageEntriesFromSessions(appName, resolveSessions, log, { makeWakeSignal });
+      packages = await loadPackageEntriesFromSessions(
+        appName,
+        resolveSessions,
+        log,
+        { makeWakeSignal, getExtraSources },
+      );
     } finally {
       sessionDisposable.dispose();
-      for (const resolve of pendingWakeResolvers.splice(0)) resolve();
+      loadedSourceDisposable.dispose();
+      wakeAll();
     }
 
     this.packageEntriesByApp.set(appName, packages);

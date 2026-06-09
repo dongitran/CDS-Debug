@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.31] — 2026
+
+### Fixed
+
+- **Package Browser loads reliably on slow / high-latency CF regions** — Clicking **Package** after starting a debug session could intermittently fail to load any packages (or time out after ~60 s) on slow orgs such as `ca10`, because the warm-up depended on *polling* the `loadedSources` request at exactly the right moment while the child "Remote Process" session appeared. This is now addressed on three fronts:
+  - **Push-based source collection** — CDS Debug now records the DAP `loadedSource` events that vscode-js-debug emits for every (including child) session, accumulating package sources continuously instead of relying solely on polling. Sources that arrive between polls — or before the browser is opened — are no longer missed.
+  - **A single slow `loadedSources` request no longer aborts the whole warm-up** — a per-request timeout is treated as "not ready yet" and retried, instead of failing the entire load. One laggy request on a slow inspector tunnel used to kill the attempt outright.
+  - **Deadline instead of a fixed attempt count** — the warm-up now waits up to a total budget (180 s) for the child session to appear, rather than a hard 60-attempt ceiling, and wakes immediately when a new session starts or a source event arrives.
+- **More reliable inspector readiness probe** — the pre-attach probe now waits for a non-empty `/json/list` (a real debuggable target) instead of `/json/version` (inspector metadata only), so vscode-js-debug finds a target immediately and the child session appears dependably.
+
 ## [0.4.23-pre.1] — 2026
 
 ### Fixed

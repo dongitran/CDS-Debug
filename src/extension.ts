@@ -11,6 +11,7 @@ import { disposeBreakpointSnapshotManager, initializeBreakpointSnapshotManager }
 import { disposeBreakpointResolver, initializeBreakpointResolver } from './core/breakpointResolver';
 import { disposePackageBreakpointMirror, initializePackageBreakpointMirror } from './core/packageBreakpointMirror';
 import { clearOpenedPackageUris } from './core/packageSourceBrowser';
+import { clearLoadedSourceRegistry, registerLoadedSourceTracker } from './core/loadedSourceRegistry';
 import { disposePackageTabDeduplicator, initializePackageTabDeduplicator } from './core/packageTabDeduplicator';
 import { showWhatsNewIfNeeded } from './core/whatsNewManager';
 import { WhatsNewPanel } from './webview/whatsNewPanel';
@@ -32,6 +33,11 @@ export function activate(context: vscode.ExtensionContext): void {
   initializeBreakpointResolver();
   initializePackageBreakpointMirror();
   initializePackageTabDeduplicator();
+
+  // Push-based source collection: records `loadedSource` DAP events from every debug
+  // session so the Package browser can warm up from accumulated sources instead of
+  // relying solely on polling `loadedSources` at the right moment.
+  context.subscriptions.push(registerLoadedSourceTracker());
 
   // Belt-and-suspenders cleanup of the Package browser URI tracker around debug
   // session lifecycle events. The tracker is an in-memory Map that survives across
@@ -156,6 +162,7 @@ export async function deactivate(): Promise<void> {
   disposeBreakpointResolver();
   disposePackageBreakpointMirror();
   disposePackageTabDeduplicator();
+  clearLoadedSourceRegistry();
 
   // Best-effort cleanup of active debug configurations on normal VS Code shutdown.
   // Removes the Debug: entries from launch.json so the file is not left dirty when the

@@ -50,11 +50,16 @@ async function findFreePort(): Promise<number> {
   return port;
 }
 
-const VALID_INSPECTOR_JSON = JSON.stringify({
-  Browser: 'node.js/v20.11.0',
-  'Protocol-Version': '1.3',
-  webSocketDebuggerUrl: 'ws://127.0.0.1:9229/abc',
-});
+const VALID_TARGET_LIST_JSON = JSON.stringify([
+  {
+    description: '',
+    id: 'abc',
+    title: 'node[1]',
+    type: 'node',
+    url: 'file:///home/vcap/app/index.js',
+    webSocketDebuggerUrl: 'ws://127.0.0.1:9229/abc',
+  },
+]);
 
 let running: RunningServer | undefined;
 
@@ -70,14 +75,26 @@ afterEach(async () => {
 });
 
 describe('waitInspectorReady', () => {
-  it('returns true when the inspector responds with valid /json/version metadata', async () => {
+  it('returns true when /json/list contains a target with a webSocketDebuggerUrl', async () => {
     running = await startServer(({ response }) => {
       response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(VALID_INSPECTOR_JSON);
+      response.end(VALID_TARGET_LIST_JSON);
     });
 
     await expect(waitInspectorReady(running.port, 2_000, 50)).resolves.toBe(true);
     expect(running.attempts()).toBe(1);
+  });
+
+  it('treats an empty /json/list (inspector up, no target yet) as not-ready and retries', async () => {
+    running = await startServer(({ response, attempt }) => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      // Inspector HTTP is up but no debuggable execution context exists yet, then one
+      // appears on the third probe.
+      response.end(attempt < 3 ? '[]' : VALID_TARGET_LIST_JSON);
+    });
+
+    await expect(waitInspectorReady(running.port, 2_000, 50)).resolves.toBe(true);
+    expect(running.attempts()).toBeGreaterThanOrEqual(3);
   });
 
   it('retries while the local listener is missing and times out to false', async () => {
@@ -109,10 +126,19 @@ describe('waitInspectorReady', () => {
     await expect(waitInspectorReady(running.port, 250, 50)).resolves.toBe(false);
   });
 
-  it('rejects 200 JSON without inspector-specific fields', async () => {
+  it('rejects 200 JSON that is not a target array (e.g. /json/version object)', async () => {
     running = await startServer(({ response }) => {
       response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ ok: true }));
+      response.end(JSON.stringify({ Browser: 'node.js/v20.11.0', webSocketDebuggerUrl: 'ws://x' }));
+    });
+
+    await expect(waitInspectorReady(running.port, 250, 50)).resolves.toBe(false);
+  });
+
+  it('rejects a target array whose entries lack a webSocketDebuggerUrl', async () => {
+    running = await startServer(({ response }) => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify([{ id: 'x', type: 'node' }]));
     });
 
     await expect(waitInspectorReady(running.port, 250, 50)).resolves.toBe(false);
@@ -128,7 +154,7 @@ describe('waitInspectorReady', () => {
         return;
       }
       response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(VALID_INSPECTOR_JSON);
+      response.end(VALID_TARGET_LIST_JSON);
     });
 
     await expect(waitInspectorReady(running.port, 2_000, 50)).resolves.toBe(true);

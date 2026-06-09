@@ -66,6 +66,8 @@
     "runtimeargs",
     "runtimeexecutable",
     "debuggable",
+    "debuggee",
+    "laggy",
     "readonly",
     "hellip",
     "rarr",

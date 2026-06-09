@@ -624,7 +624,7 @@ describe('packageSourceBrowser', () => {
     expect(entries[0]?.files[0]?.source.debugSessionId).toBe('session-child-delayed-child');
   });
 
-  it('uses a 60-attempt one-second default package warm-up interval', async () => {
+  it('uses a deadline-based one-second default package warm-up interval', async () => {
     const logs: string[] = [];
     const parentSession: MockDebugSession = {
       id: 'session-parent-default-retry',
@@ -664,8 +664,85 @@ describe('packageSourceBrowser', () => {
     );
 
     expect(entries).toHaveLength(1);
-    expect(logs).toContain('[Packages] Attempt 1/60 for sample-service.');
+    // No attempt cap in production: the deadline governs, so the label omits "/N".
+    expect(logs).toContain('[Packages] Attempt 1 for sample-service.');
     expect(logs.some((message) => message.includes('Retrying in 1000ms'))).toBe(true);
+  });
+
+  it('builds package entries from push-collected (loadedSource event) sources when requests stay empty', async () => {
+    const parentSession: MockDebugSession = {
+      id: 'session-parent-push',
+      name: 'Debug: sample-service',
+      type: 'pwa-node',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+
+    const entries = await loadPackageEntriesFromSessions(
+      'sample-service',
+      [asDebugSession(parentSession)],
+      undefined,
+      {
+        maxAttempts: 1,
+        loadedSourcesRequestTimeoutMs: 25,
+        getExtraSources: () => [
+          {
+            name: 'lib.js',
+            path: '/workspace/node_modules/pushed-pkg/lib.js',
+            debugSessionId: 'evt-child',
+            debugSessionName: 'Remote Process [0]',
+          },
+        ],
+      },
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.name).toBe('pushed-pkg');
+    expect(entries[0]?.files[0]?.source.debugSessionId).toBe('evt-child');
+  });
+
+  it('retries after a loadedSources timeout instead of failing fatally', async () => {
+    let childCalls = 0;
+    const parentSession: MockDebugSession = {
+      id: 'session-parent-timeout-retry',
+      name: 'Debug: sample-service',
+      type: 'pwa-node',
+      customRequest: (): Promise<unknown> => Promise.resolve({ sources: [] }),
+    };
+    const childSession: MockDebugSession = {
+      id: 'session-child-timeout-retry',
+      name: 'Remote Process [0]',
+      type: 'pwa-node',
+      parentSession,
+      customRequest: (): Promise<unknown> => {
+        childCalls += 1;
+        // First poll hangs (forces a per-request timeout); the second resolves. The old
+        // behavior threw fatally on the first timeout and never reached the second poll.
+        if (childCalls === 1) return new Promise<never>(() => undefined);
+        return Promise.resolve({
+          sources: [
+            {
+              name: 'worker.js',
+              path: '/workspace/node_modules/sample-worker/dist/worker.js',
+            },
+          ],
+        });
+      },
+    };
+
+    const entries = await loadPackageEntriesFromSessions(
+      'sample-service',
+      [asDebugSession(parentSession), asDebugSession(childSession)],
+      undefined,
+      {
+        maxAttempts: 3,
+        emptyRetryDelayMs: 1,
+        loadedSourcesRequestTimeoutMs: 25,
+      },
+    );
+
+    expect(childCalls).toBeGreaterThanOrEqual(2);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.name).toBe('sample-worker');
   });
 
   it('merges loaded sources from multiple descendant sessions and dedupes package files', async () => {

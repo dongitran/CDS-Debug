@@ -18,13 +18,27 @@ import type {
 type PackageBrowserLogFn = (message: string) => void;
 
 interface LoadPackageEntriesOptions {
+  // Total wall-clock budget for warming up package sources. Replaces the old fixed
+  // "maxAttempts × delay" ceiling so a slow CF region can keep waiting for the child
+  // "Remote Process" session to appear without a hard 60-second cliff.
+  overallTimeoutMs?: number;
+  // Optional hard cap on the number of poll attempts. Left undefined in production
+  // (the deadline governs); tests pass a small value to bound a single run.
   maxAttempts?: number;
   emptyRetryDelayMs?: number;
   loadedSourcesRequestTimeoutMs?: number;
+  // Resolves the moment a new debug session starts OR a loadedSource event arrives,
+  // so the retry wait can end early instead of sleeping the full poll interval.
   makeWakeSignal?: () => Promise<void>;
+  // Push-collected sources accumulated from `loadedSource` DAP events (see
+  // loadedSourceRegistry). Merged with the per-attempt `loadedSources` request result
+  // so sources that arrived between polls — or before the user opened the browser —
+  // are never missed.
+  getExtraSources?: () => readonly LoadedPackageSource[];
 }
 
 interface NormalizedLoadPackageEntriesOptions {
+  overallTimeoutMs: number;
   maxAttempts: number;
   emptyRetryDelayMs: number;
   loadedSourcesRequestTimeoutMs: number;
@@ -67,7 +81,10 @@ export interface OpenedPackageSourceRecord {
 }
 
 const DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS: NormalizedLoadPackageEntriesOptions = {
-  maxAttempts: 60,
+  overallTimeoutMs: 180_000,
+  // No attempt cap in production: the deadline above is the real bound. Tests override
+  // this with a small integer to keep a single run short.
+  maxAttempts: Number.POSITIVE_INFINITY,
   emptyRetryDelayMs: 1_000,
   loadedSourcesRequestTimeoutMs: 10_000,
 };
@@ -145,7 +162,7 @@ function extractPnpmVersion(normalizedPath: string): string | undefined {
   return encodedPackage.slice(versionIndex + 1);
 }
 
-function toLoadedPackageSource(value: unknown): LoadedPackageSource | null {
+export function toLoadedPackageSource(value: unknown): LoadedPackageSource | null {
   if (!isRecord(value)) return null;
   const source: LoadedPackageSource = {};
   if (typeof value.name === 'string') source.name = value.name;
@@ -425,7 +442,7 @@ function describeSession(session: vscode.DebugSession): string {
   return `"${session.name}" [${session.id}] type=${type}`;
 }
 
-function stampSourceSession(
+export function stampSourceSession(
   source: LoadedPackageSource,
   session: vscode.DebugSession,
 ): LoadedPackageSource {
@@ -439,15 +456,23 @@ function stampSourceSession(
 function normalizeLoadPackageEntriesOptions(
   options: LoadPackageEntriesOptions | undefined,
 ): NormalizedLoadPackageEntriesOptions {
+  const overallTimeoutMs = options?.overallTimeoutMs ?? DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS.overallTimeoutMs;
   const maxAttempts = options?.maxAttempts ?? DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS.maxAttempts;
   const emptyRetryDelayMs = options?.emptyRetryDelayMs ?? DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS.emptyRetryDelayMs;
   const loadedSourcesRequestTimeoutMs = options?.loadedSourcesRequestTimeoutMs
     ?? DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS.loadedSourcesRequestTimeoutMs;
 
   return {
-    maxAttempts: Number.isFinite(maxAttempts) && maxAttempts > 0
-      ? Math.floor(maxAttempts)
-      : DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS.maxAttempts,
+    overallTimeoutMs: Number.isFinite(overallTimeoutMs) && overallTimeoutMs > 0
+      ? Math.floor(overallTimeoutMs)
+      : DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS.overallTimeoutMs,
+    // Allow POSITIVE_INFINITY through (the production "no cap" sentinel); only fall back
+    // when the caller passes a non-positive or NaN value.
+    maxAttempts: maxAttempts === Number.POSITIVE_INFINITY
+      ? Number.POSITIVE_INFINITY
+      : (Number.isFinite(maxAttempts) && maxAttempts > 0
+        ? Math.floor(maxAttempts)
+        : DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS.maxAttempts),
     emptyRetryDelayMs: Number.isFinite(emptyRetryDelayMs) && emptyRetryDelayMs >= 0
       ? Math.floor(emptyRetryDelayMs)
       : DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS.emptyRetryDelayMs,
@@ -708,17 +733,20 @@ export async function loadPackageEntriesFromSessions(
 
   const resolvedOptions = normalizeLoadPackageEntriesOptions(options);
   const makeWakeSignal = options?.makeWakeSignal;
+  const getExtraSources = options?.getExtraSources;
+  const deadline = Date.now() + resolvedOptions.overallTimeoutMs;
   let lastNonTimeoutError: string | null = null;
   let sawAnySessions = false;
+  let sawTimeoutEver = false;
 
-  for (let attempt = 1; attempt <= resolvedOptions.maxAttempts; attempt += 1) {
+  for (let attempt = 1; ; attempt += 1) {
     const currentSessions = resolvePackageSessions(sessions);
     const loadedSourceBatches: LoadedPackageSource[][] = [];
     let sawMissingSessions = false;
     let sawEmptySources = false;
     let sawTimeout = false;
 
-    log?.(`[Packages] Attempt ${attempt.toString()}/${resolvedOptions.maxAttempts.toString()} for ${appName}.`);
+    log?.(`[Packages] ${formatAttemptLabel(attempt, resolvedOptions.maxAttempts)} for ${appName}.`);
     if (currentSessions.length === 0) {
       sawMissingSessions = true;
       log?.(`[Packages] No candidate debug sessions are available yet for ${appName}.`);
@@ -757,11 +785,21 @@ export async function loadPackageEntriesFromSessions(
         const message = err instanceof Error ? err.message : String(err);
         if (isLoadedSourcesTimeoutMessage(message)) {
           sawTimeout = true;
+          sawTimeoutEver = true;
         } else {
           lastNonTimeoutError = message;
         }
         log?.(`[Packages] loadedSources failed for ${describeSession(session)}: ${message}`);
       }
+    }
+
+    // Fold in sources pushed via `loadedSource` DAP events (loadedSourceRegistry). These
+    // may already cover the package set before any request succeeds, or fill the gap when
+    // a per-session `loadedSources` request times out on a slow CF inspector tunnel.
+    const extraSources = getExtraSources?.() ?? [];
+    if (extraSources.length > 0) {
+      loadedSourceBatches.push([...extraSources]);
+      log?.(`[Packages] Folded in ${extraSources.length.toString()} push-collected source(s) for ${appName}.`);
     }
 
     const sources = mergeLoadedSources(loadedSourceBatches);
@@ -775,11 +813,14 @@ export async function loadPackageEntriesFromSessions(
       return packages;
     }
 
-    if (sawTimeout) {
-      throw new Error(`Timed out waiting for loaded sources for ${appName}.`);
-    }
-
-    if ((sawMissingSessions || sawEmptySources) && attempt < resolvedOptions.maxAttempts) {
+    // A single slow/hanging `loadedSources` request (sawTimeout) is treated as
+    // "not ready yet", NOT a fatal error — on a high-latency CF region one laggy
+    // request must not abort the whole warm-up. We keep retrying until the overall
+    // deadline (or the optional attempt cap) is reached, then surface the timeout.
+    const reachedAttemptCap = attempt >= resolvedOptions.maxAttempts;
+    const reachedDeadline = Date.now() >= deadline;
+    const canRetry = sawMissingSessions || sawEmptySources || sawTimeout;
+    if (canRetry && !reachedAttemptCap && !reachedDeadline) {
       log?.(
         `[Packages] Package sources are not ready yet for ${appName}. Retrying in ${resolvedOptions.emptyRetryDelayMs.toString()}ms.`,
       );
@@ -790,10 +831,15 @@ export async function loadPackageEntriesFromSessions(
       }
       continue;
     }
+    break;
   }
 
   if (lastNonTimeoutError) {
     throw new Error(`Failed to load package sources for ${appName}: ${lastNonTimeoutError}`);
+  }
+
+  if (sawTimeoutEver) {
+    throw new Error(`Timed out waiting for loaded sources for ${appName}.`);
   }
 
   if (!sawAnySessions) {
@@ -801,6 +847,12 @@ export async function loadPackageEntriesFromSessions(
   }
 
   throw new Error(`No loaded sources were returned by any debug session for ${appName}.`);
+}
+
+function formatAttemptLabel(attempt: number, maxAttempts: number): string {
+  return Number.isFinite(maxAttempts)
+    ? `Attempt ${attempt.toString()}/${maxAttempts.toString()}`
+    : `Attempt ${attempt.toString()}`;
 }
 
 // Tracks the URIs we have opened on behalf of each app via the Package browser. The
