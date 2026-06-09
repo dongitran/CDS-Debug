@@ -60,7 +60,7 @@ export interface OpenedPackageSourceRecord {
 }
 
 const DEFAULT_LOAD_PACKAGE_ENTRIES_OPTIONS: Required<LoadPackageEntriesOptions> = {
-  maxAttempts: 30,
+  maxAttempts: 60,
   emptyRetryDelayMs: 1_000,
   loadedSourcesRequestTimeoutMs: 10_000,
 };
