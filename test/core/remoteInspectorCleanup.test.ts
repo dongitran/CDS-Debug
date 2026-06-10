@@ -330,6 +330,52 @@ describe('clearBreakpointsBeforeStop', () => {
     expect(vscodeMockState.showWarningMessage).not.toHaveBeenCalled();
   });
 
+  it('clears via registry sessions when the root session reference is gone (external stop)', async () => {
+    // Red-square stop: by the time the terminate event reaches the process manager the
+    // root session is untracked, but child sessions linger briefly. The clear must use
+    // them instead of bailing out on the undefined root reference.
+    const childSession = createSession();
+    debugSessionRegistryMockState.sessionsByApp.set('external-stop-app', [
+      { id: 'child-id', customRequest: childSession.customRequest },
+    ]);
+    vscodeMockState.breakpoints = [new MockSourceBreakpoint('/workspace/srv/sample.js')];
+
+    await clearBreakpointsBeforeStop('external-stop-app', undefined);
+
+    expect(childSession.customRequest).toHaveBeenCalledWith('setBreakpoints', expect.objectContaining({
+      source: { path: '/workspace/srv/sample.js' },
+      breakpoints: [],
+    }));
+    debugSessionRegistryMockState.sessionsByApp.delete('external-stop-app');
+  });
+
+  it('removes dead Package-browser breakpoints from VS Code state when no session survives', async () => {
+    clearOpenedPackageUris('dead-session-app');
+    const deadUri = {
+      scheme: 'debug',
+      path: '/remote/node_modules/@sap/cds/lib/index.js',
+      fsPath: '/remote/node_modules/@sap/cds/lib/index.js',
+      query: 'session%3D9%26ref%3D7',
+      toString: () => 'debug:/remote/node_modules/@sap/cds/lib/index.js?session%3D9%26ref%3D7',
+    };
+    trackOpenedPackageUri(
+      'dead-session-app',
+      deadUri as unknown as Parameters<typeof trackOpenedPackageUri>[1],
+    );
+    const orphan = new MockSourceBreakpoint({
+      scheme: 'debug',
+      path: '/remote/node_modules/@sap/cds/lib/index.js',
+      fsPath: '/remote/node_modules/@sap/cds/lib/index.js',
+      query: 'session%3D9%26ref%3D7',
+    });
+    (orphan.location.uri as { toString?: () => string }).toString = () => deadUri.toString();
+    vscodeMockState.breakpoints = [orphan];
+
+    await clearBreakpointsBeforeStop('dead-session-app', undefined);
+
+    expect(vscodeMockState.removeBreakpoints).toHaveBeenCalledWith([orphan]);
+  });
+
   it('clears debug-URI breakpoints across every tracked session of the app and removes them from VS Code state', async () => {
     // Reproduces the Package browser case: a `.ts` file opened from node_modules that the
     // local workspace does not have. `asDebugSourceUri` produced a `debug:` URI tagged with

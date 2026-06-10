@@ -6,6 +6,7 @@ import { getPackageBrowserScriptContent } from '../../src/webview/packageBrowser
 import { getPackageBrowserStyles } from '../../src/webview/packageBrowserStyles';
 import { getScript } from '../../src/webview/webviewScript';
 import { getRendererScriptContent } from '../../src/webview/webviewRenderers';
+import { getWebviewContent } from '../../src/webview/getWebviewContent';
 
 interface WebviewRegion {
   readonly code: string;
@@ -274,6 +275,13 @@ describe('webview markup contracts', () => {
     expect(rendererScript).not.toContain('region-card-custom');
   });
 
+  it('ships a static fallback inside #app so a dead script is never a blank panel', () => {
+    const html = getWebviewContent();
+
+    expect(html).toContain('Loading CDS Debug');
+    expect(html).toContain('Developer: Reload Window');
+  });
+
   it('receives supplemental Cloud Foundry regions from cf-sync', () => {
     const upstreamCodes = new Set<string>(getAllRegions().map((region) => region.key));
 
@@ -437,6 +445,55 @@ describe('webview markup contracts', () => {
       type: 'LOAD_APPS',
       payload: { org: 'sample-org-beta', space: 'dev' },
     }]);
+  });
+
+  it('falls back to LOAD_APPS when topology knows the space but has synced zero apps', () => {
+    // An empty apps array (structure synced before apps, or legacy string spaces) used
+    // to be served as-is: the launcher entered READY with no app rows and never ran the
+    // live fetch — the "Debug Launcher is completely empty" report.
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+    harness.dispatch({
+      type: 'CF_TOPOLOGY',
+      payload: {
+        ready: true,
+        accounts: [{
+          regionKey: 'eu10',
+          regionLabel: 'Europe (Frankfurt) - AWS (eu10)',
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgName: 'sample-org-beta',
+          spaces: [{ name: 'dev', apps: [] }],
+        }],
+      },
+    });
+    harness.postedMessages.length = 0;
+
+    harness.dispatch({
+      type: 'SCOPE_SYNCED',
+      payload: { orgName: 'sample-org-beta', spaceName: 'dev' },
+    });
+
+    expect(harness.postedMessages).toEqual([{
+      type: 'LOAD_APPS',
+      payload: { org: 'sample-org-beta', space: 'dev' },
+    }]);
+    expect(harness.getHtml()).toContain('Loading apps');
+  });
+
+  it('recovers with a visible error screen when a renderer throws', () => {
+    // A renderer exception used to leave the previous innerHTML frozen (or the initial
+    // empty #app blank) with no diagnostics. The render boundary swaps in a recovery
+    // screen and reports the failure to the extension log.
+    const harness = createWebviewScriptHarness();
+    moveHarnessToReadyScreen(harness);
+    harness.postedMessages.length = 0;
+
+    harness.dispatch({ type: 'APPS_LOADED', payload: { apps: null } });
+
+    expect(harness.getHtml()).toContain('Reload Launcher');
+    const errorReport = harness.postedMessages.find((message) => message.type === 'WEBVIEW_ERROR');
+    expect(errorReport).toBeDefined();
+    expect((errorReport?.payload as { context?: string } | undefined)?.context).toBe('render');
   });
 
   it('restores a mapped session from topology without triggering LOAD_APPS', () => {

@@ -226,6 +226,7 @@ vi.mock('vscode', () => ({
 import {
   debugProcessEvents,
   disposeAllProcesses,
+  initializeProcessManager,
   startTunnelAndAttach,
   stopProcess,
 } from '../../src/core/processManager';
@@ -451,6 +452,46 @@ describe('processManager remote inspector hardening', () => {
     await vi.advanceTimersByTimeAsync(300);
 
     expect(tunnelSpawnCount()).toBe(2);
+  });
+
+  it('clears remote breakpoints before tunnel teardown when the session is stopped externally (red square)', async () => {
+    // VS Code's debug-toolbar stop never goes through stopProcess, so the defensive
+    // setBreakpoints([]) pass used to be skipped entirely — leaving the remote Node
+    // inspector holding breakpoints until `cf restart`.
+    const tunnelChild = await startManagedTunnel('demo-app', 20000);
+    const session = keepaliveMockState.startTunnelKeepalive.mock.calls[0]?.[0] as MockDebugSession | undefined;
+    if (!session) throw new Error('attached debug session was not captured.');
+
+    vscodeMockState.onDidTerminateDebugSession?.(session);
+    await vi.advanceTimersByTimeAsync(350);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(remoteCleanupMockState.clearBreakpointsBeforeStop).toHaveBeenCalledWith('demo-app', undefined);
+    expect(processMockState.kill).toHaveBeenCalledWith(-tunnelChild.pid, 'SIGTERM');
+    const clearOrder = remoteCleanupMockState.clearBreakpointsBeforeStop.mock.invocationCallOrder[0] ?? 0;
+    const killOrder = processMockState.kill.mock.invocationCallOrder[0] ?? 0;
+    expect(clearOrder).toBeLessThan(killOrder);
+    expect(remoteCleanupMockState.handleRemoteInspectorAfterStop).toHaveBeenCalledWith('demo-app');
+  });
+
+  it('ignores terminate events for Debug:-named sessions the manager never started', async () => {
+    initializeProcessManager();
+    // removeLaunchConfigs is shared across tests and only re-stubbed (not cleared) in
+    // beforeEach — drop calls recorded by earlier stop flows before asserting.
+    vscodeMockState.removeLaunchConfigs.mockClear();
+    const foreign: MockDebugSession = {
+      id: 'foreign-1',
+      name: 'Debug: third-party-app',
+      customRequest: vi.fn(),
+    };
+
+    vscodeMockState.onDidStartDebugSession?.(foreign);
+    vscodeMockState.onDidTerminateDebugSession?.(foreign);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(remoteCleanupMockState.clearBreakpointsBeforeStop).not.toHaveBeenCalled();
+    expect(remoteCleanupMockState.handleRemoteInspectorAfterStop).not.toHaveBeenCalled();
+    expect(vscodeMockState.removeLaunchConfigs).not.toHaveBeenCalled();
   });
 });
 

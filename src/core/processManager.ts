@@ -326,11 +326,30 @@ async function handleTerminatedDebugSession(session: vscode.DebugSession): Promi
   currentSessionIds.delete(appName);
   untrackDebugSession(session);
 
+  // A user-defined launch config can also be named "Debug: <x>". Apps this process
+  // manager never started must not receive exited-cleanup side effects — notably
+  // handleRemoteInspectorAfterStop, whose opt-in auto-restart would `cf restart` an
+  // app CDS Debug does not own.
+  if (!sessionStates.has(appName) && !processes.has(appName) && !sessionParams.has(appName)) {
+    return;
+  }
+
   if (stoppedApps.has(appName)) return;
 
   if (reconnecting.has(appName)) {
     return;
   }
+
+  // External stop (VS Code's red square / stop command): stopProcess never ran, so the
+  // defensive setBreakpoints([]) pass has not happened. Run it now, before the grace
+  // timer and tunnel teardown — child sessions often outlive the root long enough to
+  // accept one last clear, and the cf ssh tunnel is still open at this point. Strictly
+  // best-effort and time-bounded: with every session already gone it degrades to
+  // VS Code-state cleanup of dead Package-browser breakpoints. Deliberately NOT
+  // triggered from child-session terminates — worker threads exit routinely while the
+  // app keeps debugging, and clearing live sessions there would drop real breakpoints.
+  await clearBreakpointsForApp(appName);
+  if (stoppedApps.has(appName) || reconnecting.has(appName)) return;
 
   const prevStatus = sessionStates.get(appName)?.status;
   if (prevStatus === 'ATTACHED') {

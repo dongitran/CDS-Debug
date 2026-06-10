@@ -487,6 +487,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         this.handleE2eBridge(raw.payload);
         break;
 
+      case 'WEBVIEW_ERROR': {
+        // The webview has no dev console in normal use — surfacing its uncaught
+        // errors here is the only way to diagnose intermittent blank-panel reports.
+        const { context, message, stack, screen } = raw.payload;
+        logError(`[Webview] ${context} (screen=${screen}): ${message}${stack ? `\n${stack}` : ''}`);
+        break;
+      }
+
       case 'STOP_ALL_DEBUG': {
         await stopAllProcesses();
         break;
@@ -898,7 +906,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   private async handleLoadSpaces(org: string): Promise<void> {
     const config = getConfig();
-    if (!config) return;
+    if (!config) {
+      // No config (e.g. reset while the webview retained old state) — a silent return
+      // would leave the webview on its loading screen forever.
+      this.postMessage({
+        type: 'SPACES_ERROR',
+        payload: { org, message: 'Extension configuration is missing. Please log in again.' },
+      });
+      return;
+    }
 
     logInfo(`Loading spaces for org: ${org} …`);
     try {
@@ -917,7 +933,13 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   private async handleLoadApps(org: string, space: string, forceRefresh = false): Promise<void> {
     const config = getConfig();
-    if (!config) return;
+    if (!config) {
+      this.postMessage({
+        type: 'APPS_ERROR',
+        payload: { message: 'Extension configuration is missing. Please log in again.' },
+      });
+      return;
+    }
 
     const mapping = config.orgGroupMappings.find((m) => mappingMatchesTarget(m, org, space));
     if (!mapping) {
@@ -1091,7 +1113,10 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     space: string,
   ): Promise<boolean> {
     const apps = getAppsFromTopologySync(apiEndpoint, org, space);
-    if (apps === undefined) return false;
+    // Empty array = cf-sync knows the space but has not synced its apps yet. Serving
+    // it would put the launcher on a READY screen with zero rows and skip the live
+    // fetch entirely; fall through to cache/live loading instead.
+    if (apps === undefined || apps.length === 0) return false;
 
     logInfo(`[Topology] Skipped live cf apps for ${org}/${space} — using topology cache.`);
     await saveCachedApps(apiEndpoint, org, apps, space);
@@ -1334,7 +1359,15 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
   private async handleStartDebug(appNames: string[], org: string, space: string): Promise<void> {
     const config = getConfig();
-    if (!config) return;
+    if (!config) {
+      // The webview optimistically added PENDING session cards on click — a silent
+      // return would leave them spinning forever.
+      this.postMessage({
+        type: 'DEBUG_ERROR',
+        payload: { message: 'Extension configuration is missing. Please log in again.' },
+      });
+      return;
+    }
 
     const mapping = config.orgGroupMappings.find((m) => mappingMatchesTarget(m, org, space));
     if (!mapping) {

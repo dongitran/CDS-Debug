@@ -443,7 +443,11 @@ export type WebviewMessage =
     type: 'OPEN_PACKAGE_SOURCE';
     payload: { appName: string; source: LoadedPackageSource; location?: PackageSourceLocation };
   }
-  | { type: 'E2E_BRIDGE'; payload: E2eBridgeCommand };
+  | { type: 'E2E_BRIDGE'; payload: E2eBridgeCommand }
+  | {
+    type: 'WEBVIEW_ERROR';
+    payload: { context: string; message: string; stack: string; screen: string };
+  };
 
 // Messages from logs webview → logs extension panel
 export type LogsWebviewMessage =

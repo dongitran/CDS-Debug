@@ -371,7 +371,11 @@ export function getScript(nonce: string): string {
 
     function loadAppsViaTopologyFirst(org, space, opts) {
       const apps = getAppsFromTopology(state.selectedRegion, org, space);
-      if (apps) {
+      // An empty array means cf-sync knows the space but has not synced its apps yet
+      // (or stored spaces in the legacy string format). Serving it would land the user
+      // on a READY screen with zero app rows and never trigger the live fetch — the
+      // "launcher looks completely empty" report. Treat it as no data.
+      if (apps && apps.length > 0) {
         enterReadyWithTopologyApps(org, space, apps);
         return true;
       }
@@ -563,9 +567,55 @@ export function getScript(nonce: string): string {
     ${getRendererScriptContent()}
     ${getPackageBrowserScriptContent()}
 
+    function reportWebviewError(context, err) {
+      try {
+        vscode.postMessage({
+          type: 'WEBVIEW_ERROR',
+          payload: {
+            context: String(context),
+            message: err && err.message ? String(err.message) : String(err),
+            stack: err && err.stack ? String(err.stack).slice(0, 2000) : '',
+            screen: String(state.screen || ''),
+          },
+        });
+      } catch (postErr) {
+        // postMessage itself failed — nothing else we can do from inside the webview.
+      }
+    }
+
+    function renderRecoveryScreen(message) {
+      return '<div class="step-header"><span class="step-title">CDS Debug</span></div>'
+        + '<div class="error-box">The launcher hit an unexpected error and recovered. '
+        + escape(message || 'Unknown error') + '</div>'
+        + '<div style="height:10px"></div>'
+        + '<button class="btn" id="btn-recover-reload">Reload Launcher</button>';
+    }
+
+    function attachRecoveryListener() {
+      const btn = document.getElementById('btn-recover-reload');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        state.screen = SCREENS.REGION;
+        state.error = null;
+        state.suppressConfigAutoRestore = false;
+        render();
+        vscode.postMessage({ type: 'LOAD_CONFIG' });
+      });
+    }
+
+    // Error boundary: a renderer exception must never leave the panel blank or frozen.
+    // Without it, a throw on the FIRST render of a fresh webview context leaves the
+    // initial empty <div id="app"> on screen forever with no diagnostics.
     function render() {
-      document.getElementById('app').innerHTML = renderScreen();
-      attachListeners();
+      const app = document.getElementById('app');
+      try {
+        app.innerHTML = renderScreen();
+        attachListeners();
+      } catch (err) {
+        reportWebviewError('render', err);
+        app.innerHTML = renderRecoveryScreen(err && err.message ? err.message : String(err));
+        attachRecoveryListener();
+      }
     }
 
     function updatePreferenceToggle(inputId, enabled, badgeText) {
@@ -614,7 +664,9 @@ export function getScript(nonce: string): string {
         case SCREENS.BREAKPOINT_SNAPSHOTS:return renderBreakpointSnapshotsScreen();
         case SCREENS.SETTINGS:            return renderSettings();
         case SCREENS.PREPARING_BRANCHES:  return renderPreparingBranches();
-        default:                          return '';
+        // An unknown screen value previously rendered '' — a permanently blank panel
+        // with no way out. Surface it and offer a reset instead.
+        default:                          return renderRecoveryScreen('Unknown screen "' + String(state.screen) + '"');
       }
     }
 
@@ -976,12 +1028,25 @@ export function getScript(nonce: string): string {
       // Packages screen listeners (defined in packageBrowserContent.ts content)
       attachPackageListeners();
       attachPackageSettingsListeners();
+      // Recovery screen (unknown-screen fallback rendered by renderScreen's default case)
+      attachRecoveryListener();
     }
 
     // === MESSAGE HANDLER ===
 
     window.addEventListener('message', event => {
       const msg = event.data;
+      try {
+        handleExtensionMessage(msg);
+      } catch (err) {
+        // A throw mid-handler would otherwise skip the final render() and freeze the
+        // panel on a stale (possibly loading) screen with zero diagnostics.
+        reportWebviewError('message:' + String(msg && msg.type), err);
+        render();
+      }
+    });
+
+    function handleExtensionMessage(msg) {
       switch (msg.type) {
         case 'GROUP_FOLDER_SELECTED':
           state.selectedFolder = msg.payload.path;
@@ -1525,9 +1590,19 @@ export function getScript(nonce: string): string {
         }
       }
       render();
-    });
+    }
 
     // === INIT ===
+
+    // Forward uncaught webview errors to the extension's output channel — the panel
+    // has no dev console in normal use, so without this an intermittent "blank
+    // launcher" report is undiagnosable.
+    window.addEventListener('error', event => {
+      reportWebviewError('window.onerror', event.error || new Error(String(event.message)));
+    });
+    window.addEventListener('unhandledrejection', event => {
+      reportWebviewError('unhandledrejection', event.reason || new Error('unhandled rejection'));
+    });
 
     // Belt-and-suspenders: always request fresh prefs from globalState at startup.
     // LOAD_CONFIG handler also pushes DEBUG_PREFS, but this handles rare timing

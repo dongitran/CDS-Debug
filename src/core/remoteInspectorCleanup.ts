@@ -18,8 +18,13 @@ const OPEN_FIRST_MATCH_ACTION = 'Open First Match';
 const SHOW_ALL_ACTION = 'Show All';
 const IGNORE_SESSION_ACTION = 'Ignore for Session';
 const REMOTE_INSPECTOR_REMINDER_DEBOUNCE_MS = 60_000;
-const CLEAR_BREAKPOINT_REQUEST_TIMEOUT_MS = 500;
-const CLEAR_BREAKPOINT_TOTAL_TIMEOUT_MS = 2_000;
+// Sized for slow CF regions (ap10/jp10): a setBreakpoints round-trip through the cf ssh
+// tunnel can exceed 500 ms there, and a clear that times out leaves the remote inspector
+// holding the breakpoint until `cf restart` — the exact bug this pass exists to prevent.
+// Requests run in parallel, so the total cap (not request × count) bounds Stop latency,
+// and both only bite when the tunnel is half-open; healthy adapters answer in tens of ms.
+const CLEAR_BREAKPOINT_REQUEST_TIMEOUT_MS = 1_500;
+const CLEAR_BREAKPOINT_TOTAL_TIMEOUT_MS = 4_000;
 const MAX_LOGGED_DEBUGGER_MATCHES = 20;
 
 const lastReminderByApp = new Map<string, number>();
@@ -85,7 +90,17 @@ export async function clearBreakpointsBeforeStop(
   session: vscode.DebugSession | undefined,
 ): Promise<void> {
   if (!getRemoteInspectorCleanupSettings().clearRemoteBreakpointsBeforeStop) return;
-  if (session === undefined) return;
+
+  // `session` may be undefined on the external-stop path (VS Code's red square): the
+  // root session is already untracked by the time the terminate event reaches us, but
+  // child sessions often survive a beat longer and can still accept the clear. Fall
+  // back to whatever the registry still tracks; with nothing left, degrade to pure
+  // VS Code-state cleanup of the now-dead Package-browser breakpoints.
+  const appSessions = collectAppSessions(appName, session);
+  if (appSessions.length === 0) {
+    removeDeadPackageUriBreakpoints(appName);
+    return;
+  }
 
   // Three breakpoint categories require different clear strategies:
   //
@@ -110,7 +125,8 @@ export async function clearBreakpointsBeforeStop(
   //    broadcast as category 2 (but keep the breakpoint in VS Code state — the file exists).
   //
   // 4. Anything else (rare) — best-effort clear by URI path.
-  const sessions = collectAppSessions(appName, session);
+  const sessions = appSessions;
+  const primarySession = session ?? sessions[0];
   const appSessionIds = new Set(sessions.map((s) => s.id));
   const workspacePaths = new Set<string>();
   const debugBreakpoints: DebugUriBreakpointRecord[] = [];
@@ -177,8 +193,10 @@ export async function clearBreakpointsBeforeStop(
 
   const requests: Promise<boolean>[] = [];
 
-  for (const path of [...workspacePaths].sort()) {
-    requests.push(clearBreakpointsForSourceDescriptor(session, { path }));
+  if (primarySession !== undefined) {
+    for (const path of [...workspacePaths].sort()) {
+      requests.push(clearBreakpointsForSourceDescriptor(primarySession, { path }));
+    }
   }
 
   // Reverse-lookup: each session has its own `sourceReference` number for the same
@@ -409,17 +427,40 @@ function safeDecodeURIComponent(value: string): string {
 
 function collectAppSessions(
   appName: string,
-  fallback: vscode.DebugSession,
+  fallback: vscode.DebugSession | undefined,
 ): vscode.DebugSession[] {
   const tracked = getDebugSessionsForApp(appName);
   if (tracked.length > 0) return tracked;
   // Registry has not yet seen the session (e.g. external retry path that bypassed
   // trackStartedDebugSession). Fall back to the explicitly passed root session so the
   // clear is still attempted somewhere.
-  return [fallback];
+  return fallback !== undefined ? [fallback] : [];
 }
 
-const LOADED_SOURCES_QUERY_TIMEOUT_MS = 1_500;
+// External stop with no surviving session: a DAP clear is impossible, but the
+// Package-browser `debug:` URIs are now permanently unresolvable — their breakpoints
+// would linger in the Breakpoints panel with no editor able to remove them. Drop the
+// non-file ones and forget the tracker. `file:` URIs keep their breakpoints because the
+// local file still exists and stays valid for the next session.
+function removeDeadPackageUriBreakpoints(appName: string): void {
+  const trackedUris = new Set(getOpenedPackageUris(appName).map((uri) => uri.toString()));
+  if (trackedUris.size > 0) {
+    const orphans = vscode.debug.breakpoints.filter((bp): bp is vscode.SourceBreakpoint =>
+      bp instanceof vscode.SourceBreakpoint
+      && bp.location.uri.scheme !== 'file'
+      && trackedUris.has(bp.location.uri.toString()));
+    if (orphans.length > 0) {
+      vscode.debug.removeBreakpoints(orphans);
+      logInfo(`[${appName}] Removed ${orphans.length.toString()} dead Package-browser breakpoint(s) with no live session.`);
+    }
+  }
+  clearOpenedPackageUris(appName);
+}
+
+// Returns the full source list, which slow CF regions have needed up to 10 s to produce
+// for the Package browser. 3 s balances clear coverage against Stop latency; a miss only
+// degrades to the path-only fallback clear, never to a hang.
+const LOADED_SOURCES_QUERY_TIMEOUT_MS = 3_000;
 
 interface DapSourceListResponse {
   sources?: { path?: unknown; sourceReference?: unknown }[];

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.32] — 2026
+
+### Fixed
+
+- **The Debug Launcher no longer shows an empty panel after selecting org/space/folder** — When cf-sync had synced the org/space *structure* but not yet the space's apps (or stored spaces in the legacy string format), the launcher served the empty topology list as-is: a READY screen with zero app rows and no live fetch — reported by users as "the Debug Launcher is completely blank". An empty topology app list is now treated as *no data* on both the webview and extension side, falling through to the cached/live `cf apps` fetch.
+- **Webview render failures are visible and recoverable instead of a blank/frozen panel** — A renderer exception used to leave the panel blank (on first render) or frozen on a stale screen, with no diagnostics. The launcher now has a render error boundary that shows a recovery screen with a "Reload Launcher" button, reports the error (with stack) to the *CDS Debug* output channel via a new `WEBVIEW_ERROR` message, forwards `window.onerror`/`unhandledrejection` the same way, and ships static fallback content inside the panel so even a script that never runs is not a silent blank page. An unknown screen state now renders the recovery screen instead of an empty string.
+- **Loading screens can no longer hang forever when the extension config is missing** — `LOAD_SPACES`/`LOAD_APPS`/`START_DEBUG` used to return silently when the saved configuration was absent (e.g. after *Reset Configuration* while the webview retained old state), stranding the user on a spinner. They now post an explicit error back to the panel.
+- **Stopping from VS Code's debug toolbar (red square) now also clears remote breakpoints** — Only the panel's Stop button ran the defensive `setBreakpoints([])` pass; the toolbar stop skipped it, leaving the remote Node inspector holding breakpoints until `cf restart`. The clear now also runs on externally-terminated sessions, through the child sessions that briefly outlive the root (best-effort, time-bounded), and removes the now-dead Package-browser breakpoints from VS Code state when no session survives.
+- **Breakpoint-clear timeouts sized for slow CF regions** — the per-request/total/`loadedSources` budgets (0.5 s/2 s/1.5 s) could expire on high-latency regions (`ap10`, `jp10`), silently resurrecting the "breakpoint survives until cf restart" bug there. Raised to 1.5 s/4 s/3 s; they only bite when the tunnel is half-open.
+- **Foreign `Debug:`-named sessions are left alone** — a user-defined launch configuration named `Debug: <x>` no longer triggers CDS Debug's exited-session cleanup on terminate (notifications, status broadcasts, or the opt-in `cf restart` of an app the extension does not own).
+
 ## [0.4.31] — 2026
 
 ### Fixed

@@ -220,6 +220,7 @@ interface DebugPanelInternals {
   ): Promise<Map<string, string>>;
   handleStartDebug(appNames: string[], org: string, space: string): Promise<void>;
   handleLoadApps(org: string, space: string, forceRefresh?: boolean): Promise<void>;
+  tryServeTopologyApps(apiEndpoint: string, org: string, space: string): Promise<boolean>;
   resolvedRemoteRoots: Map<string, string>;
   resolvedRemoteRootByApp: Map<string, string>;
 }
@@ -354,6 +355,39 @@ describe('DebugLauncherViewProvider — lazy remote-root resolution', () => {
     );
     expect(cfClientMock.cfFindRemotePackageJsonPaths).toHaveBeenCalledTimes(1);
     expect(resolvedAgain.get('demo-service-a')).toBe('/usr/demo-service-a');
+  });
+
+  it('does not serve topology apps when the synced space has zero apps', async () => {
+    // cf-sync can know the org/space structure before it has fetched the space's apps.
+    // Serving that empty list would freeze the launcher on a READY screen with no app
+    // rows and skip the live fetch entirely.
+    const provider = makeProvider();
+    const internals = getInternals(provider);
+    const posted: ExtensionMessage[] = [];
+    vi.spyOn(provider, 'postMessage').mockImplementation((message) => { posted.push(message); });
+    await saveProviderConfig();
+    cfTopologyMock.getAppsFromTopologySync.mockReturnValue([]);
+
+    const served = await internals.tryServeTopologyApps(SAMPLE_API_ENDPOINT, SAMPLE_ORG, SAMPLE_SPACE);
+
+    expect(served).toBe(false);
+    expect(posted.some((message) => message.type === 'APPS_LOADED')).toBe(false);
+  });
+
+  it('serves topology apps when the synced space has at least one app', async () => {
+    const provider = makeProvider();
+    const internals = getInternals(provider);
+    const posted: ExtensionMessage[] = [];
+    vi.spyOn(provider, 'postMessage').mockImplementation((message) => { posted.push(message); });
+    await saveProviderConfig();
+    cfTopologyMock.getAppsFromTopologySync.mockReturnValue([
+      { name: 'demo-service-a', state: 'started', urls: [] },
+    ]);
+
+    const served = await internals.tryServeTopologyApps(SAMPLE_API_ENDPOINT, SAMPLE_ORG, SAMPLE_SPACE);
+
+    expect(served).toBe(true);
+    expect(posted.some((message) => message.type === 'APPS_LOADED')).toBe(true);
   });
 
   it('does not invoke cfFindRemotePackageJsonPaths after handleLoadApps alone', async () => {
