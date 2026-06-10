@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type {
   AppFolderMapping,
+  AppWatchdogConfig,
   BranchPrepService,
   BranchPrepStep,
   BreakpointContextSnapshot,
@@ -22,6 +23,7 @@ import type {
 } from '../types/index';
 import { CF_DEFAULT_SPACE, DEFAULT_CACHE_SETTINGS } from '../types/index';
 import {
+  cfAppRoutes,
   cfLogin,
   cfLogout,
   cfOrgs,
@@ -31,6 +33,16 @@ import {
   cfScaleAppInstances,
   isCfAuthError,
 } from '../core/cfClient';
+import {
+  clampNumber,
+  DEFAULT_PING_INTERVAL_SECONDS,
+  getAppWatchdogConfig,
+  isAppWatchdogInitialized,
+  normalizeRouteUrl,
+  PING_INTERVAL_BOUNDS,
+  registerWatchedApps,
+  type WatchedAppRegistration,
+} from '../core/appWatchdog';
 import {
   refreshCfSyncRegionOrgs,
   refreshCfSyncSpace,
@@ -518,6 +530,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       case 'GET_CACHE_CONFIG':
         this.postMessage({ type: 'CACHE_CONFIG', payload: getCacheSettings() });
+        break;
+
+      case 'GET_APP_WATCHDOG_CONFIG':
+        this.postAppWatchdogConfig();
+        break;
+
+      case 'SAVE_APP_WATCHDOG_CONFIG':
+        await this.handleSaveAppWatchdogConfig(raw.payload);
         break;
 
       case 'REQUEST_CHANGE_MAPPING': {
@@ -1460,7 +1480,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         space,
         sharedCapConfig,
       );
-      await this.launchDebugSessions(fallbackTargets, workspaceRoot, [], sharedCapConfig, resolvedRemoteRoots);
+      await this.launchDebugSessions(
+        fallbackTargets,
+        workspaceRoot,
+        [],
+        sharedCapConfig,
+        resolvedRemoteRoots,
+        { apiEndpoint: config.apiEndpoint, org, space },
+      );
       return;
     }
 
@@ -1506,7 +1533,14 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       space,
       sharedCapConfig,
     );
-    await this.launchDebugSessions(finalTargets, workspaceRoot, unmapped, sharedCapConfig, resolvedRemoteRoots);
+    await this.launchDebugSessions(
+      finalTargets,
+      workspaceRoot,
+      unmapped,
+      sharedCapConfig,
+      resolvedRemoteRoots,
+      { apiEndpoint: config.apiEndpoint, org, space },
+    );
   }
 
   // Notifies the webview that remote-folder resolution is starting for the
@@ -1725,6 +1759,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     unmapped: string[],
     fallbackConfig: CapDebugConfig | null,
     resolvedRemoteRoots: ReadonlyMap<string, string>,
+    scope: CfTargetScope,
   ): Promise<void> {
     logInfo(`[StartDebug] Merging launch.json for ${targets.length.toString()} target(s)…`);
     await mergeLaunchJson(workspaceRoot, targets, fallbackConfig, { resolvedRemoteRoots });
@@ -1751,12 +1786,76 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       });
     }
 
+    // Fire-and-forget: the watchdog must never delay or fail a debug start.
+    void this.registerWatchdogForTargets(targets, scope).catch((err: unknown) => {
+      logWarn(`[AppWatchdog] Failed to register watched apps: ${err instanceof Error ? err.message : String(err)}`);
+    });
+
     if (unmapped.length > 0) {
       logWarn(`${unmapped.length.toString()} app(s) not mapped: ${unmapped.join(', ')}`);
       void vscode.window.showWarningMessage(
         `${unmapped.length.toString()} app(s) could not be mapped to a local folder: ${unmapped.join(', ')}`,
       );
     }
+  }
+
+  /**
+   * Records the started apps in the App Watchdog registry (~/.cds-debug) so their
+   * mapped routes are pinged for the configured watch window — catching apps left
+   * frozen on a breakpoint after this debug session ends badly.
+   */
+  private async registerWatchdogForTargets(targets: DebugTarget[], scope: CfTargetScope): Promise<void> {
+    if (!isAppWatchdogInitialized()) return;
+    const region = regionCodeFromApiEndpoint(scope.apiEndpoint) ?? apiEndpointHost(scope.apiEndpoint);
+    const startedAt = Date.now();
+    const entries: WatchedAppRegistration[] = [];
+    for (const target of targets) {
+      const url = await this.resolveAppRouteUrl(scope, target.appName);
+      if (url === undefined) {
+        logWarn(`[AppWatchdog] No mapped route found for ${target.appName}; it will not be watched.`);
+        continue;
+      }
+      entries.push({ appName: target.appName, org: scope.org, space: scope.space, region, url, startedAt });
+    }
+    await registerWatchedApps(entries);
+  }
+
+  /** Mapped-route lookup: synced topology → app cache → live `cf app` fallback. */
+  private async resolveAppRouteUrl(scope: CfTargetScope, appName: string): Promise<string | undefined> {
+    const fromTopology = firstMappedRoute(getAppsFromTopologySync(scope.apiEndpoint, scope.org, scope.space), appName);
+    if (fromTopology !== undefined) return normalizeRouteUrl(fromTopology);
+
+    const fromCache = firstMappedRoute(getCachedApps(scope.apiEndpoint, scope.org, scope.space)?.apps, appName);
+    if (fromCache !== undefined) return normalizeRouteUrl(fromCache);
+
+    // handleStartDebug already targeted this org/space, so `cf app` hits the right one.
+    const routes = await cfAppRoutes(appName).catch(() => [] as string[]);
+    const first = routes.find((route) => route.trim().length > 0);
+    return first === undefined ? undefined : normalizeRouteUrl(first);
+  }
+
+  private postAppWatchdogConfig(): void {
+    const config = getAppWatchdogConfig();
+    this.postMessage({
+      type: 'APP_WATCHDOG_CONFIG',
+      payload: { enabled: config.enabled, pingIntervalSeconds: config.pingIntervalSeconds },
+    });
+  }
+
+  private async handleSaveAppWatchdogConfig(payload: AppWatchdogConfig): Promise<void> {
+    // The VS Code setting is the single source of truth — the watchdog's own
+    // configuration listener picks the update up and restarts its timer.
+    const config = vscode.workspace.getConfiguration('cdsDebug');
+    const enabled = payload.enabled;
+    const pingIntervalSeconds = clampNumber(
+      payload.pingIntervalSeconds,
+      PING_INTERVAL_BOUNDS.min,
+      PING_INTERVAL_BOUNDS.max,
+      DEFAULT_PING_INTERVAL_SECONDS,
+    );
+    await config.update('appWatchdog.enabled', enabled, vscode.ConfigurationTarget.Global);
+    await config.update('appWatchdog.pingIntervalSeconds', pingIntervalSeconds, vscode.ConfigurationTarget.Global);
+    this.postAppWatchdogConfig();
   }
 
   private handleOpenAppUrl(rawUrl: string, source: 'manual' | 'auto'): void {
@@ -1938,6 +2037,25 @@ function validateBadgeScaleRequest(app: CfApp | undefined, targetInstances: numb
 
 function normalizeEndpoint(value: string): string {
   return value.trim().replace(/\/+$/, '').toLowerCase();
+}
+
+interface CfTargetScope {
+  apiEndpoint: string;
+  org: string;
+  space: string;
+}
+
+function firstMappedRoute(apps: CfApp[] | undefined, appName: string): string | undefined {
+  const urls = apps?.find((app) => app.name === appName)?.urls;
+  return urls?.find((url) => url.trim().length > 0);
+}
+
+function apiEndpointHost(apiEndpoint: string): string {
+  try {
+    return new URL(apiEndpoint).host;
+  } catch {
+    return apiEndpoint;
+  }
 }
 
 function toSafeHttpUri(rawUrl: string): vscode.Uri | null {

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0] — 2026
+
+### Added
+
+- **App Watchdog — detects CF apps left frozen on a breakpoint** — A debug session that ends without proper cleanup (crashed VS Code window, dropped tunnel, missed breakpoint clear) can leave breakpoints armed inside the remote app; the next request that hits them pauses the whole app for every tester. CDS Debug now:
+  - records every app started through **Start Debug Sessions** (timestamp, region, org, space, mapped route, owner window pid) in `~/.cds-debug/watched-apps.json` — shared across VS Code windows and surviving restarts, so monitoring resumes even after the window that started the session crashed;
+  - pings each watched app's mapped route on an interval (default **30 s**, `cdsDebug.appWatchdog.pingIntervalSeconds`, also on the Settings panel). Liveness is "did the event loop answer at all": any HTTP status from the app counts as alive, while a client-side timeout or a gateway `502/503/504` counts as not responding — the exact signature of a Node process parked on a breakpoint;
+  - flags an app only after **2 consecutive failures** (network blips don't alarm), shows a **status bar warning** (`N apps are not responding`), and clicking it opens an **App Watchdog page** with per-app status, route, failure reason, watch window, and *Stop watching* / *Check now* actions (`CDS Debug: Show App Watchdog`);
+  - **skips apps you are actively debugging** — while this window has a live debug session for an app, pausing on your own breakpoint is expected, so checks and failure counting are suspended and resume right after the session ends. Entries owned by another still-alive VS Code window are left to that window; a dead owner is taken over by any window;
+  - watches each app for **8 hours** from its last debug start (`cdsDebug.appWatchdog.watchDurationHours`, VS Code settings only), then removes it automatically. The whole feature can be disabled with `cdsDebug.appWatchdog.enabled`.
+
 ## [0.4.32] — 2026
 
 ### Fixed

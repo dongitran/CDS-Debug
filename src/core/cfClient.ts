@@ -224,6 +224,29 @@ export async function cfTargetAndApps(
   return cfApps(cfHome);
 }
 
+/**
+ * Extracts the mapped routes from `cf app <name>` output. Used as a fallback by
+ * the App Watchdog when neither the synced topology nor the app cache carries a
+ * route for the app being debugged.
+ */
+export function parseAppRoutes(stdout: string): string[] {
+  for (const line of stdout.split('\n')) {
+    const match = /^routes:\s*(.+)$/.exec(line.trim());
+    if (match?.[1] !== undefined) {
+      return match[1]
+        .split(',')
+        .map((route) => route.trim())
+        .filter((route) => route.length > 0);
+    }
+  }
+  return [];
+}
+
+export async function cfAppRoutes(appName: string, cfHome?: string): Promise<string[]> {
+  const stdout = await runCf(['app', appName], cfHome);
+  return parseAppRoutes(stdout);
+}
+
 export async function cfScaleAppInstances(appName: string, instances: number, cfHome?: string): Promise<void> {
   if (!Number.isInteger(instances) || instances < 0) {
     throw new Error('Instance count must be a non-negative integer.');

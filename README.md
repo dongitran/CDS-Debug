@@ -42,7 +42,8 @@ A sidebar panel connects to your Cloud Foundry environment, shows your running a
 - 🧩 **Shared CAP Config** — define one global fallback in VS Code user settings instead of copying `cap-debug-config.json` into every workspace
 - 💾 **Persistent Mapping** — org ↔ folder mapping is saved, no re-setup on restart
 - ⚡ **Background Cache** — app list pre-fetched in the background so loading feels instant, with automatic retry for canceled or failed sync attempts
-- ⚙️ **Settings Panel** — control cache sync interval, trigger a manual sync, or log out
+- 🛡️ **App Watchdog** — every app you start debugging is pinged on its mapped route for 8 hours; if it stops responding (e.g. a leftover breakpoint froze the remote process), a status bar warning points at it and opens a detail page. Apps you are actively debugging are skipped while their session is alive
+- ⚙️ **Settings Panel** — control cache sync interval, watchdog ping interval, trigger a manual sync, or log out
 
 ---
 
@@ -159,6 +160,7 @@ Or in your user `settings.json` to apply it across all workspaces.
 | Command | Description |
 |---|---|
 | `CDS Debug: Reset Configuration` | Clears saved org mappings and login config |
+| `CDS Debug: Show App Watchdog` | Opens the watchdog page listing watched apps and any that stopped responding |
 
 ---
 

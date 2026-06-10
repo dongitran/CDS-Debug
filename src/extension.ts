@@ -4,7 +4,7 @@ import { initCacheStore, getDebugSessionPackagePreferences } from './storage/cac
 import { initCacheSync, disposeCacheSync } from './core/cacheSync';
 import { DebugLauncherViewProvider } from './webview/debugPanel';
 import { disposeLogger, logInfo, logWarn } from './core/logger';
-import { disposeAllProcesses, initializeProcessManager, stopAllProcesses, getActiveAppNames } from './core/processManager';
+import { disposeAllProcesses, initializeProcessManager, stopAllProcesses, getActiveAppNames, getActiveDebugSessionForApp } from './core/processManager';
 import { setSecretStorage, clearCredentialsFromSecretStorage } from './core/shellEnv';
 import { cleanStaleDebugConfigs, removeLaunchConfigs } from './core/launchConfigurator';
 import { disposeBreakpointSnapshotManager, initializeBreakpointSnapshotManager } from './core/breakpointSnapshotManager';
@@ -17,6 +17,8 @@ import { showWhatsNewIfNeeded } from './core/whatsNewManager';
 import { WhatsNewPanel } from './webview/whatsNewPanel';
 import { initializeTunnelRegistry, reapOrphanCfSshTunnels } from './core/orphanTunnelReaper';
 import { incrementLocalTelemetryCounter, initializeLocalTelemetry } from './core/localTelemetry';
+import { disposeAppWatchdog, initializeAppWatchdog, SHOW_APP_WATCHDOG_COMMAND, sweepWatchedApps } from './core/appWatchdog';
+import { AppWatchdogPanel } from './webview/appWatchdogPanel';
 import type { SharedCfScope } from './types/index';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -33,6 +35,20 @@ export function activate(context: vscode.ExtensionContext): void {
   initializeBreakpointResolver();
   initializePackageBreakpointMirror();
   initializePackageTabDeduplicator();
+
+  // Resumes pinging any apps recorded in ~/.cds-debug by a previous window —
+  // exactly the crash/force-kill scenario where leftover remote breakpoints
+  // would otherwise freeze the CF app for everyone unnoticed. Apps with a live
+  // debug session in this window are excluded from checks: their pauses
+  // (sitting on a breakpoint) are intentional.
+  initializeAppWatchdog({
+    isAppActivelyDebugged: (appName) => getActiveDebugSessionForApp(appName) !== undefined,
+  });
+  context.subscriptions.push(
+    vscode.commands.registerCommand(SHOW_APP_WATCHDOG_COMMAND, () => {
+      AppWatchdogPanel.show();
+    }),
+  );
 
   // Push-based source collection: records `loadedSource` DAP events from every debug
   // session so the Package browser can warm up from accumulated sources instead of
@@ -63,6 +79,13 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!session.name.startsWith(DEBUG_SESSION_PREFIX)) return;
       const appName = session.name.slice(DEBUG_SESSION_PREFIX.length);
       clearOpenedPackageUris(appName);
+      // Watchdog checks were suspended while this session was alive — re-check
+      // soon so a breakpoint left armed by an incomplete stop is caught quickly.
+      // Delayed so the session registry drops the session first (listener
+      // ordering between this handler and the registry's is not guaranteed).
+      setTimeout(() => {
+        void sweepWatchedApps().catch(() => undefined);
+      }, 2_000);
     }),
   );
 
@@ -158,6 +181,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export async function deactivate(): Promise<void> {
   disposeCacheSync();
+  disposeAppWatchdog();
   disposeBreakpointSnapshotManager();
   disposeBreakpointResolver();
   disposePackageBreakpointMirror();

@@ -935,9 +935,29 @@ export function getRendererScriptContent(): string {
       \`;
     }
 
+    function renderWatchdogIntervalOptions(current) {
+      const standard = [10, 15, 30, 60, 120, 300];
+      const values = standard.slice();
+      // A value set directly in VS Code settings may not be in the preset list —
+      // keep it selectable instead of silently showing the wrong option.
+      if (values.indexOf(current) === -1) values.push(current);
+      values.sort(function(a, b) { return a - b; });
+      return values.map(function(s) {
+        const sel = current === s ? ' selected' : '';
+        let label = s + ' seconds';
+        if (s === 30) label = '30 seconds (default)';
+        else if (s === 60) label = '1 minute';
+        else if (s === 120) label = '2 minutes';
+        else if (s === 300) label = '5 minutes';
+        else if (standard.indexOf(s) === -1) label = s + ' seconds (custom)';
+        return '<option value="' + s + '"' + sel + '>' + label + '</option>';
+      }).join('');
+    }
+
     function renderSettings() {
       const s = state.syncStatus;
       const c = state.cacheConfig;
+      const w = state.appWatchdogConfig;
       const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
       const progressText = s.isRunning
         ? (s.currentOrg
@@ -1064,6 +1084,30 @@ export function getRendererScriptContent(): string {
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </div>
         </label>
+
+        <div class="divider" style="margin:12px 0"></div>
+
+        <div class="section-label">App Watchdog</div>
+
+        <label class="pref-row" for="chk-watchdog-enabled">
+          <div class="pref-row-content">
+            <span class="pref-row-title">&#128737;&#65039;&nbsp;Watch debugged apps
+              <span class="pref-state-badge \${w.enabled ? 'pref-state-on' : 'pref-state-off'}">
+                \${w.enabled ? 'enabled' : 'disabled'}
+              </span>
+            </span>
+            <span class="pref-row-desc">After <strong>Start Debug Sessions</strong>, ping each app's mapped route and show a status bar warning when it stops responding — e.g. a leftover breakpoint froze the remote app. Apps you are actively debugging are skipped while their session is alive. Each app is watched for 8 hours by default (<code>cdsDebug.appWatchdog.watchDurationHours</code> in VS Code settings).</span>
+          </div>
+          <div class="toggle-switch \${w.enabled ? 'on' : ''}">
+            <input type="checkbox" id="chk-watchdog-enabled" \${w.enabled ? 'checked' : ''} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </div>
+        </label>
+
+        <div class="radio-desc" style="margin-bottom:4px">Ping interval</div>
+        <select class="select" id="select-watchdog-interval" \${!w.enabled ? 'disabled' : ''}>
+          \${renderWatchdogIntervalOptions(w.pingIntervalSeconds)}
+        </select>
 
         <div class="divider" style="margin:12px 0"></div>
 
@@ -1280,6 +1324,7 @@ export function getRendererScriptContent(): string {
         state.screen = SCREENS.SETTINGS;
         vscode.postMessage({ type: 'GET_SYNC_STATUS' });
         vscode.postMessage({ type: 'GET_CACHE_CONFIG' });
+        vscode.postMessage({ type: 'GET_APP_WATCHDOG_CONFIG' });
         vscode.postMessage({ type: 'GET_DEBUG_PREFS' });
         vscode.postMessage({ type: 'GET_CREDENTIALS_STATUS' });
         render();
@@ -1335,6 +1380,23 @@ export function getRendererScriptContent(): string {
         state.screen = SCREENS.REGION;
         render();
         vscode.postMessage({ type: 'RESET_LOGIN' });
+      });
+
+      $('chk-watchdog-enabled')?.addEventListener('change', function(e) {
+        const enabled = !!e.target.checked;
+        const select = document.getElementById('select-watchdog-interval');
+        const pingIntervalSeconds = parseInt(select?.value || '30', 10);
+        state.appWatchdogConfig = { enabled, pingIntervalSeconds };
+        vscode.postMessage({ type: 'SAVE_APP_WATCHDOG_CONFIG', payload: state.appWatchdogConfig });
+        render();
+      });
+
+      $('select-watchdog-interval')?.addEventListener('change', function(e) {
+        const enabled = !!document.getElementById('chk-watchdog-enabled')?.checked;
+        const pingIntervalSeconds = parseInt(e.target.value || '30', 10);
+        state.appWatchdogConfig = { enabled, pingIntervalSeconds };
+        vscode.postMessage({ type: 'SAVE_APP_WATCHDOG_CONFIG', payload: state.appWatchdogConfig });
+        render();
       });
 
       $('chk-cache-enabled')?.addEventListener('change', function(e) {

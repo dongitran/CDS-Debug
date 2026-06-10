@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.4.32",
+  "version": "0.5.0",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -94,6 +94,25 @@
           "minimum": 20,
           "maximum": 1000,
           "markdownDescription": "Maximum number of breakpoint context snapshots kept in memory for the webview list."
+        },
+        "cdsDebug.appWatchdog.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Ping the mapped route of every app started through **Start Debug Sessions** and show a status bar warning when one stops responding — typically a leftover breakpoint freezing the remote Node process after a debug session ended without proper cleanup. Apps with a live debug session in the current window are not pinged (pausing on your own breakpoint is expected). Watched apps are recorded in `~/.cds-debug/watched-apps.json` and shared across VS Code windows."
+        },
+        "cdsDebug.appWatchdog.pingIntervalSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 10,
+          "maximum": 600,
+          "markdownDescription": "How often (in seconds) the App Watchdog pings the mapped routes of watched apps. Also editable from the CDS Debug Settings panel. Default: `30`."
+        },
+        "cdsDebug.appWatchdog.watchDurationHours": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "maximum": 72,
+          "markdownDescription": "How long (in hours) an app keeps being pinged after a debug session was started for it. Apps older than this window are removed from the watch list automatically. Default: `8`."
         },
         "cdsDebug.packageRegexFilter": {
           "type": "string",
@@ -213,6 +232,10 @@
       {
         "command": "cdsDebug.showWhatsNew",
         "title": "CDS Debug: What's New"
+      },
+      {
+        "command": "cdsDebug.showAppWatchdog",
+        "title": "CDS Debug: Show App Watchdog"
       }
     ]
   },

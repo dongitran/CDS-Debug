@@ -117,6 +117,10 @@ interface RenderSettingsOptions {
     readonly enabled: boolean;
     readonly intervalHours: number;
   };
+  readonly appWatchdogConfig?: {
+    readonly enabled: boolean;
+    readonly pingIntervalSeconds: number;
+  };
 }
 
 interface RendererContext {
@@ -145,6 +149,7 @@ function renderSettingsHtml(options: RenderSettingsOptions): string {
     state: {
       syncStatus: options.syncStatus,
       cacheConfig: options.cacheConfig,
+      appWatchdogConfig: options.appWatchdogConfig ?? { enabled: true, pingIntervalSeconds: 30 },
       credentialStatus: {
         hasCredentials: false,
         email: '',
@@ -845,6 +850,31 @@ describe('webview markup contracts', () => {
     expect(html).toContain('2 days ago');
     expect(html).toContain('Last attempt');
     expect(html).toContain('credentials not set');
+  });
+
+  it('renders the App Watchdog section with the interval selector enabled', () => {
+    const html = renderSettingsHtml({
+      syncStatus: { isRunning: false, done: 0, total: 0 },
+      cacheConfig: { enabled: true, intervalHours: 24 },
+      appWatchdogConfig: { enabled: true, pingIntervalSeconds: 30 },
+    });
+
+    expect(html).toContain('App Watchdog');
+    expect(html).toContain('chk-watchdog-enabled');
+    expect(html).toContain('select-watchdog-interval');
+    expect(html).toContain('<option value="30" selected>30 seconds (default)</option>');
+    expect(html).toContain('watchDurationHours');
+  });
+
+  it('disables the watchdog interval selector and offers custom values when configured', () => {
+    const html = renderSettingsHtml({
+      syncStatus: { isRunning: false, done: 0, total: 0 },
+      cacheConfig: { enabled: true, intervalHours: 24 },
+      appWatchdogConfig: { enabled: false, pingIntervalSeconds: 45 },
+    });
+
+    expect(html).toMatch(/<select class="select" id="select-watchdog-interval"\s+disabled\s*>/);
+    expect(html).toContain('<option value="45" selected>45 seconds (custom)</option>');
   });
 
   it('shows automatic retry copy for retryable sync failures', () => {

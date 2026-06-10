@@ -243,6 +243,16 @@ export const DEFAULT_DEBUG_PREFERENCES: DebugPreferences = {
   enableBranchPrep: false,
 };
 
+/**
+ * App Watchdog options surfaced in the extension Settings panel. Backed by the
+ * `cdsDebug.appWatchdog.*` VS Code settings (the panel reads/writes Global scope);
+ * `watchDurationHours` is deliberately VS Code-settings-only.
+ */
+export interface AppWatchdogConfig {
+  enabled: boolean;
+  pingIntervalSeconds: number;
+}
+
 export interface DebugSessionPackagePreferences {
   packageNameFilterRegex: string;
 }
@@ -423,6 +433,8 @@ export type WebviewMessage =
   | { type: 'GET_SYNC_STATUS' }
   | { type: 'GET_CACHE_CONFIG' }
   | { type: 'SAVE_CACHE_CONFIG'; payload: CacheSettings }
+  | { type: 'GET_APP_WATCHDOG_CONFIG' }
+  | { type: 'SAVE_APP_WATCHDOG_CONFIG'; payload: AppWatchdogConfig }
   | { type: 'GET_CF_TOPOLOGY' }
   | { type: 'GET_DEBUG_PREFS' }
   | { type: 'SAVE_DEBUG_PREFS'; payload: DebugPreferences }
@@ -484,6 +496,7 @@ export type ExtensionMessage =
   | { type: 'CONFIG_LOADED'; payload: { config: ExtensionConfig | null; activeSessions: Record<string, { status: string; message?: string }>; credentialStatus: CredentialStatus } }
   | { type: 'SYNC_STATUS'; payload: SyncProgress }
   | { type: 'CACHE_CONFIG'; payload: CacheSettings }
+  | { type: 'APP_WATCHDOG_CONFIG'; payload: AppWatchdogConfig }
   | { type: 'CF_TOPOLOGY'; payload: CfTopology }
   | { type: 'DEBUG_PREFS'; payload: DebugPreferences }
   | { type: 'DEBUG_SESSION_PACKAGE_PREFS'; payload: DebugSessionPackagePreferences }

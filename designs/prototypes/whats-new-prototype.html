@@ -302,11 +302,11 @@
           <div class="eyebrow">CDS Debug Release Notes</div>
           <h1 id="page-title">What's New in CDS Debug</h1>
           <p class="hero-copy">
-            A focused release for breakpoint reliability, faster Cloud Foundry navigation, and safer debug lifecycle
-            handling.
+            The App Watchdog release: leftover breakpoints that freeze a Cloud Foundry app are now detected
+            and surfaced before your testers hit them.
           </p>
         </div>
-        <div class="version-badge" translate="no">v0.4.0</div>
+        <div class="version-badge" translate="no">v0.5.0</div>
       </header>
 
       <div class="release-meta" aria-label="Release context">
@@ -320,34 +320,34 @@
         <div class="grid">
           <article class="card">
             <div class="card-top">
-              <h3>Reliable Breakpoints</h3>
+              <h3>App Watchdog</h3>
               <span class="index index-blue">01</span>
             </div>
-            <p>Breakpoints bind on first attach across CAP workers, lazy-loaded scripts, and package sources.</p>
+            <p>Every debugged app's mapped route is pinged for 8 hours; a status bar warning appears if it stops responding.</p>
           </article>
 
           <article class="card">
             <div class="card-top">
-              <h3>Faster CF Navigation</h3>
+              <h3>No False Alarms While Debugging</h3>
               <span class="index index-green">02</span>
             </div>
-            <p><code>cf-sync</code> topology loads orgs, spaces, apps, and the 50-region catalog with fewer live calls.</p>
+            <p>Apps with a live debug session in your window are skipped — your own breakpoint pauses are expected.</p>
           </article>
 
           <article class="card">
             <div class="card-top">
-              <h3>Shared Scope &amp; Mapping</h3>
+              <h3>Survives Crashed Windows</h3>
               <span class="index index-yellow">03</span>
             </div>
-            <p><code>sapCap.currentScope</code> sync and app-folder mappings keep region and local source context aligned.</p>
+            <p>Watched apps live in <code>~/.cds-debug</code>, shared across windows — a dead window's apps are taken over.</p>
           </article>
 
           <article class="card">
             <div class="card-top">
-              <h3>Safer Debug Stop</h3>
+              <h3>Watchdog Detail Page</h3>
               <span class="index index-red">04</span>
             </div>
-            <p>Stop and restart now clean ports, breakpoints, stale tunnels, and target the main Node process by default.</p>
+            <p>Click the status bar warning for per-app status, route, failure reason, and Stop watching / Check now actions.</p>
           </article>
         </div>
       </section>

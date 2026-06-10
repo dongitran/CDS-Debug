@@ -1,5 +1,37 @@
 import { describe, it, expect } from 'vitest';
-import { parseOrgs, parseSpaces, parseApps } from '../../src/core/cfClient';
+import { parseOrgs, parseSpaces, parseApps, parseAppRoutes } from '../../src/core/cfClient';
+
+describe('parseAppRoutes', () => {
+  it('parses the routes line from cf app output', () => {
+    const stdout = [
+      'Showing health and status for app my-srv in org demo / space app as user@example.com...',
+      '',
+      'name:              my-srv',
+      'requested state:   started',
+      'routes:            my-srv.cfapps.eu10.hana.ondemand.com, my-srv-alias.cfapps.eu10.hana.ondemand.com',
+      'last uploaded:     Mon 01 Jun 10:00:00 +07 2026',
+      'stack:             cflinuxfs4',
+    ].join('\n');
+
+    expect(parseAppRoutes(stdout)).toEqual([
+      'my-srv.cfapps.eu10.hana.ondemand.com',
+      'my-srv-alias.cfapps.eu10.hana.ondemand.com',
+    ]);
+  });
+
+  it('returns empty array when the app has no routes', () => {
+    expect(parseAppRoutes('name: my-srv\nroutes:\nstack: cflinuxfs4')).toEqual([]);
+    expect(parseAppRoutes('name: my-srv\nstack: cflinuxfs4')).toEqual([]);
+    expect(parseAppRoutes('')).toEqual([]);
+  });
+
+  it('ignores empty segments produced by trailing commas', () => {
+    expect(parseAppRoutes('routes:   a.example.com, , b.example.com,')).toEqual([
+      'a.example.com',
+      'b.example.com',
+    ]);
+  });
+});
 
 describe('parseOrgs', () => {
   it('parses standard cf orgs output', () => {

@@ -22,6 +22,7 @@ cds-debug/
 ├── src/
 │   ├── core/                # Business logic modules
 │   │   ├── appMapper.ts             # CF app ↔ local folder mapping
+│   │   ├── appWatchdog.ts           # Pings mapped routes of debugged apps (leftover-breakpoint detector)
 │   │   ├── breakpointSnapshotManager.ts  # Breakpoint context capture
 │   │   ├── cacheSync.ts             # Background app list caching
 │   │   ├── capDebugConfig.ts        # cap-debug-config.json resolution
@@ -43,6 +44,7 @@ cds-debug/
 │   ├── types/               # TypeScript type definitions
 │   │   └── index.ts                 # All shared types
 │   ├── webview/             # UI layer (HTML/CSS/JS injected into VS Code webview)
+│   │   ├── appWatchdogPanel.ts      # App Watchdog detail page (status bar click target)
 │   │   ├── debugPanel.ts            # Main webview provider
 │   │   ├── getWebviewContent.ts     # HTML template
 │   │   ├── logsPanel.ts             # CF logs webview

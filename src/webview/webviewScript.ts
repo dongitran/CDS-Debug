@@ -113,6 +113,7 @@ export function getScript(nonce: string): string {
       activeSessions: {}, // { appName: { status, message, msgPhase, intervalId } }
       syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 0 },
       cacheConfig: { enabled: true, intervalHours: 24 },
+      appWatchdogConfig: { enabled: true, pingIntervalSeconds: 30 },
       // Branch preparation state: [{ appName, targetBranch, currentBranch, step, message }]
       branchPrepServices: [],
       // Debug behavior preferences
@@ -1330,6 +1331,10 @@ export function getScript(nonce: string): string {
         }
         case 'CACHE_CONFIG':
           state.cacheConfig = msg.payload;
+          if (state.screen === SCREENS.SETTINGS) render();
+          return;
+        case 'APP_WATCHDOG_CONFIG':
+          state.appWatchdogConfig = msg.payload;
           if (state.screen === SCREENS.SETTINGS) render();
           return;
         case 'DEBUG_PREFS':

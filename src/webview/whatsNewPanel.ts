@@ -20,6 +20,37 @@ interface ChangelogVersion {
 
 const CHANGELOG: ChangelogVersion[] = [
   {
+    version: '0.5.0',
+    label: 'v0.5.0',
+    features: [
+      {
+        icon: '🛡️',
+        title: 'App Watchdog',
+        description:
+          'Every app you start debugging is pinged on its mapped route for 8 hours. If a leftover breakpoint freezes the remote app after a session ended badly, a status bar warning appears before your testers hit it.',
+      },
+      {
+        icon: '🔕',
+        title: 'No False Alarms While You Debug',
+        description:
+          'Apps with a live debug session in your window are excluded from checks — pausing on your own breakpoint is expected. Checks resume automatically the moment the session ends.',
+      },
+      {
+        icon: '🪟',
+        title: 'Survives Crashed Windows',
+        description:
+          'Watched apps are recorded in <code>~/.cds-debug</code> and shared across VS Code windows: if the window that started the session dies, any other window takes over the monitoring.',
+      },
+      {
+        icon: '📋',
+        title: 'Watchdog Detail Page',
+        description:
+          'Click the status bar warning (or run <code>CDS Debug: Show App Watchdog</code>) to see each watched app, its route, failure reason, and remaining watch window — with Check now and Stop watching actions.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     version: '0.4.23',
     label: 'v0.4.23',
     features: [
