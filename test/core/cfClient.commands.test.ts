@@ -422,4 +422,28 @@ describe('cfClient command wrappers', () => {
       }),
     );
   });
+
+  it('data-loading commands use the 10-minute timeout for slow networks', async () => {
+    execFileAsyncMock.mockResolvedValue({ stdout: 'name\n' });
+
+    await cfApps();
+    await cfOrgs();
+    await cfSpaces();
+    await cfTarget('org-main');
+
+    for (const call of execFileAsyncMock.mock.calls) {
+      expect(call[2]).toEqual(expect.objectContaining({ timeout: 600_000 }));
+    }
+  });
+
+  it('quick operational commands keep the 30-second timeout', async () => {
+    execFileAsyncMock.mockResolvedValue({ stdout: 'OK\n' });
+
+    await cfScaleAppInstances('svc-one', 2);
+    await cfEnableSsh('my-app');
+
+    for (const call of execFileAsyncMock.mock.calls) {
+      expect(call[2]).toEqual(expect.objectContaining({ timeout: 30_000 }));
+    }
+  });
 });

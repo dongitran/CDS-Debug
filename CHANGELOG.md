@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] — 2026
+
+### Fixed
+
+- **App/space lists no longer vanish on slow networks or first org-space selection** — Loading the service/app list ran every CF CLI call (`cf orgs`, `cf spaces`, `cf target`, `cf apps`) under a hard **30 s** cap. On the first selection of a fresh org/space, or on a slow network / high-latency CF region, `cf apps` (and the `cf target` before it) can legitimately take minutes — the cap killed the process mid-fetch with `SIGTERM`, so the list loaded briefly and then disappeared with a generic `Failed to load apps … CF CLI command failed.` error. These data-loading commands now use a **10-minute** timeout (verified worst case while still guaranteeing the call eventually errors instead of hanging forever). Quick operational commands (`cf logout`, `cf ssh-enabled`, `cf scale`, app-route lookups) keep their fast 30 s cap; `cf restart` keeps its own 120 s limit.
+
 ## [0.5.0] — 2026
 
 ### Added

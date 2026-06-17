@@ -9,8 +9,17 @@ const MAX_BUFFER = 10 * 1024 * 1024;
 // Hard cap on any CF CLI invocation. Without a timeout, a hung auth-server token
 // refresh or slow CF API response keeps execFileAsync pending forever — the caller
 // never gets an error, so the extension appears frozen (e.g. "Preparing…" stuck).
-// 30 s is generous for interactive commands; cfRestartApp uses its own 120 s limit.
+// 30 s is generous for quick, operational commands (logout, ssh-enabled, scale,
+// app routes); cfRestartApp uses its own 120 s limit.
 const CF_CLI_TIMEOUT_MS = 30_000;
+// Longer cap for the topology/data-loading commands (orgs, spaces, target, apps).
+// On the first selection of a fresh org/space — and on high-latency CF regions or
+// a slow network — `cf apps` (and the `cf target` that precedes it) can legitimately
+// take minutes before the CF API answers. The previous 30 s cap killed the process
+// with SIGTERM mid-fetch, surfacing as "CF CLI command failed." and an app list that
+// loaded briefly then vanished. 10 minutes covers the verified worst case while still
+// guaranteeing the caller eventually gets an error instead of hanging forever.
+const CF_LOAD_TIMEOUT_MS = 600_000;
 const REMOTE_PACKAGE_JSON_FIND_COMMAND = [
   'find / -maxdepth 7',
   "\\( -path '*/node_modules' -o -path /proc -o -path /sys -o -path /dev \\) -prune -o",
@@ -49,11 +58,11 @@ export function isCfAuthError(err: unknown): boolean {
 // cfHome: when provided, sets CF_HOME so this invocation uses an isolated config
 // directory instead of the default ~/.cf — used by the background cache sync to
 // avoid clobbering the user's interactive CF session.
-async function runCf(args: string[], cfHome?: string): Promise<string> {
+async function runCf(args: string[], cfHome?: string, timeoutMs: number = CF_CLI_TIMEOUT_MS): Promise<string> {
   try {
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (cfHome) env.CF_HOME = cfHome;
-    const { stdout } = await execFileAsync('cf', args, { env, maxBuffer: MAX_BUFFER, timeout: CF_CLI_TIMEOUT_MS });
+    const { stdout } = await execFileAsync('cf', args, { env, maxBuffer: MAX_BUFFER, timeout: timeoutMs });
     return stdout;
   } catch (err: unknown) {
     const error = err as NodeJS.ErrnoException & { stderr?: string };
@@ -113,7 +122,7 @@ export function parseOrgs(stdout: string): string[] {
 }
 
 export async function cfOrgs(cfHome?: string): Promise<string[]> {
-  const stdout = await runCf(['orgs'], cfHome);
+  const stdout = await runCf(['orgs'], cfHome, CF_LOAD_TIMEOUT_MS);
   return parseOrgs(stdout);
 }
 
@@ -122,11 +131,11 @@ export async function cfLogout(cfHome?: string): Promise<void> {
 }
 
 export async function cfTargetOrg(org: string, cfHome?: string): Promise<void> {
-  await runCf(['target', '-o', org], cfHome);
+  await runCf(['target', '-o', org], cfHome, CF_LOAD_TIMEOUT_MS);
 }
 
 export async function cfTarget(org: string, space = CF_DEFAULT_SPACE, cfHome?: string): Promise<void> {
-  await runCf(['target', '-o', org, '-s', space], cfHome);
+  await runCf(['target', '-o', org, '-s', space], cfHome, CF_LOAD_TIMEOUT_MS);
 }
 
 export function parseSpaces(stdout: string): string[] {
@@ -134,7 +143,7 @@ export function parseSpaces(stdout: string): string[] {
 }
 
 export async function cfSpaces(cfHome?: string): Promise<string[]> {
-  const stdout = await runCf(['spaces'], cfHome);
+  const stdout = await runCf(['spaces'], cfHome, CF_LOAD_TIMEOUT_MS);
   return parseSpaces(stdout);
 }
 
@@ -211,7 +220,7 @@ function parseInstanceCounts(value: string | undefined): InstanceCounts | undefi
 }
 
 export async function cfApps(cfHome?: string): Promise<CfApp[]> {
-  const stdout = await runCf(['apps'], cfHome);
+  const stdout = await runCf(['apps'], cfHome, CF_LOAD_TIMEOUT_MS);
   return parseApps(stdout);
 }
 

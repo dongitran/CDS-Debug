@@ -20,6 +20,19 @@ interface ChangelogVersion {
 
 const CHANGELOG: ChangelogVersion[] = [
   {
+    version: '0.5.1',
+    label: 'v0.5.1',
+    features: [
+      {
+        icon: '⏱️',
+        title: 'App Lists Load on Slow Networks',
+        description:
+          'Loading the service/app list for a freshly selected org/space no longer gives up after 30 seconds. <code>cf apps</code> (and the target switch before it) can take minutes on a slow network or high-latency CF region — the timeout is now 10 minutes, so the list keeps loading instead of vanishing with a "CF CLI command failed" error.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     version: '0.5.0',
     label: 'v0.5.0',
     features: [
