@@ -144,7 +144,7 @@ describe('getAppWatchdogConfig', () => {
   it('returns defaults when nothing is configured', () => {
     expect(getAppWatchdogConfig()).toEqual({
       enabled: true,
-      pingIntervalSeconds: 30,
+      pingIntervalSeconds: 90,
       watchDurationHours: 8,
     });
   });
@@ -155,7 +155,7 @@ describe('getAppWatchdogConfig', () => {
     harness.configValues.set('appWatchdog.watchDurationHours', 100);
     expect(getAppWatchdogConfig()).toEqual({
       enabled: false,
-      pingIntervalSeconds: 10,
+      pingIntervalSeconds: 60,
       watchDurationHours: 72,
     });
   });
@@ -417,13 +417,16 @@ describe('timer scheduling', () => {
     await registerWatchedApps([entryFor('srv-a')]);
     ping.mockClear();
 
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(ping).not.toHaveBeenCalled();
+
     let sweepDone = nextSweepDone();
     await vi.advanceTimersByTimeAsync(30_000);
     await sweepDone;
     expect(ping).toHaveBeenCalledTimes(1);
 
     sweepDone = nextSweepDone();
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(90_000);
     await sweepDone;
     expect(ping).toHaveBeenCalledTimes(2);
   });
@@ -434,14 +437,14 @@ describe('timer scheduling', () => {
     initializeAppWatchdog({ storageDir, ping });
     await registerWatchedApps([entryFor('srv-a')]);
 
-    harness.configValues.set('appWatchdog.pingIntervalSeconds', 10);
+    harness.configValues.set('appWatchdog.pingIntervalSeconds', 60);
     let sweepDone = nextSweepDone();
     fireConfigChange();
     await sweepDone; // the config handler triggers an immediate re-sweep
     ping.mockClear();
 
     sweepDone = nextSweepDone();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     await sweepDone;
     expect(ping).toHaveBeenCalledTimes(1);
   });

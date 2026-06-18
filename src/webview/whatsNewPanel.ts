@@ -20,6 +20,19 @@ interface ChangelogVersion {
 
 const CHANGELOG: ChangelogVersion[] = [
   {
+    version: '0.5.2',
+    label: 'v0.5.2',
+    features: [
+      {
+        icon: '🛡️',
+        title: 'Quieter App Watchdog Checks',
+        description:
+          'App Watchdog now pings watched app routes every 90 seconds by default instead of every 30 seconds. The Settings panel keeps the supported presets focused on 1 minute, 90 seconds, 2 minutes, and 5 minutes.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     version: '0.5.1',
     label: 'v0.5.1',
     features: [

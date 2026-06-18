@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -102,10 +102,10 @@
         },
         "cdsDebug.appWatchdog.pingIntervalSeconds": {
           "type": "number",
-          "default": 30,
-          "minimum": 10,
+          "default": 90,
+          "minimum": 60,
           "maximum": 600,
-          "markdownDescription": "How often (in seconds) the App Watchdog pings the mapped routes of watched apps. Also editable from the CDS Debug Settings panel. Default: `30`."
+          "markdownDescription": "How often (in seconds) the App Watchdog pings the mapped routes of watched apps. Also editable from the CDS Debug Settings panel. Default: `90`."
         },
         "cdsDebug.appWatchdog.watchDurationHours": {
           "type": "number",

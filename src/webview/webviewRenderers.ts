@@ -936,7 +936,7 @@ export function getRendererScriptContent(): string {
     }
 
     function renderWatchdogIntervalOptions(current) {
-      const standard = [10, 15, 30, 60, 120, 300];
+      const standard = [60, 90, 120, 300];
       const values = standard.slice();
       // A value set directly in VS Code settings may not be in the preset list —
       // keep it selectable instead of silently showing the wrong option.
@@ -945,8 +945,8 @@ export function getRendererScriptContent(): string {
       return values.map(function(s) {
         const sel = current === s ? ' selected' : '';
         let label = s + ' seconds';
-        if (s === 30) label = '30 seconds (default)';
-        else if (s === 60) label = '1 minute';
+        if (s === 60) label = '1 minute';
+        else if (s === 90) label = '90 seconds (default)';
         else if (s === 120) label = '2 minutes';
         else if (s === 300) label = '5 minutes';
         else if (standard.indexOf(s) === -1) label = s + ' seconds (custom)';
@@ -1385,7 +1385,7 @@ export function getRendererScriptContent(): string {
       $('chk-watchdog-enabled')?.addEventListener('change', function(e) {
         const enabled = !!e.target.checked;
         const select = document.getElementById('select-watchdog-interval');
-        const pingIntervalSeconds = parseInt(select?.value || '30', 10);
+        const pingIntervalSeconds = parseInt(select?.value || '90', 10);
         state.appWatchdogConfig = { enabled, pingIntervalSeconds };
         vscode.postMessage({ type: 'SAVE_APP_WATCHDOG_CONFIG', payload: state.appWatchdogConfig });
         render();
@@ -1393,7 +1393,7 @@ export function getRendererScriptContent(): string {
 
       $('select-watchdog-interval')?.addEventListener('change', function(e) {
         const enabled = !!document.getElementById('chk-watchdog-enabled')?.checked;
-        const pingIntervalSeconds = parseInt(e.target.value || '30', 10);
+        const pingIntervalSeconds = parseInt(e.target.value || '90', 10);
         state.appWatchdogConfig = { enabled, pingIntervalSeconds };
         vscode.postMessage({ type: 'SAVE_APP_WATCHDOG_CONFIG', payload: state.appWatchdogConfig });
         render();

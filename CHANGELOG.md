@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.2] — 2026
+
+### Changed
+
+- **App Watchdog uses a quieter default cadence** — The watchdog now pings watched app routes every **90 s** by default instead of 30 s, reducing background traffic while still catching apps left frozen on remote breakpoints. The Settings panel now offers **1 minute**, **90 seconds (default)**, **2 minutes**, and **5 minutes** presets; direct VS Code settings values below **60 s** are clamped to 60 s.
+
 ## [0.5.1] — 2026
 
 ### Fixed

@@ -89,14 +89,14 @@ export interface InitializeAppWatchdogOptions {
 const WATCH_FILE_NAME = 'watched-apps.json';
 const CONFIG_SECTION = 'cdsDebug';
 export const SHOW_APP_WATCHDOG_COMMAND = 'cdsDebug.showAppWatchdog';
-export const DEFAULT_PING_INTERVAL_SECONDS = 30;
+export const DEFAULT_PING_INTERVAL_SECONDS = 90;
 export const DEFAULT_WATCH_DURATION_HOURS = 8;
-export const PING_INTERVAL_BOUNDS = { min: 10, max: 600 } as const;
+export const PING_INTERVAL_BOUNDS = { min: 60, max: 600 } as const;
 const WATCH_DURATION_BOUNDS = { min: 1, max: 72 } as const;
 const MAX_PING_TIMEOUT_MS = 10_000;
 const MIN_PING_TIMEOUT_MS = 2_000;
-// One failed ping can be a network blip; two in a row (≈1 min at the default
-// interval) is a strong signal the event loop is parked on a breakpoint.
+// One failed ping can be a network blip; two in a row is a stronger signal the
+// event loop is parked on a breakpoint.
 export const UNRESPONSIVE_AFTER_FAILURES = 2;
 
 interface RuntimeCheckState {

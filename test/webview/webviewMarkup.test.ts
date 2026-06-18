@@ -149,7 +149,7 @@ function renderSettingsHtml(options: RenderSettingsOptions): string {
     state: {
       syncStatus: options.syncStatus,
       cacheConfig: options.cacheConfig,
-      appWatchdogConfig: options.appWatchdogConfig ?? { enabled: true, pingIntervalSeconds: 30 },
+      appWatchdogConfig: options.appWatchdogConfig ?? { enabled: true, pingIntervalSeconds: 90 },
       credentialStatus: {
         hasCredentials: false,
         email: '',
@@ -856,13 +856,19 @@ describe('webview markup contracts', () => {
     const html = renderSettingsHtml({
       syncStatus: { isRunning: false, done: 0, total: 0 },
       cacheConfig: { enabled: true, intervalHours: 24 },
-      appWatchdogConfig: { enabled: true, pingIntervalSeconds: 30 },
+      appWatchdogConfig: { enabled: true, pingIntervalSeconds: 90 },
     });
 
     expect(html).toContain('App Watchdog');
     expect(html).toContain('chk-watchdog-enabled');
     expect(html).toContain('select-watchdog-interval');
-    expect(html).toContain('<option value="30" selected>30 seconds (default)</option>');
+    expect(html).toContain('<option value="60">1 minute</option>');
+    expect(html).toContain('<option value="90" selected>90 seconds (default)</option>');
+    expect(html).toContain('<option value="120">2 minutes</option>');
+    expect(html).toContain('<option value="300">5 minutes</option>');
+    expect(html).not.toContain('<option value="10"');
+    expect(html).not.toContain('<option value="15"');
+    expect(html).not.toContain('<option value="30"');
     expect(html).toContain('watchDurationHours');
   });
 
@@ -870,11 +876,11 @@ describe('webview markup contracts', () => {
     const html = renderSettingsHtml({
       syncStatus: { isRunning: false, done: 0, total: 0 },
       cacheConfig: { enabled: true, intervalHours: 24 },
-      appWatchdogConfig: { enabled: false, pingIntervalSeconds: 45 },
+      appWatchdogConfig: { enabled: false, pingIntervalSeconds: 75 },
     });
 
     expect(html).toMatch(/<select class="select" id="select-watchdog-interval"\s+disabled\s*>/);
-    expect(html).toContain('<option value="45" selected>45 seconds (custom)</option>');
+    expect(html).toContain('<option value="75" selected>75 seconds (custom)</option>');
   });
 
   it('shows automatic retry copy for retryable sync failures', () => {
