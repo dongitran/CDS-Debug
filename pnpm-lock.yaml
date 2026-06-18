@@ -13,8 +13,8 @@ importers:
   .:
     dependencies:
       '@saptools/cf-sync':
-        specifier: ^0.4.10
-        version: 0.4.10
+        specifier: ^0.4.12
+        version: 0.4.12
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -892,8 +892,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@saptools/cf-sync@0.4.10':
-    resolution: {integrity: sha512-jWTJns7CkUNOdsfk4LQ+k32A2l6EulCiJtnREaclLGn0rdG3IB5XDQbE+9iX6myshuVKs7S/Pq2Lf37Ud3BlYg==}
+  '@saptools/cf-sync@0.4.12':
+    resolution: {integrity: sha512-PBToTZjlri5JOOFcpebS5En5rNIKXmVQSKSPjug/tqtubv6Bebhk97HZJIfXAAYx/LJ7eY5OiIaEzXX3BnZ9uA==}
     engines: {node: '>=20.0.0'}
     hasBin: true
 
@@ -1660,10 +1660,6 @@ packages:
   gensequence@8.0.8:
     resolution: {integrity: sha512-omMVniXEXpdx/vKxGnPRoO2394Otlze28TyxECbFVyoSpZ9H3EO7lemjcB12OpQJzRW4e5tt/dL1rOxry6aMHg==}
     engines: {node: '>=20'}
-
-  get-east-asian-width@1.5.0:
-    resolution: {integrity: sha512-CQ+bEO+Tva/qlmw24dCejulK5pMzVnUOFOijVogd3KQs07HnRIgp8TGipvCCRT06xeYEbpbgwaCxglFyiuIcmA==}
-    engines: {node: '>=18'}
 
   get-east-asian-width@1.6.0:
     resolution: {integrity: sha512-QRbvDIbx6YklUe6RxeTeleMR0yv3cYH6PsPZHcnVn7xv7zO1BHN8r0XETu8n6Ye3Q+ahtSarc3WgtNWmehIBfA==}
@@ -3345,7 +3341,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.1':
     optional: true
 
-  '@saptools/cf-sync@0.4.10':
+  '@saptools/cf-sync@0.4.12':
     dependencies:
       commander: 13.1.0
       ora: 9.4.0
@@ -4325,8 +4321,6 @@ snapshots:
 
   gensequence@8.0.8: {}
 
-  get-east-asian-width@1.5.0: {}
-
   get-east-asian-width@1.6.0: {}
 
   get-intrinsic@1.3.0:
@@ -5095,7 +5089,7 @@ snapshots:
 
   string-width@8.2.1:
     dependencies:
-      get-east-asian-width: 1.5.0
+      get-east-asian-width: 1.6.0
       strip-ansi: 7.2.0
 
   string_decoder@1.3.0:
