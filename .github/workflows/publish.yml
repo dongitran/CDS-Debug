@@ -1,9 +1,12 @@
 name: Publish Extension
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
+      - feature/password-ssh-proxy-tunnel
+      - 'prerelease/**'
     paths:
       - 'src/**'
       - 'package.json'
@@ -61,6 +64,16 @@ jobs:
           echo "publish_version=$PUBLISH_VERSION" >> "$GITHUB_OUTPUT"
           echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
 
+      - name: Guard release channel
+        env:
+          CHANNEL: ${{ steps.publish_meta.outputs.channel }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF_NAME" != "master" && "$CHANNEL" != "pre-release" ]]; then
+            echo "::error::Only pre-release package versions can publish from non-master branches."
+            exit 1
+          fi
+
       - name: Normalize package version for VS Marketplace
         if: steps.publish_meta.outputs.raw_version != steps.publish_meta.outputs.publish_version
         env:
@@ -71,7 +84,7 @@ jobs:
           npm pkg set version="$PUBLISH_VERSION"
 
       - name: Publish stable to VS Code Marketplace
-        if: steps.publish_meta.outputs.channel == 'stable'
+        if: github.ref_name == 'master' && steps.publish_meta.outputs.channel == 'stable'
         run: npx @vscode/vsce publish --skip-duplicate --no-dependencies
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
@@ -82,8 +95,28 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
+      - name: Create GitHub Release (pre-release)
+        if: steps.publish_meta.outputs.channel == 'pre-release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RAW_VERSION: ${{ steps.publish_meta.outputs.raw_version }}
+          VERSION: ${{ steps.publish_meta.outputs.publish_version }}
+        run: |
+          TAG="v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::GitHub Release ${TAG} already exists."
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            --title "${TAG} (${RAW_VERSION})" \
+            --notes "Pre-release build published from ${GITHUB_REF_NAME} at ${GITHUB_SHA}." \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false
+
       - name: Create GitHub Release (stable only)
-        if: steps.publish_meta.outputs.channel == 'stable'
+        if: github.ref_name == 'master' && steps.publish_meta.outputs.channel == 'stable'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.publish_meta.outputs.publish_version }}
