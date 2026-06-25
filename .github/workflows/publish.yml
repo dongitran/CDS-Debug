@@ -83,19 +83,21 @@ jobs:
           echo "::notice::Marketplace does not accept semver pre-release tags. Publishing ${RAW_VERSION} as ${PUBLISH_VERSION} with pre-release channel."
           npm pkg set version="$PUBLISH_VERSION"
 
-      - name: Publish stable to VS Code Marketplace
-        if: github.ref_name == 'master' && steps.publish_meta.outputs.channel == 'stable'
-        run: npx @vscode/vsce publish --skip-duplicate --no-dependencies
+      - name: Package VSIX for GitHub Release
+        id: package_vsix
         env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          CHANNEL: ${{ steps.publish_meta.outputs.channel }}
+          VERSION: ${{ steps.publish_meta.outputs.publish_version }}
+        run: |
+          VSIX_PATH="cds-debug-${VERSION}.vsix"
+          if [[ "$CHANNEL" == "pre-release" ]]; then
+            npx @vscode/vsce package --pre-release --no-dependencies --out "$VSIX_PATH"
+          else
+            npx @vscode/vsce package --no-dependencies --out "$VSIX_PATH"
+          fi
+          echo "vsix_path=$VSIX_PATH" >> "$GITHUB_OUTPUT"
 
-      - name: Publish pre-release to VS Code Marketplace
-        if: steps.publish_meta.outputs.channel == 'pre-release'
-        run: npx @vscode/vsce publish --pre-release --skip-duplicate --no-dependencies
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-
-      - name: Create GitHub Release (pre-release)
+      - name: Ensure GitHub Release (pre-release)
         if: steps.publish_meta.outputs.channel == 'pre-release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -115,13 +117,40 @@ jobs:
             --prerelease \
             --latest=false
 
-      - name: Create GitHub Release (stable only)
+      - name: Ensure GitHub Release (stable only)
         if: github.ref_name == 'master' && steps.publish_meta.outputs.channel == 'stable'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.publish_meta.outputs.publish_version }}
         run: |
-          gh release create "v${VERSION}" \
-            --title "v${VERSION}" \
+          TAG="v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::GitHub Release ${TAG} already exists."
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            --title "$TAG" \
             --notes-file CHANGELOG.md \
             --latest
+
+      - name: Upload VSIX to GitHub Release
+        if: steps.publish_meta.outputs.channel == 'pre-release' || (github.ref_name == 'master' && steps.publish_meta.outputs.channel == 'stable')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.publish_meta.outputs.publish_version }}
+          VSIX_PATH: ${{ steps.package_vsix.outputs.vsix_path }}
+        run: |
+          gh release upload "v${VERSION}" "$VSIX_PATH" --clobber
+
+      - name: Publish stable to VS Code Marketplace
+        if: github.ref_name == 'master' && steps.publish_meta.outputs.channel == 'stable'
+        run: npx @vscode/vsce publish --skip-duplicate --no-dependencies
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish pre-release to VS Code Marketplace
+        if: steps.publish_meta.outputs.channel == 'pre-release'
+        run: npx @vscode/vsce publish --pre-release --skip-duplicate --no-dependencies
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

@@ -16,6 +16,8 @@ cspell.json
 pnpm-lock.yaml
 .gitignore
 .vscodeignore
+AGENTS.md
+.agents/**
 implementation_plan.md
 coverage/**
 e2e/**
