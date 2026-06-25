@@ -1,6 +1,7 @@
 import type * as vscode from 'vscode';
 import { spawn } from 'node:child_process';
 import { logWarn } from './logger';
+import { createCfProcessEnv } from './cfEnvironment';
 
 export const CF_SSH_SIGNAL_TIMEOUT_MS = 15_000;
 
@@ -18,9 +19,14 @@ export async function runCfSshSignal(
   appName: string,
   cmd: string,
   channel: vscode.OutputChannel,
+  shouldStart?: () => boolean,
 ): Promise<SshSignalResult> {
+  const env = await createCfProcessEnv();
+  if (shouldStart !== undefined && !shouldStart()) {
+    return { exitCode: null, stderr: '' };
+  }
   return new Promise((resolve) => {
-    const child = spawn('cf', ['ssh', appName, '-c', cmd]);
+    const child = spawn('cf', ['ssh', appName, '-c', cmd], { env });
     let stderrBuf = '';
     let settled = false;
 

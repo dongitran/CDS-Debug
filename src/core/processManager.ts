@@ -30,6 +30,7 @@ import {
   untrackDebugSession,
 } from './debugSessionRegistry';
 import { incrementLocalTelemetryCounter } from './localTelemetry';
+import { createCfProcessEnv } from './cfEnvironment';
 
 export {
   DEBUG_SESSION_PREFIX,
@@ -463,7 +464,12 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
   const signalCmd = buildInspectorSignalCommand();
   channel.appendLine(`[Extension] Activating Node inspector on ${appName}: cf ssh ${appName} -c "${signalCmd}"`);
   logInfo(`[${appName}] Step 1: activating Node inspector via cf ssh (timeout ${(CF_SSH_SIGNAL_TIMEOUT_MS / 1000).toString()}s)…`);
-  const signalResult = await runCfSshSignal(appName, signalCmd, channel);
+  const signalResult = await runCfSshSignal(
+    appName,
+    signalCmd,
+    channel,
+    () => isCurrentLifecycle(appName, lifecycleVersion) && !stoppedApps.has(appName),
+  );
   logInfo(`[${appName}] USR1 signal done (exit code: ${signalResult.exitCode?.toString() ?? 'null'}).`);
 
   if (isSshDisabledError(signalResult.stderr)) {
@@ -480,7 +486,12 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
 
     channel.appendLine(`[Extension] Retrying Node inspector activation after SSH enable...`);
     logInfo(`[${appName}] Retrying USR1 signal after SSH enable/restart.`);
-    await runCfSshSignal(appName, signalCmd, channel);
+    await runCfSshSignal(
+      appName,
+      signalCmd,
+      channel,
+      () => isCurrentLifecycle(appName, lifecycleVersion) && !stoppedApps.has(appName),
+    );
     if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
   }
 
@@ -488,26 +499,29 @@ export async function startTunnelAndAttach(appName: string, folderPath: string, 
   if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
 
   logInfo(`[${appName}] Step 2: opening SSH tunnel on port ${port.toString()}…`);
-  spawnSshTunnel(appName, folderPath, port, launchConfigName, channel, lifecycleVersion);
+  await spawnSshTunnel(appName, folderPath, port, launchConfigName, channel, lifecycleVersion);
 }
 
-function spawnSshTunnel(
+async function spawnSshTunnel(
   appName: string,
   folderPath: string,
   port: number,
   launchConfigName: string,
   channel: vscode.OutputChannel,
   lifecycleVersion: number,
-): void {
+): Promise<void> {
   const tunnelArg = `${port.toString()}:localhost:9229`;
   channel.appendLine(`[Extension] Opening SSH tunnel: cf ssh ${appName} -L ${tunnelArg}`);
   logInfo(`[Background] cf ssh ${appName} -L ${tunnelArg}`);
 
   const isWindows = process.platform === 'win32';
+  const env = await createCfProcessEnv();
+  if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
   const child = spawn('cf', ['ssh', appName, '-L', tunnelArg], {
     cwd: folderPath,
     shell: false,
     detached: !isWindows,
+    env,
   });
 
   processes.set(appName, child);
@@ -597,7 +611,12 @@ async function probeTunnelAndAttach(
   const resendTimer = setTimeout(() => {
     if (!isCurrentLifecycle(appName, lifecycleVersion) || stoppedApps.has(appName)) return;
     logInfo(`[${appName}] Inspector still unresponsive — re-arming USR1 once more…`);
-    void runCfSshSignal(appName, buildInspectorSignalCommand(), channel).catch((err: unknown) => {
+    void runCfSshSignal(
+      appName,
+      buildInspectorSignalCommand(),
+      channel,
+      () => isCurrentLifecycle(appName, lifecycleVersion) && !stoppedApps.has(appName),
+    ).catch((err: unknown) => {
       logWarn(`[${appName}] USR1 re-arm failed: ${err instanceof Error ? err.message : String(err)}`);
     });
   }, usr1ResendDelayMs);

@@ -169,6 +169,7 @@ pnpm test:report          # Open HTML report
 
 ### Settings Screen
 1. User can see automatic retry guidance after a canceled cache sync.
+2. User can configure and test a password SSH proxy from Settings.
 
 ### Shared CF Scope
 1. User can sync the current scope through VS Code global settings.
@@ -194,7 +195,7 @@ pnpm test:report          # Open HTML report
 2. User can switch apps inside Packages and see each app package list independently.
 3. User can open Packages immediately after attach and wait for sources instead of seeing a false error.
 4. User can open Packages immediately after a started session and wait for the child debug session to appear.
-5. User can retry after a hanging package-source request times out.
+5. User can reload after a hanging package-source request automatically recovers.
 6. User can save a debug session package regex filter and apply it before search input filtering.
 7. User sees invalid debug session package regex rejected in settings.
 8. User can expand package tree rows without scroll jumps.

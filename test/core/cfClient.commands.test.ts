@@ -12,6 +12,10 @@ vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
 
+vi.mock('../../src/core/cfEnvironment', () => ({
+  createCfProcessEnv: vi.fn((overrides: NodeJS.ProcessEnv) => Promise.resolve({ ...overrides })),
+}));
+
 import {
   cfApps,
   cfLogin,

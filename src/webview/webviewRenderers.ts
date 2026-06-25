@@ -958,6 +958,7 @@ export function getRendererScriptContent(): string {
       const s = state.syncStatus;
       const c = state.cacheConfig;
       const w = state.appWatchdogConfig;
+      const p = state.sshProxyStatus;
       const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
       const progressText = s.isRunning
         ? (s.currentOrg
@@ -1041,6 +1042,61 @@ export function getRendererScriptContent(): string {
         \${credSection}
 
         <div class="divider" style="margin:10px 0"></div>
+
+        <div class="section-label">SSH Proxy</div>
+
+        <label class="pref-row" for="chk-ssh-proxy-enabled">
+          <div class="pref-row-content">
+            <span class="pref-row-title">Use SSH proxy
+              <span class="pref-state-badge \${p.enabled ? 'pref-state-on' : 'pref-state-off'}">
+                \${p.enabled ? 'enabled' : 'disabled'}
+              </span>
+            </span>
+          </div>
+          <div class="toggle-switch \${p.enabled ? 'on' : ''}">
+            <input type="checkbox" id="chk-ssh-proxy-enabled" \${p.enabled ? 'checked' : ''} />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </div>
+        </label>
+
+        <div class="ssh-proxy-grid">
+          <label class="ssh-proxy-field" for="ssh-proxy-host">
+            <span>Host / domain</span>
+            <input class="input" id="ssh-proxy-host" value="\${escape(p.host)}" \${!p.enabled ? 'disabled' : ''} />
+          </label>
+          <label class="ssh-proxy-field ssh-proxy-port" for="ssh-proxy-port">
+            <span>SSH port</span>
+            <input class="input" id="ssh-proxy-port" type="number" min="1" max="65535" value="\${p.port}" \${!p.enabled ? 'disabled' : ''} />
+          </label>
+          <label class="ssh-proxy-field" for="ssh-proxy-username">
+            <span>Username</span>
+            <input class="input" id="ssh-proxy-username" value="\${escape(p.username)}" \${!p.enabled ? 'disabled' : ''} />
+          </label>
+          <label class="ssh-proxy-field" for="ssh-proxy-password">
+            <span>Password</span>
+            <input class="input" id="ssh-proxy-password" type="password"
+              placeholder="\${p.hasPassword ? 'Stored in system keychain' : 'Required'}" \${!p.enabled ? 'disabled' : ''} />
+          </label>
+        </div>
+
+        <div class="ssh-proxy-actions">
+          <button class="btn" id="btn-save-ssh-proxy" \${!p.enabled || p.connection === 'connecting' ? 'disabled' : ''}>
+            \${p.connection === 'connecting' ? 'Testing...' : 'Save & Test'}
+          </button>
+          <button class="btn btn-secondary" id="btn-clear-ssh-proxy">Clear</button>
+        </div>
+
+        <div class="ssh-proxy-status \${p.connection === 'error' ? 'error' : p.connection === 'connected' ? 'connected' : ''}">
+          \${p.connection === 'connected'
+            ? 'Connected on 127.0.0.1:' + p.localPort
+            : p.connection === 'connecting'
+              ? 'Connecting...'
+              : p.connection === 'error'
+                ? escape(p.message || 'Connection failed.')
+                : p.enabled ? 'Not connected' : 'Direct connection'}
+        </div>
+
+        <div class="divider" style="margin:12px 0"></div>
 
         <div class="section-label">Debug Behavior</div>
 
@@ -1327,6 +1383,7 @@ export function getRendererScriptContent(): string {
         vscode.postMessage({ type: 'GET_APP_WATCHDOG_CONFIG' });
         vscode.postMessage({ type: 'GET_DEBUG_PREFS' });
         vscode.postMessage({ type: 'GET_CREDENTIALS_STATUS' });
+        vscode.postMessage({ type: 'GET_SSH_PROXY_STATUS' });
         render();
       });
 
@@ -1365,6 +1422,62 @@ export function getRendererScriptContent(): string {
         state.debugPrefs = { ...state.debugPrefs, enableBranchPrep };
         updatePreferenceToggle('chk-branch-prep', enableBranchPrep, '');
         vscode.postMessage({ type: 'SAVE_DEBUG_PREFS', payload: state.debugPrefs });
+      });
+
+      $('chk-ssh-proxy-enabled')?.addEventListener('change', function(e) {
+        const enabled = !!e.target.checked;
+        const previous = state.sshProxyStatus;
+        state.sshProxyStatus = {
+          ...previous,
+          enabled,
+          connection: enabled ? 'disconnected' : 'disabled',
+          message: null,
+        };
+        if (!enabled && previous.host && previous.username) {
+          vscode.postMessage({
+            type: 'SAVE_SSH_PROXY_SETTINGS',
+            payload: {
+              enabled: false,
+              host: previous.host,
+              port: previous.port,
+              username: previous.username,
+            },
+          });
+        }
+        render();
+      });
+
+      $('btn-save-ssh-proxy')?.addEventListener('click', function() {
+        const host = String($('ssh-proxy-host')?.value || '').trim();
+        const port = parseInt(String($('ssh-proxy-port')?.value || ''), 10);
+        const username = String($('ssh-proxy-username')?.value || '').trim();
+        const password = String($('ssh-proxy-password')?.value || '');
+        if (!host || !username || !Number.isInteger(port) || port < 1 || port > 65535) {
+          state.sshProxyStatus = {
+            ...state.sshProxyStatus,
+            connection: 'error',
+            message: 'Enter a valid host, SSH port, and username.',
+          };
+          render();
+          return;
+        }
+        state.sshProxyStatus = {
+          ...state.sshProxyStatus,
+          enabled: true,
+          host,
+          port,
+          username,
+          connection: 'connecting',
+          message: null,
+        };
+        const payload = { enabled: true, host, port, username };
+        if (password) payload.password = password;
+        vscode.postMessage({ type: 'SAVE_SSH_PROXY_SETTINGS', payload });
+        render();
+      });
+
+      $('btn-clear-ssh-proxy')?.addEventListener('click', function() {
+        vscode.postMessage({ type: 'CLEAR_SSH_PROXY_SETTINGS' });
       });
 
       $('btn-back-settings')?.addEventListener('click', () => {

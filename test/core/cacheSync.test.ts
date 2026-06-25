@@ -32,6 +32,13 @@ vi.mock('../../src/core/logger', () => ({
   logError: vi.fn(),
 }));
 
+vi.mock('../../src/core/cfEnvironment', () => ({
+  createCfProcessEnv: vi.fn((overrides: NodeJS.ProcessEnv) => Promise.resolve({
+    ...overrides,
+    HTTPS_PROXY: 'socks5://127.0.0.1:49152',
+  })),
+}));
+
 vi.mock('@saptools/cf-sync', () => ({
   getAllRegions: vi.fn().mockReturnValue(MOCK_REGIONS),
   cfStructurePath: vi.fn().mockReturnValue('/tmp/cds-debug-test-cf-structure.json'),

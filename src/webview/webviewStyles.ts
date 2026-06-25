@@ -1239,6 +1239,43 @@ export function getStyles(): string {
       line-height: 1.4;
     }
 
+    .ssh-proxy-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 88px;
+      gap: 8px;
+      margin: 8px 0;
+    }
+    .ssh-proxy-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
+    }
+    .ssh-proxy-field:nth-child(n+3) { grid-column: 1 / -1; }
+    .ssh-proxy-actions {
+      display: flex;
+      gap: 6px;
+      margin: 8px 0;
+    }
+    .ssh-proxy-status {
+      min-height: 18px;
+      padding: 6px 8px;
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+    .ssh-proxy-status.connected { color: var(--vscode-testing-iconPassed); }
+    .ssh-proxy-status.error {
+      color: var(--vscode-inputValidation-errorForeground);
+      border-color: var(--vscode-inputValidation-errorBorder);
+      background: var(--vscode-inputValidation-errorBackground);
+    }
+
     /* ── Toggle switch ── */
     .toggle-switch {
       flex-shrink: 0;

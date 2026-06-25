@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../../src/core/cfEnvironment', () => ({
+  createCfProcessEnv: vi.fn((overrides: NodeJS.ProcessEnv) => Promise.resolve({ ...overrides })),
+}));
 import { parseOrgs, parseSpaces, parseApps, parseAppRoutes } from '../../src/core/cfClient';
 
 describe('parseAppRoutes', () => {

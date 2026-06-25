@@ -323,9 +323,9 @@ export class CfLogsViewProvider implements vscode.WebviewViewProvider {
 
     logInfo(`[CfLogs] Targeting ${org}/${space} before streaming ${appName}.`);
     void cfTarget(org, space)
-      .then(() => {
-        cfLogsManager.startStreaming(appName);
-        this.postLogs({ type: 'LOGS_STATUS', payload: { appName, streaming: true } });
+      .then(async () => {
+        const streaming = await cfLogsManager.startStreaming(appName);
+        this.postLogs({ type: 'LOGS_STATUS', payload: { appName, streaming } });
         this.pushAppList();
       })
       .catch((err: unknown) => {
@@ -358,8 +358,8 @@ export class CfLogsViewProvider implements vscode.WebviewViewProvider {
         logInfo(`[CfLogs] Starting stream for ${appName} in ${org}/${space}.`);
         try {
           await cfTarget(org, space);
-          cfLogsManager.startStreaming(appName);
-          this.postLogs({ type: 'LOGS_STATUS', payload: { appName, streaming: true } });
+          const streaming = await cfLogsManager.startStreaming(appName);
+          this.postLogs({ type: 'LOGS_STATUS', payload: { appName, streaming } });
           this.pushAppList();
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);

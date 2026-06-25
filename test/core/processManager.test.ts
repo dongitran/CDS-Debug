@@ -44,6 +44,7 @@ const {
   remoteCleanupMockState,
   tunnelRegistryMockState,
   vscodeMockState,
+  cfEnvironmentMockState,
 } = vi.hoisted(() => ({
   childProcessMockState: {
     calls: [] as SpawnCall[],
@@ -90,6 +91,9 @@ const {
     removeLaunchConfigs: vi.fn(),
     settings: new Map<string, unknown>(),
     nextSessionId: 1,
+  },
+  cfEnvironmentMockState: {
+    createCfProcessEnv: vi.fn(),
   },
 }));
 
@@ -192,6 +196,10 @@ vi.mock('../../src/core/orphanTunnelReaper', () => ({
   unregisterActiveTunnel: tunnelRegistryMockState.unregisterActiveTunnel,
 }));
 
+vi.mock('../../src/core/cfEnvironment', () => ({
+  createCfProcessEnv: cfEnvironmentMockState.createCfProcessEnv,
+}));
+
 vi.mock('vscode', () => ({
   debug: {
     onDidStartDebugSession: (listener: DebugSessionListener) => {
@@ -268,6 +276,9 @@ beforeEach(() => {
   portCleanupMockState.waitPortFree.mockResolvedValue(true);
   inspectorProbeMockState.waitInspectorReady.mockReset();
   inspectorProbeMockState.waitInspectorReady.mockResolvedValue(true);
+  cfEnvironmentMockState.createCfProcessEnv.mockReset().mockResolvedValue({
+    HTTPS_PROXY: 'socks5://127.0.0.1:49152',
+  });
 
   vscodeMockState.append.mockClear();
   vscodeMockState.appendLine.mockClear();
@@ -496,6 +507,30 @@ describe('processManager remote inspector hardening', () => {
 });
 
 describe('processManager port cleanup lifecycle', () => {
+  it('does not spawn a stale tunnel after Stop while the proxy environment is loading', async () => {
+    const environment = createDeferred<NodeJS.ProcessEnv>();
+    cfEnvironmentMockState.createCfProcessEnv
+      .mockResolvedValueOnce({ HTTPS_PROXY: 'socks5://127.0.0.1:49152' })
+      .mockReturnValueOnce(environment.promise);
+
+    const startPromise = startTunnelAndAttach(
+      'demo-app',
+      '/tmp/sample-service',
+      20000,
+      'Debug: demo-app',
+    );
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(cfEnvironmentMockState.createCfProcessEnv).toHaveBeenCalledTimes(2);
+    });
+
+    await stopProcess('demo-app');
+    environment.resolve({ HTTPS_PROXY: 'socks5://127.0.0.1:49152' });
+    await startPromise;
+
+    expect(tunnelSpawnCount()).toBe(0);
+  });
+
   it('awaits verified port cleanup before stopProcess resolves', async () => {
     await startManagedTunnel();
     const cleanup = createDeferred<boolean>();

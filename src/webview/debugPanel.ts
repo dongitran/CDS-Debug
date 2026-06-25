@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { z } from 'zod';
 import type {
   AppFolderMapping,
   AppWatchdogConfig,
@@ -18,6 +19,8 @@ import type {
   PackageSourceLocation,
   OrgGroupMapping,
   SharedCfScope,
+  SaveSshProxySettingsPayload,
+  SshProxyStatus,
   SyncProgress,
   WebviewMessage,
 } from '../types/index';
@@ -139,6 +142,17 @@ import {
   runPnpmInstall,
   stashChanges,
 } from '../core/gitOperations';
+import {
+  clearSshProxySettings,
+  getSshProxyPublicSettings,
+  saveSshProxySettings,
+} from '../storage/sshProxyStore';
+import {
+  ensureSshProxy,
+  refreshSshProxyStatus,
+  sshProxyEvents,
+  stopSshProxy,
+} from '../core/sshProxyTunnel';
 
 interface ServiceBranchInfo {
   appName: string;
@@ -149,6 +163,22 @@ interface ServiceBranchInfo {
 }
 
 const MIN_BADGE_SCALE_INSTANCES = 1;
+const SSH_PROXY_PAYLOAD_SCHEMA = z.object({
+  enabled: z.boolean(),
+  host: z.string().trim().min(1).max(253)
+    .refine((value) => !value.includes('://') && !hasControlCharacters(value) && !/\s/.test(value), 'Enter a host name or IP address without a URL scheme.'),
+  port: z.number().int().min(1).max(65535),
+  username: z.string().trim().min(1).max(128)
+    .refine((value) => !hasControlCharacters(value), 'Enter a valid SSH username.'),
+  password: z.string().max(4096).optional(),
+}).strict();
+
+function hasControlCharacters(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+}
 
 export function buildLoginConfig(
   apiEndpoint: string,
@@ -200,6 +230,9 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
     breakpointSnapshotEvents.on('snapshotAdded', (snapshot: unknown) => {
       if (!isBreakpointSnapshot(snapshot)) return;
       this.postMessage({ type: 'BREAKPOINT_SNAPSHOT_ADDED', payload: { snapshot } });
+    });
+    sshProxyEvents.on('statusChanged', (proxyStatus: SshProxyStatus) => {
+      this.postMessage({ type: 'SSH_PROXY_STATUS', payload: proxyStatus });
     });
     setBeforeReconnectHook((appName, params) => this.handleBeforeReconnect(appName, params));
   }
@@ -393,6 +426,7 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: 'DEBUG_PREFS', payload: getDebugPreferences() });
         this.postMessage({ type: 'DEBUG_SESSION_PACKAGE_PREFS', payload: getDebugSessionPackagePreferences() });
         this.postMessage({ type: 'BREAKPOINT_SNAPSHOTS', payload: { snapshots: getBreakpointSnapshots() } });
+        this.postMessage({ type: 'SSH_PROXY_STATUS', payload: await refreshSshProxyStatus() });
         this.bootstrapCacheSyncForExistingCredentials(credentialStatus);
         void this.pushCfTopology();
         break;
@@ -415,6 +449,18 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
 
       case 'CLEAR_CREDENTIALS':
         await this.handleClearCredentials();
+        break;
+
+      case 'GET_SSH_PROXY_STATUS':
+        this.postMessage({ type: 'SSH_PROXY_STATUS', payload: await refreshSshProxyStatus() });
+        break;
+
+      case 'SAVE_SSH_PROXY_SETTINGS':
+        await this.handleSaveSshProxySettings(raw.payload);
+        break;
+
+      case 'CLEAR_SSH_PROXY_SETTINGS':
+        await this.handleClearSshProxySettings();
         break;
 
       case 'SELECT_GROUP_FOLDER':
@@ -1912,6 +1958,59 @@ export class DebugLauncherViewProvider implements vscode.WebviewViewProvider {
       logError(`[Credentials] Failed to save credentials: ${msg}`);
       this.postMessage({ type: 'CREDENTIALS_ERROR', payload: { message: `Could not save credentials: ${msg}` } });
     }
+  }
+
+  private async handleSaveSshProxySettings(payload: SaveSshProxySettingsPayload): Promise<void> {
+    if (this.postActiveSessionProxyError()) return;
+    const parsed = SSH_PROXY_PAYLOAD_SCHEMA.safeParse(payload);
+    if (!parsed.success) {
+      await this.postSshProxyError(parsed.error.issues[0]?.message ?? 'Invalid SSH proxy settings.');
+      return;
+    }
+    const existing = await getSshProxyPublicSettings();
+    if (parsed.data.enabled && !parsed.data.password && !existing.hasPassword) {
+      await this.postSshProxyError('Password is required the first time the SSH proxy is enabled.');
+      return;
+    }
+    const settings: SaveSshProxySettingsPayload = parsed.data.password === undefined
+      ? {
+        enabled: parsed.data.enabled,
+        host: parsed.data.host,
+        port: parsed.data.port,
+        username: parsed.data.username,
+      }
+      : { ...parsed.data, password: parsed.data.password };
+    await saveSshProxySettings(settings);
+    await stopSshProxy();
+    if (parsed.data.enabled) {
+      try {
+        await ensureSshProxy();
+      } catch {
+        // The tunnel manager already emitted a sanitized error status.
+      }
+    }
+    this.postMessage({ type: 'SSH_PROXY_STATUS', payload: await refreshSshProxyStatus() });
+  }
+
+  private async handleClearSshProxySettings(): Promise<void> {
+    if (this.postActiveSessionProxyError()) return;
+    await stopSshProxy();
+    await clearSshProxySettings();
+    this.postMessage({ type: 'SSH_PROXY_STATUS', payload: await refreshSshProxyStatus() });
+  }
+
+  private postActiveSessionProxyError(): boolean {
+    if (getActiveAppNames().length === 0) return false;
+    void this.postSshProxyError('Stop all active debug sessions before changing SSH proxy settings.');
+    return true;
+  }
+
+  private async postSshProxyError(message: string): Promise<void> {
+    const settings = await getSshProxyPublicSettings();
+    this.postMessage({
+      type: 'SSH_PROXY_STATUS',
+      payload: { ...settings, connection: 'error', message },
+    });
   }
 
   private bootstrapCacheSyncForExistingCredentials(status: CredentialStatus): void {

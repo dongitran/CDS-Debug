@@ -114,6 +114,14 @@ export function getScript(nonce: string): string {
       syncStatus: { isRunning: false, lastCompletedAt: null, currentRegion: null, currentOrg: null, done: 0, total: 0 },
       cacheConfig: { enabled: true, intervalHours: 24 },
       appWatchdogConfig: { enabled: true, pingIntervalSeconds: 90 },
+      sshProxyStatus: {
+        enabled: false,
+        host: '',
+        port: 22,
+        username: '',
+        hasPassword: false,
+        connection: 'disabled',
+      },
       // Branch preparation state: [{ appName, targetBranch, currentBranch, step, message }]
       branchPrepServices: [],
       // Debug behavior preferences
@@ -1129,6 +1137,7 @@ export function getScript(nonce: string): string {
           state.screen = SCREENS.SELECT_ORG;
           break;
         case 'APPS_LOADED':
+          if (state.screen !== SCREENS.LOADING_APPS && !state.scalePendingAppName) return;
           state.apps = msg.payload.apps;
           state.selectedApps = new Set();
           state.instanceScalePopover = null;
@@ -1138,6 +1147,7 @@ export function getScript(nonce: string): string {
           state.error = null;
           break;
         case 'APPS_ERROR':
+          if (state.screen !== SCREENS.LOADING_APPS) return;
           // If this error happened during session restore (VS Code restart), the CF
           // session token is likely expired. Auto-reconnect using the saved endpoint
           // so user lands on SELECT_ORG with a fresh org list instead of a broken
@@ -1335,6 +1345,10 @@ export function getScript(nonce: string): string {
           return;
         case 'APP_WATCHDOG_CONFIG':
           state.appWatchdogConfig = msg.payload;
+          if (state.screen === SCREENS.SETTINGS) render();
+          return;
+        case 'SSH_PROXY_STATUS':
+          state.sshProxyStatus = msg.payload;
           if (state.screen === SCREENS.SETTINGS) render();
           return;
         case 'DEBUG_PREFS':

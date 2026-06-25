@@ -150,6 +150,14 @@ function renderSettingsHtml(options: RenderSettingsOptions): string {
       syncStatus: options.syncStatus,
       cacheConfig: options.cacheConfig,
       appWatchdogConfig: options.appWatchdogConfig ?? { enabled: true, pingIntervalSeconds: 90 },
+      sshProxyStatus: {
+        enabled: false,
+        host: '',
+        port: 22,
+        username: '',
+        hasPassword: false,
+        connection: 'disabled',
+      },
       credentialStatus: {
         hasCredentials: false,
         email: '',
@@ -220,6 +228,7 @@ function moveHarnessToReadyScreen(
   harness: ReturnType<typeof createWebviewScriptHarness>,
   orgName = 'sample-org-alpha',
   spaceName = 'app',
+  apps: readonly Record<string, unknown>[] = [],
 ): void {
   harness.dispatch({
     type: 'CONFIG_LOADED',
@@ -243,7 +252,7 @@ function moveHarnessToReadyScreen(
   });
   harness.dispatch({
     type: 'APPS_LOADED',
-    payload: { apps: [] },
+    payload: { apps },
   });
   harness.postedMessages.length = 0;
 }
@@ -485,12 +494,68 @@ describe('webview markup contracts', () => {
     expect(harness.getHtml()).toContain('Loading apps');
   });
 
+  it('ignores stale app responses after session restore starts reconnecting', () => {
+    const harness = createWebviewScriptHarness();
+    harness.dispatch({
+      type: 'CONFIG_LOADED',
+      payload: {
+        config: {
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgs: ['sample-org-alpha'],
+          orgGroupMappings: [{
+            cfOrg: 'sample-org-alpha',
+            cfSpace: 'app',
+            groupFolderPath: '/tmp/sample-folder',
+          }],
+        },
+        activeSessions: {},
+        credentialStatus: {
+          hasCredentials: true,
+          email: 'sample.user@example.com',
+          source: 'env',
+        },
+      },
+    });
+    harness.dispatch({ type: 'APPS_ERROR', payload: { message: 'CF session expired' } });
+
+    expect(harness.getHtml()).toContain('Session expired. Reconnecting');
+    expect(harness.postedMessages.at(-1)).toEqual({
+      type: 'LOGIN',
+      payload: { apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com' },
+    });
+
+    harness.dispatch({ type: 'APPS_LOADED', payload: { apps: [] } });
+    harness.dispatch({ type: 'APPS_ERROR', payload: { message: 'Late app load failure' } });
+
+    expect(harness.getHtml()).toContain('Session expired. Reconnecting');
+    expect(harness.getHtml()).not.toContain('Late app load failure');
+  });
+
   it('recovers with a visible error screen when a renderer throws', () => {
     // A renderer exception used to leave the previous innerHTML frozen (or the initial
     // empty #app blank) with no diagnostics. The render boundary swaps in a recovery
     // screen and reports the failure to the extension log.
     const harness = createWebviewScriptHarness();
-    moveHarnessToReadyScreen(harness);
+    harness.dispatch({
+      type: 'CONFIG_LOADED',
+      payload: {
+        config: {
+          apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+          orgs: ['sample-org-alpha'],
+          orgGroupMappings: [{
+            cfOrg: 'sample-org-alpha',
+            cfSpace: 'app',
+            groupFolderPath: '/tmp/sample-folder',
+          }],
+        },
+        activeSessions: {},
+        credentialStatus: {
+          hasCredentials: true,
+          email: 'sample.user@example.com',
+          source: 'env',
+        },
+      },
+    });
     harness.postedMessages.length = 0;
 
     harness.dispatch({ type: 'APPS_LOADED', payload: { apps: null } });
@@ -604,13 +669,9 @@ describe('webview markup contracts', () => {
 
   it('updates Ready apps when a fresher topology arrives for the current target', () => {
     const harness = createWebviewScriptHarness();
-    moveHarnessToReadyScreen(harness);
-    harness.dispatch({
-      type: 'APPS_LOADED',
-      payload: {
-        apps: [{ name: 'sample-service-old', state: 'started', urls: [] }],
-      },
-    });
+    moveHarnessToReadyScreen(harness, 'sample-org-alpha', 'app', [
+      { name: 'sample-service-old', state: 'started', urls: [] },
+    ]);
 
     harness.dispatch({
       type: 'CF_TOPOLOGY',
@@ -635,17 +696,10 @@ describe('webview markup contracts', () => {
 
   it('renders instance count badges instead of started text when counts are available', () => {
     const harness = createWebviewScriptHarness();
-    moveHarnessToReadyScreen(harness);
-
-    harness.dispatch({
-      type: 'APPS_LOADED',
-      payload: {
-        apps: [
-          { name: 'sample-service-started', state: 'started', runningInstances: 1, totalInstances: 1, urls: [] },
-          { name: 'sample-service-empty', state: 'empty', runningInstances: 0, totalInstances: 1, urls: [] },
-        ],
-      },
-    });
+    moveHarnessToReadyScreen(harness, 'sample-org-alpha', 'app', [
+      { name: 'sample-service-started', state: 'started', runningInstances: 1, totalInstances: 1, urls: [] },
+      { name: 'sample-service-empty', state: 'empty', runningInstances: 0, totalInstances: 1, urls: [] },
+    ]);
 
     const html = harness.getHtml();
     expect(html).toContain('badge badge-started badge-scale');
@@ -656,39 +710,32 @@ describe('webview markup contracts', () => {
 
   it('renders safe instance badges as buttons and keeps stopped badges non-clickable', () => {
     const harness = createWebviewScriptHarness();
-    moveHarnessToReadyScreen(harness);
-
-    harness.dispatch({
-      type: 'APPS_LOADED',
-      payload: {
-        apps: [
-          {
-            name: 'sample-service-started',
-            state: 'started',
-            runningInstances: 1,
-            totalInstances: 1,
-            instanceProcessCount: 1,
-            urls: [],
-          },
-          {
-            name: 'sample-service-stopped',
-            state: 'stopped',
-            runningInstances: 0,
-            totalInstances: 1,
-            instanceProcessCount: 1,
-            urls: [],
-          },
-          {
-            name: 'sample-service-multi',
-            state: 'started',
-            runningInstances: 2,
-            totalInstances: 2,
-            instanceProcessCount: 2,
-            urls: [],
-          },
-        ],
+    moveHarnessToReadyScreen(harness, 'sample-org-alpha', 'app', [
+      {
+        name: 'sample-service-started',
+        state: 'started',
+        runningInstances: 1,
+        totalInstances: 1,
+        instanceProcessCount: 1,
+        urls: [],
       },
-    });
+      {
+        name: 'sample-service-stopped',
+        state: 'stopped',
+        runningInstances: 0,
+        totalInstances: 1,
+        instanceProcessCount: 1,
+        urls: [],
+      },
+      {
+        name: 'sample-service-multi',
+        state: 'started',
+        runningInstances: 2,
+        totalInstances: 2,
+        instanceProcessCount: 2,
+        urls: [],
+      },
+    ]);
 
     const html = harness.getHtml();
     expect(html).toContain('class="badge badge-started badge-scale"');
@@ -870,6 +917,22 @@ describe('webview markup contracts', () => {
     expect(html).not.toContain('<option value="15"');
     expect(html).not.toContain('<option value="30"');
     expect(html).toContain('watchDurationHours');
+  });
+
+  it('renders password-only SSH proxy controls without exposing a key mode', () => {
+    const html = renderSettingsHtml({
+      syncStatus: { isRunning: false, done: 0, total: 0 },
+      cacheConfig: { enabled: true, intervalHours: 24 },
+    });
+
+    expect(html).toContain('SSH Proxy');
+    expect(html).toContain('chk-ssh-proxy-enabled');
+    expect(html).toContain('ssh-proxy-host');
+    expect(html).toContain('ssh-proxy-port');
+    expect(html).toContain('ssh-proxy-username');
+    expect(html).toContain('type="password"');
+    expect(html).toContain('Save & Test');
+    expect(html).not.toContain('SSH key');
   });
 
   it('disables the watchdog interval selector and offers custom values when configured', () => {

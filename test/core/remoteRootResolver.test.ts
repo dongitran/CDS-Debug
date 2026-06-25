@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../src/core/cfEnvironment', () => ({
+  createCfProcessEnv: vi.fn((overrides: NodeJS.ProcessEnv) => Promise.resolve({ ...overrides })),
+}));
 import {
   normalizeRemotePackageJsonPath,
   parseRemoteRootSetting,

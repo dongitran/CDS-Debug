@@ -20,11 +20,14 @@ import { incrementLocalTelemetryCounter, initializeLocalTelemetry } from './core
 import { disposeAppWatchdog, initializeAppWatchdog, SHOW_APP_WATCHDOG_COMMAND, sweepWatchedApps } from './core/appWatchdog';
 import { AppWatchdogPanel } from './webview/appWatchdogPanel';
 import type { SharedCfScope } from './types/index';
+import { initSshProxyStore } from './storage/sshProxyStore';
+import { disposeSshProxy } from './core/sshProxyTunnel';
 
 export function activate(context: vscode.ExtensionContext): void {
   initConfigStore(context);
   initCacheStore(context);
   setSecretStorage(context.secrets);
+  initSshProxyStore(context);
   initializeLocalTelemetry(context);
   initializeTunnelRegistry(context.globalStorageUri.fsPath);
   if (process.env.CDS_DEBUG_DISABLE_BACKGROUND_SYNC !== '1') {
@@ -201,5 +204,6 @@ export async function deactivate(): Promise<void> {
   }
 
   await disposeAllProcesses();
+  await disposeSshProxy();
   disposeLogger();
 }

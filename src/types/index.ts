@@ -214,6 +214,35 @@ export const DEFAULT_CACHE_SETTINGS: CacheSettings = {
   intervalHours: 24,
 };
 
+export interface SshProxyPublicSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  hasPassword: boolean;
+}
+
+export interface SaveSshProxySettingsPayload {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+}
+
+export type SshProxyConnectionState =
+  | 'disabled'
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'error';
+
+export interface SshProxyStatus extends SshProxyPublicSettings {
+  connection: SshProxyConnectionState;
+  localPort?: number;
+  message?: string;
+}
+
 /** User-facing debug behavior preferences (separate from cache settings). */
 export interface DebugPreferences {
   /**
@@ -444,6 +473,9 @@ export type WebviewMessage =
   | { type: 'SAVE_CREDENTIALS'; payload: { email: string; password: string } }
   | { type: 'GET_CREDENTIALS_STATUS' }
   | { type: 'CLEAR_CREDENTIALS' }
+  | { type: 'GET_SSH_PROXY_STATUS' }
+  | { type: 'SAVE_SSH_PROXY_SETTINGS'; payload: SaveSshProxySettingsPayload }
+  | { type: 'CLEAR_SSH_PROXY_SETTINGS' }
   | { type: 'RETRY_DEBUG'; payload: { appName: string } }
   | { type: 'CLEAR_BREAKPOINT_SNAPSHOTS' }
   | { type: 'LOAD_PACKAGE_SOURCES'; payload: { appName: string } }
@@ -507,6 +539,7 @@ export type ExtensionMessage =
   | { type: 'CREDENTIALS_ERROR'; payload: { message: string } }
   | { type: 'CREDENTIALS_STATUS'; payload: CredentialStatus }
   | { type: 'CREDENTIALS_REVOKED'; payload: { message: string } }
+  | { type: 'SSH_PROXY_STATUS'; payload: SshProxyStatus }
   | { type: 'BREAKPOINT_SNAPSHOTS'; payload: { snapshots: BreakpointContextSnapshot[] } }
   | { type: 'BREAKPOINT_SNAPSHOT_ADDED'; payload: { snapshot: BreakpointContextSnapshot } }
   | { type: 'PACKAGE_SOURCES_LOADED'; payload: { appName: string; packages: LoadedPackageEntry[] } }

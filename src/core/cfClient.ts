@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { CfApp, CfAppState } from '../types/index';
 import { CF_DEFAULT_SPACE } from '../types/index';
+import { createCfProcessEnv } from './cfEnvironment';
 
 const execFileAsync = promisify(execFile);
 
@@ -60,8 +61,7 @@ export function isCfAuthError(err: unknown): boolean {
 // avoid clobbering the user's interactive CF session.
 async function runCf(args: string[], cfHome?: string, timeoutMs: number = CF_CLI_TIMEOUT_MS): Promise<string> {
   try {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    if (cfHome) env.CF_HOME = cfHome;
+    const env = await createCfProcessEnv(cfHome === undefined ? {} : { CF_HOME: cfHome });
     const { stdout } = await execFileAsync('cf', args, { env, maxBuffer: MAX_BUFFER, timeout: timeoutMs });
     return stdout;
   } catch (err: unknown) {
@@ -289,8 +289,7 @@ export async function cfEnableSsh(appName: string, cfHome?: string): Promise<voi
 const RESTART_TIMEOUT_MS = 120_000;
 
 export async function cfRestartApp(appName: string, cfHome?: string): Promise<void> {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  if (cfHome) env.CF_HOME = cfHome;
+  const env = await createCfProcessEnv(cfHome === undefined ? {} : { CF_HOME: cfHome });
   try {
     await execFileAsync('cf', ['restart', appName], {
       env,

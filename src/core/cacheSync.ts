@@ -44,6 +44,7 @@ import {
 import type { SyncProgress, SyncSkipReason } from '../types/index';
 import { toCachedApp } from './appNodeMapping';
 import { logInfo, logWarn, logError } from './logger';
+import { createCfProcessEnv } from './cfEnvironment';
 
 export const cacheSyncEvents = new EventEmitter();
 
@@ -205,7 +206,7 @@ function readStructureSync(): CfStructure | undefined {
 // never clobber the user's interactive ~/.cf session.
 async function withCfSession<T>(work: (context: CfExecContext) => Promise<T>): Promise<T> {
   const cfHome = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'saptools-cf-session-'));
-  const context: CfExecContext = { env: { CF_HOME: cfHome } };
+  const context: CfExecContext = { env: await createCfProcessEnv({ CF_HOME: cfHome }) };
   try {
     return await work(context);
   } finally {

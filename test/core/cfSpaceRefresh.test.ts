@@ -1,13 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const getAllRegionsMock = vi.hoisted(() => vi.fn());
-const syncRegionOrgsMock = vi.hoisted(() => vi.fn());
-const syncSpaceMock = vi.hoisted(() => vi.fn());
+const mocks = vi.hoisted(() => ({
+  getAllRegions: vi.fn(),
+  getRegion: vi.fn(),
+  cfApi: vi.fn(),
+  cfAuth: vi.fn(),
+  cfOrgs: vi.fn(),
+  cfTargetSpace: vi.fn(),
+  cfAppDetails: vi.fn(),
+  readStructure: vi.fn(),
+  persistRegion: vi.fn(),
+  createCfProcessEnv: vi.fn(),
+}));
 
 vi.mock('@saptools/cf-sync', () => ({
-  getAllRegions: getAllRegionsMock,
-  syncRegionOrgs: syncRegionOrgsMock,
-  syncSpace: syncSpaceMock,
+  getAllRegions: mocks.getAllRegions,
+  getRegion: mocks.getRegion,
+  cfApi: mocks.cfApi,
+  cfAuth: mocks.cfAuth,
+  cfOrgs: mocks.cfOrgs,
+  cfTargetSpace: mocks.cfTargetSpace,
+  cfAppDetails: mocks.cfAppDetails,
+  readStructure: mocks.readStructure,
+  persistRegion: mocks.persistRegion,
+}));
+
+vi.mock('../../src/core/cfEnvironment', () => ({
+  createCfProcessEnv: mocks.createCfProcessEnv,
 }));
 
 import {
@@ -16,204 +35,169 @@ import {
   resolveRegionKeyForEndpoint,
 } from '../../src/core/cfSpaceRefresh';
 
-const EU10_ENDPOINT = 'https://api.cf.eu10.hana.ondemand.com';
-const EU10_002_ENDPOINT = 'https://api.cf.eu10-002.hana.ondemand.com';
+const EU10 = {
+  key: 'eu10',
+  label: 'Europe (Frankfurt)',
+  apiEndpoint: 'https://api.cf.eu10.hana.ondemand.com',
+} as const;
+const EU10_002 = {
+  key: 'eu10-002',
+  label: 'Europe (Frankfurt) - AWS (eu10-002)',
+  apiEndpoint: 'https://api.cf.eu10-002.hana.ondemand.com',
+} as const;
 const US10_004_ENDPOINT = 'https://api.cf.us10-004.hana.ondemand.com';
 
 describe('cfSpaceRefresh', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getAllRegionsMock.mockReturnValue([
-      { key: 'eu10', label: 'Europe (Frankfurt)', apiEndpoint: EU10_ENDPOINT },
-      { key: 'eu10-002', label: 'Europe (Frankfurt) - AWS (eu10-002)', apiEndpoint: EU10_002_ENDPOINT },
-      { key: 'ap11', label: 'Singapore', apiEndpoint: 'https://api.cf.ap11.hana.ondemand.com' },
-    ]);
+    mocks.getAllRegions.mockReturnValue([EU10, EU10_002]);
+    mocks.getRegion.mockImplementation((key: string) => key === EU10.key ? EU10 : EU10_002);
+    mocks.createCfProcessEnv.mockImplementation((overrides: NodeJS.ProcessEnv) => Promise.resolve({
+      ...overrides,
+      HTTPS_PROXY: 'socks5://127.0.0.1:49152',
+    }));
+    mocks.cfApi.mockResolvedValue(undefined);
+    mocks.cfAuth.mockResolvedValue(undefined);
+    mocks.cfOrgs.mockResolvedValue([]);
+    mocks.cfTargetSpace.mockResolvedValue(undefined);
+    mocks.cfAppDetails.mockResolvedValue([]);
+    mocks.readStructure.mockResolvedValue(undefined);
+    mocks.persistRegion.mockResolvedValue(undefined);
   });
 
-  it('refreshes one region org list through cf-sync without loading apps', async () => {
-    syncRegionOrgsMock.mockResolvedValue({
-      orgNames: ['sample-org-alpha', 'sample-org-beta'],
+  it('refreshes orgs with a proxy-aware isolated CF session and preserves known spaces', async () => {
+    mocks.cfOrgs.mockResolvedValue(['sample-org-alpha', 'sample-org-beta']);
+    mocks.readStructure.mockResolvedValue({
+      syncedAt: '2026-06-25T00:00:00.000Z',
+      regions: [{
+        ...EU10,
+        accessible: true,
+        orgs: [{ name: 'sample-org-alpha', spaces: [{ name: 'app', apps: [{ name: 'existing-app' }] }] }],
+      }],
     });
 
     const result = await refreshCfSyncRegionOrgs({
-      apiEndpoint: EU10_ENDPOINT,
+      apiEndpoint: EU10.apiEndpoint,
       email: 'demo@example.com',
       password: 'secret',
     });
 
-    expect(syncRegionOrgsMock).toHaveBeenCalledWith({
-      regionKey: 'eu10',
-      email: 'demo@example.com',
-      password: 'secret',
-    });
-    expect(syncSpaceMock).not.toHaveBeenCalled();
     expect(result).toEqual({
       status: 'refreshed',
       regionKey: 'eu10',
       orgNames: ['sample-org-alpha', 'sample-org-beta'],
     });
-  });
-
-  it('skips region org refresh when credentials are missing', async () => {
-    await expect(refreshCfSyncRegionOrgs({ apiEndpoint: EU10_ENDPOINT })).resolves.toEqual({
-      status: 'skipped',
-      reason: 'missing-credentials',
+    expect(mocks.createCfProcessEnv).toHaveBeenCalledWith({
+      CF_HOME: expect.stringContaining('saptools-cf-session-'),
     });
-    expect(syncRegionOrgsMock).not.toHaveBeenCalled();
+    const context = expect.objectContaining({
+      env: expect.objectContaining({ HTTPS_PROXY: 'socks5://127.0.0.1:49152' }),
+    });
+    expect(mocks.cfApi).toHaveBeenCalledWith(EU10.apiEndpoint, context);
+    expect(mocks.cfAuth).toHaveBeenCalledWith('demo@example.com', 'secret', context);
+    expect(mocks.cfOrgs).toHaveBeenCalledWith(context);
+    expect(mocks.persistRegion).toHaveBeenCalledWith(expect.objectContaining({
+      key: 'eu10',
+      orgs: [
+        { name: 'sample-org-alpha', spaces: [{ name: 'app', apps: [{ name: 'existing-app' }] }] },
+        { name: 'sample-org-beta', spaces: [] },
+      ],
+    }));
   });
 
-  it('skips region org refresh for UI-only fallback endpoints that cf-sync does not know', async () => {
-    await expect(
-      refreshCfSyncRegionOrgs({
-        apiEndpoint: US10_004_ENDPOINT,
-        email: 'demo@example.com',
-        password: 'secret',
-      }),
-    ).resolves.toEqual({ status: 'skipped', reason: 'unknown-region' });
-    expect(syncRegionOrgsMock).not.toHaveBeenCalled();
-  });
-
-  it('returns region org refresh failures so callers can fall back to live cf orgs', async () => {
-    const error = new Error('org lookup failed');
-    syncRegionOrgsMock.mockRejectedValue(error);
-
-    await expect(
-      refreshCfSyncRegionOrgs({
-        apiEndpoint: EU10_ENDPOINT,
-        email: 'demo@example.com',
-        password: 'secret',
-      }),
-    ).resolves.toEqual({ status: 'failed', regionKey: 'eu10', error });
-  });
-
-  it('resolves a built-in region from its API endpoint', () => {
-    expect(resolveRegionKeyForEndpoint(EU10_ENDPOINT)).toBe('eu10');
-    expect(resolveRegionKeyForEndpoint(`${EU10_ENDPOINT}/`)).toBe('eu10');
-  });
-
-  it('resolves supplemental regions supplied by cf-sync', () => {
-    expect(resolveRegionKeyForEndpoint(EU10_002_ENDPOINT)).toBe('eu10-002');
-  });
-
-  it('refreshes the default app space and returns the app count', async () => {
-    syncSpaceMock.mockResolvedValue({
-      space: {
-        name: 'app',
-        apps: [{ name: 'sample-service-a' }, { name: 'sample-service-b' }],
-      },
+  it('refreshes one space while preserving other orgs and spaces', async () => {
+    mocks.cfAppDetails.mockResolvedValue([{ name: 'new-app' }, { name: 'new-worker' }]);
+    mocks.readStructure.mockResolvedValue({
+      syncedAt: '2026-06-25T00:00:00.000Z',
+      regions: [{
+        ...EU10,
+        accessible: true,
+        orgs: [
+          { name: 'demo-org', spaces: [{ name: 'dev', apps: [{ name: 'keep-me' }] }] },
+          { name: 'other-org', spaces: [{ name: 'app', apps: [{ name: 'other-app' }] }] },
+        ],
+      }],
     });
 
     const result = await refreshCfSyncSpace({
-      apiEndpoint: EU10_ENDPOINT,
+      apiEndpoint: EU10.apiEndpoint,
       orgName: 'demo-org',
       email: 'demo@example.com',
       password: 'secret',
     });
 
-    expect(syncSpaceMock).toHaveBeenCalledWith({
-      regionKey: 'eu10',
-      orgName: 'demo-org',
-      spaceName: 'app',
-      email: 'demo@example.com',
-      password: 'secret',
-    });
     expect(result).toEqual({ status: 'refreshed', regionKey: 'eu10', appCount: 2 });
+    expect(mocks.cfTargetSpace).toHaveBeenCalledWith('demo-org', 'app', expect.any(Object));
+    expect(mocks.persistRegion).toHaveBeenCalledWith(expect.objectContaining({
+      orgs: [
+        { name: 'other-org', spaces: [{ name: 'app', apps: [{ name: 'other-app' }] }] },
+        {
+          name: 'demo-org',
+          spaces: [
+            { name: 'dev', apps: [{ name: 'keep-me' }] },
+            { name: 'app', apps: [{ name: 'new-app' }, { name: 'new-worker' }] },
+          ],
+        },
+      ],
+    }));
   });
 
-  it('refreshes a supplemental region when cf-sync knows the endpoint', async () => {
-    syncSpaceMock.mockResolvedValue({
-      space: {
-        name: 'app',
-        apps: [{ name: 'sample-service-a' }],
-      },
-    });
+  it('refreshes a requested space and supplemental region', async () => {
+    mocks.cfAppDetails.mockResolvedValue([{ name: 'sample-service' }]);
 
     const result = await refreshCfSyncSpace({
-      apiEndpoint: EU10_002_ENDPOINT,
+      apiEndpoint: EU10_002.apiEndpoint,
       orgName: 'demo-org',
+      spaceName: 'dev',
       email: 'demo@example.com',
       password: 'secret',
     });
 
-    expect(syncSpaceMock).toHaveBeenCalledWith({
-      regionKey: 'eu10-002',
-      orgName: 'demo-org',
-      spaceName: 'app',
-      email: 'demo@example.com',
-      password: 'secret',
-    });
     expect(result).toEqual({ status: 'refreshed', regionKey: 'eu10-002', appCount: 1 });
+    expect(mocks.cfTargetSpace).toHaveBeenCalledWith('demo-org', 'dev', expect.any(Object));
   });
 
-  it('refreshes the requested space when one is provided', async () => {
-    syncSpaceMock.mockResolvedValue({
-      space: {
-        name: 'dev',
-        apps: [{ name: 'sample-service-a' }],
-      },
-    });
-
-    const result = await refreshCfSyncSpace({
-      apiEndpoint: EU10_ENDPOINT,
-      orgName: 'demo-org',
-      spaceName: 'dev',
-      email: 'demo@example.com',
-      password: 'secret',
-    });
-
-    expect(syncSpaceMock).toHaveBeenCalledWith({
-      regionKey: 'eu10',
-      orgName: 'demo-org',
-      spaceName: 'dev',
-      email: 'demo@example.com',
-      password: 'secret',
-    });
-    expect(result).toEqual({ status: 'refreshed', regionKey: 'eu10', appCount: 1 });
-  });
-
-  it('skips when credentials are missing', async () => {
-    await expect(refreshCfSyncSpace({ apiEndpoint: EU10_ENDPOINT, orgName: 'demo-org' })).resolves.toEqual({
+  it('skips refreshes when credentials are missing', async () => {
+    await expect(refreshCfSyncRegionOrgs({ apiEndpoint: EU10.apiEndpoint })).resolves.toEqual({
       status: 'skipped',
       reason: 'missing-credentials',
     });
-    expect(syncSpaceMock).not.toHaveBeenCalled();
+    await expect(refreshCfSyncSpace({ apiEndpoint: EU10.apiEndpoint, orgName: 'demo-org' })).resolves.toEqual({
+      status: 'skipped',
+      reason: 'missing-credentials',
+    });
+    expect(mocks.cfApi).not.toHaveBeenCalled();
   });
 
-  it('skips UI-only fallback endpoints that cf-sync does not know', async () => {
-    await expect(
-      refreshCfSyncSpace({
-        apiEndpoint: US10_004_ENDPOINT,
-        orgName: 'demo-org',
-        email: 'demo@example.com',
-        password: 'secret',
-      }),
-    ).resolves.toEqual({ status: 'skipped', reason: 'unknown-region' });
-    expect(syncSpaceMock).not.toHaveBeenCalled();
+  it('skips endpoints outside the cf-sync catalog', async () => {
+    await expect(refreshCfSyncRegionOrgs({
+      apiEndpoint: US10_004_ENDPOINT,
+      email: 'demo@example.com',
+      password: 'secret',
+    })).resolves.toEqual({ status: 'skipped', reason: 'unknown-region' });
+    await expect(refreshCfSyncSpace({
+      apiEndpoint: 'https://api.cf.custom.example.com',
+      orgName: 'demo-org',
+      email: 'demo@example.com',
+      password: 'secret',
+    })).resolves.toEqual({ status: 'skipped', reason: 'unknown-region' });
   });
 
-  it('skips custom endpoints that are not in the built-in region catalog', async () => {
-    await expect(
-      refreshCfSyncSpace({
-        apiEndpoint: 'https://api.cf.custom.example.com',
-        orgName: 'demo-org',
-        email: 'demo@example.com',
-        password: 'secret',
-      }),
-    ).resolves.toEqual({ status: 'skipped', reason: 'unknown-region' });
-    expect(syncSpaceMock).not.toHaveBeenCalled();
-  });
-
-  it('returns sync failures so the caller can decide how to surface them', async () => {
+  it('returns failures so callers can fall back without corrupting topology', async () => {
     const error = new Error('auth failed');
-    syncSpaceMock.mockRejectedValue(error);
+    mocks.cfAuth.mockRejectedValue(error);
 
-    await expect(
-      refreshCfSyncSpace({
-        apiEndpoint: EU10_ENDPOINT,
-        orgName: 'demo-org',
-        email: 'demo@example.com',
-        password: 'secret',
-      }),
-    ).resolves.toEqual({ status: 'failed', regionKey: 'eu10', error });
+    await expect(refreshCfSyncRegionOrgs({
+      apiEndpoint: EU10.apiEndpoint,
+      email: 'demo@example.com',
+      password: 'secret',
+    })).resolves.toEqual({ status: 'failed', regionKey: 'eu10', error });
+    expect(mocks.persistRegion).not.toHaveBeenCalled();
+  });
+
+  it('resolves built-in endpoints with normalization', () => {
+    expect(resolveRegionKeyForEndpoint(EU10.apiEndpoint)).toBe('eu10');
+    expect(resolveRegionKeyForEndpoint(`${EU10.apiEndpoint}/`)).toBe('eu10');
+    expect(resolveRegionKeyForEndpoint(EU10_002.apiEndpoint)).toBe('eu10-002');
   });
 });

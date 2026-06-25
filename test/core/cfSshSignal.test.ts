@@ -25,6 +25,8 @@ const { childProcessMockState, channelMockState } = vi.hoisted(() => ({
   },
 }));
 
+const createCfProcessEnvMock = vi.hoisted(() => vi.fn());
+
 function createMockChildProcess(): MockChildProcess {
   const child = new EventEmitter() as MockChildProcess;
   child.stdout = new EventEmitter();
@@ -39,6 +41,10 @@ function mockOutputChannel(): OutputChannel {
 
 vi.mock('node:child_process', () => ({
   spawn: childProcessMockState.spawn,
+}));
+
+vi.mock('../../src/core/cfEnvironment', () => ({
+  createCfProcessEnv: createCfProcessEnvMock,
 }));
 
 vi.mock('vscode', () => ({
@@ -69,6 +75,9 @@ beforeEach(() => {
   });
   channelMockState.append.mockClear();
   channelMockState.appendLine.mockClear();
+  createCfProcessEnvMock.mockReset().mockResolvedValue({
+    HTTPS_PROXY: 'socks5://127.0.0.1:49152',
+  });
 });
 
 afterEach(() => {
@@ -79,6 +88,7 @@ afterEach(() => {
 describe('cfSshSignal', () => {
   it('captures stderr and exit code from a one-shot cf ssh signal command', async () => {
     const signal = runCfSshSignal('demo-app', 'kill -s USR1 $(pidof node)', mockOutputChannel());
+    await Promise.resolve();
     const child = childProcessMockState.children[0];
     child?.stderr.emit('data', Buffer.from('not authorized\n'));
     child?.emit('close', 1);
@@ -87,11 +97,17 @@ describe('cfSshSignal', () => {
     expect(childProcessMockState.calls).toEqual([
       { command: 'cf', args: ['ssh', 'demo-app', '-c', 'kill -s USR1 $(pidof node)'] },
     ]);
+    expect(childProcessMockState.spawn).toHaveBeenCalledWith(
+      'cf',
+      ['ssh', 'demo-app', '-c', 'kill -s USR1 $(pidof node)'],
+      { env: { HTTPS_PROXY: 'socks5://127.0.0.1:49152' } },
+    );
     expect(channelMockState.append).toHaveBeenCalledWith('not authorized\n');
   });
 
   it('kills and resolves non-fatally when the signal command times out', async () => {
     const signal = runCfSshSignal('demo-app', 'kill -s USR1 $(pidof node)', mockOutputChannel());
+    await Promise.resolve();
     const child = childProcessMockState.children[0];
 
     await vi.advanceTimersByTimeAsync(CF_SSH_SIGNAL_TIMEOUT_MS);
@@ -99,6 +115,26 @@ describe('cfSshSignal', () => {
     await expect(signal).resolves.toEqual({ exitCode: null, stderr: '' });
     expect(child?.kill).toHaveBeenCalledTimes(1);
     expect(channelMockState.appendLine).toHaveBeenCalledWith('[Extension] USR1 signal timed out — killing cf ssh and continuing.');
+  });
+
+  it('does not spawn a stale signal command after its environment finishes loading', async () => {
+    let resolveEnvironment: ((env: NodeJS.ProcessEnv) => void) | undefined;
+    createCfProcessEnvMock.mockReturnValue(new Promise((resolve) => {
+      resolveEnvironment = resolve;
+    }));
+    let shouldStart = true;
+
+    const signal = runCfSshSignal(
+      'demo-app',
+      'kill -s USR1 $(pidof node)',
+      mockOutputChannel(),
+      () => shouldStart,
+    );
+    shouldStart = false;
+    resolveEnvironment?.({ HTTPS_PROXY: 'socks5://127.0.0.1:49152' });
+
+    await expect(signal).resolves.toEqual({ exitCode: null, stderr: '' });
+    expect(childProcessMockState.calls).toEqual([]);
   });
 
   it('detects Cloud Foundry SSH-disabled error text', () => {
