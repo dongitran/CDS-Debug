@@ -114,8 +114,7 @@ jobs:
             --title "${TAG} (${RAW_VERSION})" \
             --notes "Pre-release build published from ${GITHUB_REF_NAME} at ${GITHUB_SHA}." \
             --target "$GITHUB_SHA" \
-            --prerelease \
-            --latest=false
+            --latest
 
       - name: Ensure GitHub Release (stable only)
         if: github.ref_name == 'master' && steps.publish_meta.outputs.channel == 'stable'

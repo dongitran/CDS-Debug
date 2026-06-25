@@ -1034,6 +1034,7 @@ export function getRendererScriptContent(): string {
       }
 
       return \`
+        <div class="settings-screen">
         <div class="step-header">
           <span class="step-title">Settings</span>
         </div>
@@ -1192,6 +1193,7 @@ export function getRendererScriptContent(): string {
         <div style="height:6px"></div>
         <button class="btn btn-secondary" id="btn-logout-settings"
           style="color:var(--vscode-errorForeground)">&#8634; Logout / Change Region</button>
+        </div>
       \`;
     }
 

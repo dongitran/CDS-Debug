@@ -32,6 +32,14 @@ export function getStyles(): string {
       width: 100%;
     }
 
+    .settings-screen {
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+
     /* Wrapper for the READY screen — fills remaining height as a flex column */
     .ready-layout {
       display: flex;

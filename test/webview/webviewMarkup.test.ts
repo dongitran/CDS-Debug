@@ -7,6 +7,7 @@ import { getPackageBrowserStyles } from '../../src/webview/packageBrowserStyles'
 import { getScript } from '../../src/webview/webviewScript';
 import { getRendererScriptContent } from '../../src/webview/webviewRenderers';
 import { getWebviewContent } from '../../src/webview/getWebviewContent';
+import { getStyles } from '../../src/webview/webviewStyles';
 
 interface WebviewRegion {
   readonly code: string;
@@ -933,6 +934,18 @@ describe('webview markup contracts', () => {
     expect(html).toContain('type="password"');
     expect(html).toContain('Save & Test');
     expect(html).not.toContain('SSH key');
+  });
+
+  it('renders settings inside a scrollable screen root', () => {
+    const html = renderSettingsHtml({
+      syncStatus: { isRunning: false, done: 0, total: 0 },
+      cacheConfig: { enabled: true, intervalHours: 24 },
+    });
+    const styles = getStyles();
+
+    expect(html.trimStart()).toMatch(/^<div class="settings-screen">/);
+    expect(styles).toMatch(/\.settings-screen\s*\{[^}]*overflow-y:\s*auto;/);
+    expect(styles).toMatch(/\.settings-screen\s*\{[^}]*min-height:\s*0;/);
   });
 
   it('disables the watchdog interval selector and offers custom values when configured', () => {
