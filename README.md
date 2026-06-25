@@ -181,3 +181,13 @@ pnpm package        # build → cds-debug-x.x.x.vsix
 ## 📜 License
 
 [MIT](LICENSE)
+
+---
+
+## 👨‍💻 Author
+
+**dongtran** ✨
+
+---
+
+Made with ❤️ to make your work life easier!
