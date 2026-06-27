@@ -251,7 +251,7 @@ function makeProvider(): DebugLauncherViewProvider {
 }
 
 function getInternals(provider: DebugLauncherViewProvider): DebugPanelInternals {
-  return provider as unknown as DebugPanelInternals;
+  return provider;
 }
 
 const SAMPLE_API_ENDPOINT = 'https://api.cf.eu10.hana.ondemand.com';

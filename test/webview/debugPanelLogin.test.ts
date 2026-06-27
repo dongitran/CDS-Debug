@@ -1,3 +1,4 @@
+import { buildLoginConfig } from '../../src/webview/webviewUtils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as CfClientModule from '../../src/core/cfClient';
@@ -200,7 +201,7 @@ vi.mock('../../src/storage/scopeSync', async (importOriginal) => {
   };
 });
 
-import { buildLoginConfig } from '../../src/webview/debugPanel';
+import {  } from '../../src/webview/debugPanel';
 import { DebugLauncherViewProvider } from '../../src/webview/debugPanel';
 import { getCachedApps, getCacheSettings, initCacheStore, saveCacheSettings } from '../../src/storage/cacheStore';
 import { getConfig, initConfigStore, saveConfig } from '../../src/storage/configStore';
@@ -254,7 +255,7 @@ function makeProvider(): DebugLauncherViewProvider {
 }
 
 function getInternals(provider: DebugLauncherViewProvider): DebugPanelInternals {
-  return provider as unknown as DebugPanelInternals;
+  return provider;
 }
 
 function getShowInformationMessageMock(): ShowInformationMessageMock {
