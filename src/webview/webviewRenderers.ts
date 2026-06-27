@@ -1060,28 +1060,29 @@ export function getRendererScriptContent(): string {
           </div>
         </label>
 
+        \${p.enabled ? \`
         <div class="ssh-proxy-grid">
           <label class="ssh-proxy-field" for="ssh-proxy-host">
             <span>Host / domain</span>
-            <input class="input" id="ssh-proxy-host" value="\${escape(p.host)}" \${!p.enabled ? 'disabled' : ''} />
+            <input class="input" id="ssh-proxy-host" value="\${escape(p.host)}" />
           </label>
           <label class="ssh-proxy-field ssh-proxy-port" for="ssh-proxy-port">
             <span>SSH port</span>
-            <input class="input" id="ssh-proxy-port" type="number" min="1" max="65535" value="\${p.port}" \${!p.enabled ? 'disabled' : ''} />
+            <input class="input" id="ssh-proxy-port" type="number" min="1" max="65535" value="\${p.port}" />
           </label>
           <label class="ssh-proxy-field" for="ssh-proxy-username">
             <span>Username</span>
-            <input class="input" id="ssh-proxy-username" value="\${escape(p.username)}" \${!p.enabled ? 'disabled' : ''} />
+            <input class="input" id="ssh-proxy-username" value="\${escape(p.username)}" />
           </label>
           <label class="ssh-proxy-field" for="ssh-proxy-password">
             <span>Password</span>
             <input class="input" id="ssh-proxy-password" type="password"
-              placeholder="\${p.hasPassword ? 'Stored in system keychain' : 'Required'}" \${!p.enabled ? 'disabled' : ''} />
+              placeholder="\${p.hasPassword ? 'Stored in system keychain' : 'Required'}" />
           </label>
         </div>
 
         <div class="ssh-proxy-actions">
-          <button class="btn" id="btn-save-ssh-proxy" \${!p.enabled || p.connection === 'connecting' ? 'disabled' : ''}>
+          <button class="btn" id="btn-save-ssh-proxy" \${p.connection === 'connecting' ? 'disabled' : ''}>
             \${p.connection === 'connecting' ? 'Testing...' : 'Save & Test'}
           </button>
           <button class="btn btn-secondary" id="btn-clear-ssh-proxy">Clear</button>
@@ -1094,8 +1095,9 @@ export function getRendererScriptContent(): string {
               ? 'Connecting...'
               : p.connection === 'error'
                 ? escape(p.message || 'Connection failed.')
-                : p.enabled ? 'Not connected' : 'Direct connection'}
+                : 'Not connected'}
         </div>
+        \` : ''}
 
         <div class="divider" style="margin:12px 0"></div>
 
