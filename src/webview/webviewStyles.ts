@@ -35,9 +35,28 @@ export function getStyles(): string {
     .settings-screen {
       flex: 1;
       min-height: 0;
-      width: 100%;
+      /* padding-right ensures content doesn't hit the absolute faux scrollbar */
+      padding-right: 14px;
       overflow-y: auto;
-      padding-right: 2px;
+      scrollbar-width: none; /* Firefox hide native scrollbar */
+      
+      /* Professional CSS-only dynamic scroll shadows */
+      background:
+        /* Top and Bottom Covers (scrolls with content to hide shadow at boundaries) */
+        linear-gradient(var(--vscode-sideBar-background) 30%, transparent),
+        linear-gradient(transparent, var(--vscode-sideBar-background) 70%) 0 100%,
+        /* Top and Bottom Shadows (fixed to container) */
+        linear-gradient(to bottom, var(--vscode-scrollbar-shadow, rgba(0,0,0,0.15)) 0%, transparent 100%),
+        linear-gradient(to top, var(--vscode-scrollbar-shadow, rgba(0,0,0,0.15)) 0%, transparent 100%) 0 100%;
+      background-repeat: no-repeat;
+      background-color: var(--vscode-sideBar-background);
+      background-size: 100% 30px, 100% 30px, 100% 5px, 100% 5px;
+      background-attachment: local, local, scroll, scroll;
+    }
+
+    /* Hide native scrollbar in WebKit to use our faux DOM scrollbar */
+    .settings-screen::-webkit-scrollbar {
+      display: none !important;
     }
 
     /* Wrapper for the READY screen — fills remaining height as a flex column */

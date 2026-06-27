@@ -2,7 +2,7 @@
   "name": "cds-debug",
   "displayName": "CDS Debug",
   "description": "Debug multiple SAP CAP services simultaneously via Cloud Foundry integration",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "icon": "resources/icon.png",
   "publisher": "dongtran",
   "repository": {
@@ -194,7 +194,7 @@
           "type": "array",
           "scope": "application",
           "default": [],
-          "markdownDescription": "Explicit Cloud Foundry app name \u2192 local folder name mappings. Use this when a CF app's name differs too much from its local source folder for the automatic `-`\u2194`_` normalization to find it (otherwise that app falls back to console-only debugging with no source maps). `folderName` is a folder *basename*; CDS Debug searches the mapped group folder recursively (depth \u2264 6) for a folder with that name containing a `package.json`. Has the highest matching priority, ahead of the exact and underscore-normalized name.",
+          "markdownDescription": "Explicit Cloud Foundry app name → local folder name mappings. Use this when a CF app's name differs too much from its local source folder for the automatic `-`↔`_` normalization to find it (otherwise that app falls back to console-only debugging with no source maps). `folderName` is a folder *basename*; CDS Debug searches the mapped group folder recursively (depth ≤ 6) for a folder with that name containing a `package.json`. Has the highest matching priority, ahead of the exact and underscore-normalized name.",
           "items": {
             "type": "object",
             "additionalProperties": false,

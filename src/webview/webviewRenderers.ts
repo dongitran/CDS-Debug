@@ -1034,7 +1034,8 @@ export function getRendererScriptContent(): string {
       }
 
       return \`
-        <div class="settings-screen">
+        <div class="settings-wrapper" style="position: relative; flex: 1; min-height: 0; display: flex; margin-right: -12px;">
+        <div class="settings-screen" id="settings-screen-scroll">
         <div class="step-header">
           <span class="step-title">Settings</span>
         </div>
@@ -1110,7 +1111,6 @@ export function getRendererScriptContent(): string {
                 \${state.debugPrefs.openBrowserOnAttach ? 'enabled' : 'off by default'}
               </span>
             </span>
-            <span class="pref-row-desc">When enabled, this extension opens the Chrome DevTools inspector the moment the debugger attaches. Disabled by default so the launcher stays focused until you opt in.</span>
           </div>
           <div class="toggle-switch \${state.debugPrefs.openBrowserOnAttach ? 'on' : ''}">
             <input type="checkbox" id="chk-open-browser" \${state.debugPrefs.openBrowserOnAttach ? 'checked' : ''} />
@@ -1125,7 +1125,6 @@ export function getRendererScriptContent(): string {
                 \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'enabled' : 'off by default'}
               </span>
             </span>
-            <span class="pref-row-desc">Off by default. Turn this on to capture a snapshot and auto-continue; leave it off to keep native breakpoint pause behavior.</span>
           </div>
           <div class="toggle-switch \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'on' : ''}">
             <input type="checkbox" id="chk-breakpoint-snapshot-handling" \${state.debugPrefs.enableBreakpointSnapshotHandling ? 'checked' : ''} />
@@ -1136,7 +1135,6 @@ export function getRendererScriptContent(): string {
         <label class="pref-row" for="chk-branch-prep">
           <div class="pref-row-content">
             <span class="pref-row-title">Branch auto-checkout <span class="beta-badge">experimental</span></span>
-            <span class="pref-row-desc">Before starting a debug session, automatically stash local changes, check out the branch mapped to the CF org, then run <code>pnpm install</code> and <code>pnpm build</code>. Configure branch mappings in <code>cap-debug-config.json</code>.</span>
           </div>
           <div class="toggle-switch \${state.debugPrefs.enableBranchPrep ? 'on' : ''}">
             <input type="checkbox" id="chk-branch-prep" \${state.debugPrefs.enableBranchPrep ? 'checked' : ''} />
@@ -1195,6 +1193,10 @@ export function getRendererScriptContent(): string {
         <div style="height:6px"></div>
         <button class="btn btn-secondary" id="btn-logout-settings"
           style="color:var(--vscode-errorForeground)">&#8634; Logout / Change Region</button>
+        </div>
+        <div class="faux-scrollbar" style="position: absolute; right: 0; top: 0; bottom: 0; width: 12px; pointer-events: none; z-index: 10;">
+          <div class="faux-scrollbar-thumb" style="width: 6px; border-radius: 3px; background: var(--vscode-scrollbarSlider-hoverBackground, rgba(128,128,128,0.5)); position: absolute; right: 2px; top: 0; transition: background 0.2s;"></div>
+        </div>
         </div>
       \`;
     }
@@ -1379,6 +1381,36 @@ export function getRendererScriptContent(): string {
 
     function attachSettingsListeners() {
       const $ = id => document.getElementById(id);
+
+      // Faux scrollbar logic for the settings screen
+      const scrollEl = $('settings-screen-scroll');
+      if (scrollEl) {
+        const thumbEl = document.querySelector('.faux-scrollbar-thumb');
+        const syncScrollbar = () => {
+          if (!thumbEl) return;
+          const ratio = scrollEl.clientHeight / scrollEl.scrollHeight;
+          if (ratio >= 1 || scrollEl.clientHeight === 0) {
+            thumbEl.style.display = 'none';
+          } else {
+            thumbEl.style.display = 'block';
+            const minThumbHeight = 20;
+            const thumbHeight = Math.max(minThumbHeight, scrollEl.clientHeight * ratio);
+            const scrollProgress = scrollEl.scrollTop / (scrollEl.scrollHeight - scrollEl.clientHeight);
+            const top = scrollProgress * (scrollEl.clientHeight - thumbHeight);
+            thumbEl.style.height = thumbHeight + 'px';
+            thumbEl.style.top = top + 'px';
+          }
+        };
+        scrollEl.addEventListener('scroll', syncScrollbar);
+        window.addEventListener('resize', syncScrollbar);
+        // Use ResizeObserver to catch changes when toggles expand/collapse content
+        if (window.ResizeObserver) {
+          const observer = new ResizeObserver(syncScrollbar);
+          observer.observe(scrollEl);
+        }
+        // Initial sync
+        setTimeout(syncScrollbar, 0);
+      }
 
       $('btn-gear')?.addEventListener('click', () => {
         state.screen = SCREENS.SETTINGS;
