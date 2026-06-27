@@ -122,6 +122,14 @@ interface RenderSettingsOptions {
     readonly enabled: boolean;
     readonly pingIntervalSeconds: number;
   };
+  readonly sshProxyStatus?: {
+    readonly enabled: boolean;
+    readonly host: string;
+    readonly port: number;
+    readonly username: string;
+    readonly hasPassword?: boolean;
+    readonly connection?: string;
+  };
 }
 
 interface RendererContext {
@@ -151,7 +159,7 @@ function renderSettingsHtml(options: RenderSettingsOptions): string {
       syncStatus: options.syncStatus,
       cacheConfig: options.cacheConfig,
       appWatchdogConfig: options.appWatchdogConfig ?? { enabled: true, pingIntervalSeconds: 90 },
-      sshProxyStatus: {
+      sshProxyStatus: options.sshProxyStatus ?? {
         enabled: false,
         host: '',
         port: 22,
@@ -924,6 +932,13 @@ describe('webview markup contracts', () => {
     const html = renderSettingsHtml({
       syncStatus: { isRunning: false, done: 0, total: 0 },
       cacheConfig: { enabled: true, intervalHours: 24 },
+      sshProxyStatus: {
+        enabled: true,
+        host: 'example.com',
+        port: 22,
+        username: 'user',
+        hasPassword: true,
+      },
     });
 
     expect(html).toContain('SSH Proxy');
@@ -943,7 +958,7 @@ describe('webview markup contracts', () => {
     });
     const styles = getStyles();
 
-    expect(html.trimStart()).toMatch(/^<div class="settings-screen">/);
+    expect(html.trimStart()).toMatch(/^<div class="settings-wrapper"/);
     expect(styles).toMatch(/\.settings-screen\s*\{[^}]*overflow-y:\s*auto;/);
     expect(styles).toMatch(/\.settings-screen\s*\{[^}]*min-height:\s*0;/);
   });
