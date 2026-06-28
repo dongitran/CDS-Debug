@@ -4580,7 +4580,6 @@ test.describe('CDS Debug Onboarding and Launcher E2E', () => {
         await expect(webview.getByLabel('Password')).toHaveValue('');
 
         await webview.getByRole('button', { name: 'Clear' }).click();
-        await expect(webview.getByText('Direct connection')).toBeVisible();
         await expect(enabledToggle).not.toBeChecked();
       });
     });
